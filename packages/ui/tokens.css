@@ -1,0 +1,31 @@
+/**
+ * Design tokens — the single styling contract shared by `packages/ui` and
+ * `apps/web/src/styles` (doc/ARCHITECTURE.md → Shared).
+ */
+:root {
+  /* color */
+  --ui-color-bg: #ffffff;
+  --ui-color-surface: #f6f7f9;
+  --ui-color-text: #16181d;
+  --ui-color-text-muted: #5c6370;
+  --ui-color-primary: #2f5fdd;
+  --ui-color-primary-hover: #264aa8;
+  --ui-color-on-primary: #ffffff;
+  --ui-color-danger: #c2334d;
+  --ui-color-border: #d7dbe2;
+  --ui-color-focus-ring: #8fb0ff;
+
+  /* spacing (4px scale) */
+  --ui-space-1: 0.25rem;
+  --ui-space-2: 0.5rem;
+  --ui-space-3: 0.75rem;
+  --ui-space-4: 1rem;
+  --ui-space-6: 1.5rem;
+
+  /* radius + typography */
+  --ui-radius-sm: 4px;
+  --ui-radius-md: 8px;
+  --ui-font-size-sm: 0.875rem;
+  --ui-font-size-md: 1rem;
+  --ui-font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}

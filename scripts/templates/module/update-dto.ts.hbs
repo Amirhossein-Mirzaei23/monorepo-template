@@ -1,0 +1,5 @@
+import { PartialType } from '@nestjs/swagger';
+import { Create{{ pascalCase name }}Dto } from './create-{{name}}.dto';
+
+/** Every field optional — extend with domain-specific fields as needed. */
+export class Update{{ pascalCase name }}Dto extends PartialType(Create{{ pascalCase name }}Dto) {}

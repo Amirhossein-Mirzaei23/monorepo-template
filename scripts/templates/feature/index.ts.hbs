@@ -1,0 +1,8 @@
+/**
+ * Public API (barrel) of the {{name}} feature — the only import path other
+ * modules may use (doc/ARCHITECTURE.md → Frontend rules).
+ */
+export { {{ pascalCase name }}Panel } from './components/{{name}}-panel';
+export { use{{ pascalCase name }} } from './hooks/use-{{name}}';
+export { {{camelCase name}}Schema } from './schemas/{{name}}-schema';
+export type { {{ pascalCase name }}FormData } from './schemas/{{name}}-schema';

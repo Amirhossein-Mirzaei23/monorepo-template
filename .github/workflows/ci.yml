@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: 'lint · typecheck · test · build (node ${{ matrix.node }})'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test (with per-package coverage thresholds)
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      - name: Contract drift gate (generated shared-types must be current)
+        run: |
+          npm run gen:types
+          if ! git diff --exit-code -- packages/shared-types; then
+            echo "::error::packages/shared-types is stale — run 'npm run gen:types' and commit the result"
+            git diff -- packages/shared-types
+            exit 1
+          fi
+
+      - name: Dependency audit gate (production deps)
+        run: npm audit --omit=dev --audit-level=high
+
+  # Optional: uncomment once a database service is wired into your CI runner.
+  # migration-gate:
+  #   runs-on: ubuntu-latest
+  #   services:
+  #     postgres:
+  #       image: postgres:16-alpine
+  #       env:
+  #         POSTGRES_USER: monorepo
+  #         POSTGRES_PASSWORD: monorepo
+  #         POSTGRES_DB: monorepo
+  #       ports: ['5432:5432']
+  #       options: >-
+  #         --health-cmd pg_isready --health-interval 10s
+  #         --health-timeout 5s --health-retries 5
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with: { node-version: 22, cache: npm }
+  #     - run: npm ci
+  #     - run: npm run prisma:deploy -w @monorepo/api
+  #       env:
+  #         DATABASE_URL: postgresql://monorepo:monorepo@localhost:5432/monorepo
+
+  # Sentry sourcemaps (task 9.3): enable when SENTRY_AUTH_TOKEN is configured.
+  # - name: Upload sourcemaps to Sentry
+  #   if: matrix.node == 22
+  #   run: npx @sentry/cli sourcemaps upload ./apps/api/dist ./apps/web/.next
+  #   env:
+  #     SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+  #     SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+  #     SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}

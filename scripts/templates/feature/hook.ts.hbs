@@ -1,0 +1,16 @@
+'use client';
+
+import { useQuery } from '@tanstack/react-query';
+import { fetch{{ pascalCase name }} } from '../api/{{name}}-api';
+import { {{camelCase name}}Keys } from '../api/keys';
+
+/**
+ * {{ pascalCase name }} data hook — server data flows exclusively through
+ * feature-scoped react-query hooks (doc/CONVENTIONS.md → Data Fetching).
+ */
+export function use{{ pascalCase name }}() {
+  return useQuery({
+    queryKey: {{camelCase name}}Keys.all,
+    queryFn: () => fetch{{ pascalCase name }}(),
+  });
+}

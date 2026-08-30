@@ -1,0 +1,50 @@
+{
+  "name": "@monorepo/ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Design-system primitives (Button, Input, Dialog) styled with shared tokens",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./tokens.css": "./tokens.css",
+    "./ui.css": "./ui.css"
+  },
+  "files": [
+    "dist",
+    "tokens.css",
+    "ui.css"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "jest",
+    "test:cov": "jest --coverage"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.6",
+    "@types/jest": "^30.0.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^9.39.5",
+    "jest": "^30.5.0",
+    "jest-environment-jsdom": "^30.5.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "ts-jest": "^29.4.12",
+    "typescript": "^5.9.3"
+  }
+}

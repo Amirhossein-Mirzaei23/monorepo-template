@@ -1,0 +1,5 @@
+/** React-query key factory for the {{name}} feature. */
+export const {{camelCase name}}Keys = {
+  all: ['{{name}}'] as const,
+  detail: (id: string) => ['{{name}}', id] as const,
+};

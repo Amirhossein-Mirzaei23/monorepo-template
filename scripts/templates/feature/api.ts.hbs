@@ -1,0 +1,16 @@
+import { apiFetch } from '@/lib/api-client';
+
+/**
+ * {{ pascalCase name }} API access. Route through the web BFF (`/api/*`) when
+ * the endpoint needs cookies; direct `publicApiUrl` calls are fine for public
+ * data. Validate payloads with generated schemas where a contract exists.
+ */
+export interface {{ pascalCase name }}Item {
+  id: string;
+  title: string;
+}
+
+export async function fetch{{ pascalCase name }}(): Promise<{{ pascalCase name }}Item[]> {
+  // TODO: point at the real endpoint and validate the response shape.
+  return apiFetch<{{ pascalCase name }}Item[]>('/api/{{name}}');
+}

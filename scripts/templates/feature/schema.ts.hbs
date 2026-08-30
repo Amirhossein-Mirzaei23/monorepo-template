@@ -1,0 +1,11 @@
+import { z } from 'zod';
+
+/**
+ * {{ pascalCase name }} schema — single source for validation and types
+ * (doc/CONVENTIONS.md → Forms). Reuse for react-hook-form via zodResolver.
+ */
+export const {{camelCase name}}Schema = z.object({
+  title: z.string().min(1, 'Title is required'),
+});
+
+export type {{ pascalCase name }}FormData = z.infer<typeof {{camelCase name}}Schema>;

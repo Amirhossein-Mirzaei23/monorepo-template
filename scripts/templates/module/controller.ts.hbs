@@ -1,0 +1,59 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Paginated } from '../../common/dto/pagination-query.dto';
+import { Create{{ pascalCase name }}Dto } from './dto/create-{{name}}.dto';
+import { Update{{ pascalCase name }}Dto } from './dto/update-{{name}}.dto';
+import { {{ pascalCase name }}ResponseDto } from './dto/{{name}}-response.dto';
+import { {{ pascalCase name }}Service } from './{{name}}.service';
+
+@ApiTags('{{name}}')
+@ApiBearerAuth('access-token')
+@Controller('{{name}}')
+export class {{ pascalCase name }}Controller {
+  constructor(private readonly {{camelCase name}}: {{ pascalCase name }}Service) {}
+
+  @Get()
+  @ApiOperation({ summary: 'List {{name}} (paginated)' })
+  async list(): Promise<Paginated<{{ pascalCase name }}ResponseDto>> {
+    return this.{{camelCase name}}.list();
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get {{name}} by id' })
+  async getById(@Param('id') id: string): Promise<{{ pascalCase name }}ResponseDto> {
+    return this.{{camelCase name}}.getById(id);
+  }
+
+  @Post()
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create {{name}}' })
+  async create(@Body() dto: Create{{ pascalCase name }}Dto): Promise<{{ pascalCase name }}ResponseDto> {
+    return this.{{camelCase name}}.create(dto);
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Update {{name}}' })
+  async update(
+    @Param('id') id: string,
+    @Body() dto: Update{{ pascalCase name }}Dto,
+  ): Promise<{{ pascalCase name }}ResponseDto> {
+    return this.{{camelCase name}}.update(id, dto);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete {{name}}' })
+  async remove(@Param('id') id: string): Promise<void> {
+    await this.{{camelCase name}}.remove(id);
+  }
+}

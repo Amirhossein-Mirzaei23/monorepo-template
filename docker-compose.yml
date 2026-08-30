@@ -1,0 +1,55 @@
+# Local development: seeded Postgres by default; full stack with `--profile apps`.
+# Root .env (see .env.example) overrides the Postgres credentials.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-monorepo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-monorepo}
+      POSTGRES_DB: ${POSTGRES_DB:-monorepo}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-monorepo}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    profiles: ['apps']
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-monorepo}:${POSTGRES_PASSWORD:-monorepo}@postgres:5432/${POSTGRES_DB:-monorepo}?schema=public
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-local-dev-access-secret-change-me}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-local-dev-refresh-secret-change-me}
+      CORS_ORIGINS: http://localhost:3000
+    ports:
+      - '3001:3001'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    profiles: ['apps']
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:3001
+    environment:
+      NODE_ENV: production
+      API_URL: http://api:3001
+    ports:
+      - '3000:3000'
+    depends_on:
+      - api
+
+volumes:
+  postgres-data:

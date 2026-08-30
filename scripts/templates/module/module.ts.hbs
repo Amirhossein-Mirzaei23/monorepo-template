@@ -1,0 +1,12 @@
+import { Module } from '@nestjs/common';
+import { {{ pascalCase name }}Repository } from './{{name}}.repository';
+import { {{ pascalCase name }}Controller } from './{{name}}.controller';
+import { {{ pascalCase name }}Service } from './{{name}}.service';
+
+/** {{ pascalCase name }} domain module (controller → service → repository). */
+@Module({
+  controllers: [{{ pascalCase name }}Controller],
+  providers: [{{ pascalCase name }}Service, {{ pascalCase name }}Repository],
+  exports: [{{ pascalCase name }}Service],
+})
+export class {{ pascalCase name }}Module {}

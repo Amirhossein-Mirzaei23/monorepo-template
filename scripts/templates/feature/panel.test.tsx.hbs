@@ -1,0 +1,33 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render, screen } from '@testing-library/react';
+import { {{ pascalCase name }}Panel } from '../components/{{name}}-panel';
+
+jest.mock('next/navigation', () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
+}));
+
+function renderPanel() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <{{ pascalCase name }}Panel />
+    </QueryClientProvider>,
+  );
+}
+
+describe('{{ pascalCase name }}Panel', () => {
+  it('renders a loading state, then data', async () => {
+    global.fetch = jest.fn(async () =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => [{ id: '1', title: 'First {{name}}' }],
+      }) as unknown as Response,
+    );
+
+    renderPanel();
+    expect(await screen.findByText('First {{name}}')).toBeInTheDocument();
+  });
+});

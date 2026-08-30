@@ -1,0 +1,25 @@
+'use client';
+
+import { use{{ pascalCase name }} } from '../hooks/use-{{name}}';
+
+/**
+ * {{ pascalCase name }} feature component. Replace the placeholder content and
+ * keep all {{name}}-specific UI inside this feature folder.
+ */
+export function {{ pascalCase name }}Panel() {
+  const { data, isPending, error } = use{{ pascalCase name }}();
+
+  if (isPending) {
+    return <p className="{{name}}-status">Loading…</p>;
+  }
+  if (error) {
+    return <p className="{{name}}-status" role="alert">{error.message}</p>;
+  }
+
+  return (
+    <section aria-label="{{ pascalCase name }}" className="{{name}}-panel">
+      <h2>{{ pascalCase name }}</h2>
+      <pre>{JSON.stringify(data, null, 2)}</pre>
+    </section>
+  );
+}

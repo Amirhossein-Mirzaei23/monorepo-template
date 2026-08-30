@@ -1,0 +1,45 @@
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { Paginated } from '../../common/dto/pagination-query.dto';
+import { PrismaService } from '../../prisma/prisma.service';
+import { Create{{ pascalCase name }}Dto } from './dto/create-{{name}}.dto';
+import { Update{{ pascalCase name }}Dto } from './dto/update-{{name}}.dto';
+import { {{ pascalCase name }}ResponseDto } from './dto/{{name}}-response.dto';
+import { {{ pascalCase name }}Repository } from './{{name}}.repository';
+
+/**
+ * {{ pascalCase name }} business rules. Services own transaction boundaries:
+ * open `prisma.$transaction` here and pass the client to the repository
+ * (reference: modules/users).
+ */
+@Injectable()
+export class {{ pascalCase name }}Service {
+  constructor(
+    private readonly repository: {{ pascalCase name }}Repository,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  async list(): Promise<Paginated<{{ pascalCase name }}ResponseDto>> {
+    throw new Error('implement me');
+  }
+
+  async getById(id: string): Promise<{{ pascalCase name }}ResponseDto> {
+    void id;
+    throw new NotFoundException(`{{ pascalCase name }} not found`);
+  }
+
+  async create(dto: Create{{ pascalCase name }}Dto): Promise<{{ pascalCase name }}ResponseDto> {
+    void dto;
+    throw new Error('implement me');
+  }
+
+  async update(id: string, dto: Update{{ pascalCase name }}Dto): Promise<{{ pascalCase name }}ResponseDto> {
+    void id;
+    void dto;
+    throw new Error('implement me');
+  }
+
+  async remove(id: string): Promise<void> {
+    void id;
+    throw new Error('implement me');
+  }
+}

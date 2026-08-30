@@ -1,0 +1,20 @@
+import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../../prisma/prisma.service';
+
+type Tx = Prisma.TransactionClient | undefined;
+
+/**
+ * Data access only. Every method accepts an optional transaction client —
+ * repositories never open or commit transactions (services do).
+ */
+@Injectable()
+export class {{ pascalCase name }}Repository {
+  constructor(private readonly prisma: PrismaService) {}
+
+  private client(tx: Tx): Prisma.TransactionClient | PrismaService {
+    return tx ?? this.prisma;
+  }
+
+  // TODO: implement {{name}} data access against the Prisma models.
+}

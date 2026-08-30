@@ -1,0 +1,9 @@
+node_modules
+dist
+.next
+coverage
+package-lock.json
+packages/shared-types/src/generated
+packages/shared-types/openapi.json
+apps/web/next-env.d.ts
+pnpm-lock.yaml
