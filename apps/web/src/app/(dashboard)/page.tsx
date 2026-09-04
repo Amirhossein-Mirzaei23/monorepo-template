@@ -12,27 +12,27 @@ export default function DashboardPage() {
   const me = useMe();
 
   if (status === 'loading') {
-    return <p className="dashboard-status">Restoring session…</p>;
+    return <p className="text-muted-foreground">Restoring session…</p>;
   }
   if (status === 'unauthenticated') {
-    return <p className="dashboard-status">Session expired — please sign in again.</p>;
+    return <p className="text-muted-foreground">Session expired — please sign in again.</p>;
   }
 
   const profile = me.data ?? user;
   return (
     <section>
-      <h1>Dashboard</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
       {profile ? (
-        <dl className="dashboard-profile">
-          <dt>Name</dt>
+        <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
+          <dt className="text-muted-foreground">Name</dt>
           <dd>{profile.name}</dd>
-          <dt>Email</dt>
+          <dt className="text-muted-foreground">Email</dt>
           <dd>{profile.email}</dd>
-          <dt>Role</dt>
+          <dt className="text-muted-foreground">Role</dt>
           <dd>{profile.role}</dd>
         </dl>
       ) : (
-        <p className="dashboard-status">Loading profile…</p>
+        <p className="text-muted-foreground">Loading profile…</p>
       )}
     </section>
   );

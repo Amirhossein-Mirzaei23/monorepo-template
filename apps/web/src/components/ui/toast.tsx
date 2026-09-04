@@ -58,13 +58,24 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="toast-region" aria-live="polite" role="status">
+      <div
+        className="fixed right-6 bottom-6 z-[100] flex flex-col gap-2"
+        aria-live="polite"
+        role="status"
+      >
         {toasts.map((entry) => (
-          <div key={entry.id} className={cn('toast', `toast--${entry.variant}`)}>
+          <div
+            key={entry.id}
+            className={cn(
+              'bg-card text-card-foreground flex items-center gap-3 rounded-md border px-4 py-2 shadow-lg',
+              entry.variant === 'success' && 'border-primary',
+              entry.variant === 'error' && 'border-destructive',
+            )}
+          >
             <span>{entry.message}</span>
             <button
               type="button"
-              className="toast-dismiss"
+              className="cursor-pointer border-none bg-transparent p-0 px-1 text-lg text-inherit"
               aria-label="Dismiss notification"
               onClick={() => dismiss(entry.id)}
             >

@@ -1,6 +1,6 @@
 'use client';
 
-import { Button } from '@/components/ui/button';
+import { ErrorPanel } from '@/components/error-panel';
 
 /** Route-group error boundary for (dashboard) — doc/CONVENTIONS.md → Error Handling. */
 export default function DashboardError({
@@ -11,10 +11,6 @@ export default function DashboardError({
   reset: () => void;
 }) {
   return (
-    <div role="alert" className="error-boundary">
-      <h2>Something went wrong on this page</h2>
-      <p>{error.message}</p>
-      <Button onClick={reset}>Try again</Button>
-    </div>
+    <ErrorPanel title="Something went wrong on this page" message={error.message} onRetry={reset} />
   );
 }

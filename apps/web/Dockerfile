@@ -17,7 +17,6 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
 COPY . .
 RUN npm run build --workspace @monorepo/shared-types \
- && npm run build --workspace @monorepo/ui \
  && npm run build --workspace @monorepo/web
 
 # --- runtime (standalone server, distroless) ----------------------------------

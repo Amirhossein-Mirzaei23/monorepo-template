@@ -6,8 +6,8 @@ export const metadata: Metadata = { title: 'Sign in' };
 export default function LoginPage() {
   return (
     <>
-      <h1 className="auth-title">Sign in</h1>
-      <p className="auth-hint">
+      <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
+      <p className="text-muted-foreground text-sm">
         Seeded accounts: <code>admin@monorepo.local</code> / <code>admin-password-123</code>
       </p>
       <LoginForm />

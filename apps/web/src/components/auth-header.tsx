@@ -18,9 +18,9 @@ export function AuthHeader() {
   };
 
   return (
-    <header className="dashboard-header">
-      <span className="dashboard-brand">monorepo-template</span>
-      <span className="dashboard-user" data-status={status}>
+    <header className="bg-card flex items-center gap-4 border-b px-6 py-3">
+      <span className="mr-auto font-bold">monorepo-template</span>
+      <span className="text-muted-foreground text-sm">
         {user ? `${user.name} · ${user.role}` : status}
       </span>
       <Button variant="secondary" size="sm" onClick={() => void onLogout()}>

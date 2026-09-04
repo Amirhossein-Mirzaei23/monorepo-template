@@ -4,6 +4,14 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { Button } from '@/components/ui/button';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/components/ui/toast';
 import { useLogin } from '../hooks/use-login';
@@ -11,24 +19,21 @@ import { loginSchema, type LoginFormData } from '../schemas/login-schema';
 
 /**
  * Reference form pattern (doc/CONVENTIONS.md → Forms / Error Handling):
- * react-hook-form + zod resolver, inline field errors from the schema,
- * mutation failures surfaced as toasts.
+ * react-hook-form + zod resolver via shadcn form primitives, inline field
+ * errors from the schema, mutation failures surfaced as toasts.
  */
 export function LoginForm() {
   const router = useRouter();
   const { toast } = useToast();
   const login = useLogin();
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors, isSubmitting },
-  } = useForm<LoginFormData>({
+  const form = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: '', password: '' },
   });
+  const isSubmitting = form.formState.isSubmitting;
 
-  const onSubmit = handleSubmit(async (values) => {
+  const onSubmit = form.handleSubmit(async (values) => {
     try {
       await login.mutateAsync(values);
       toast('Welcome back!', 'success');
@@ -42,25 +47,38 @@ export function LoginForm() {
   });
 
   return (
-    <form className="login-form" onSubmit={onSubmit} noValidate>
-      <Input
-        label="Email"
-        type="email"
-        autoComplete="email"
-        placeholder="you@example.com"
-        error={errors.email?.message}
-        {...register('email')}
-      />
-      <Input
-        label="Password"
-        type="password"
-        autoComplete="current-password"
-        error={errors.password?.message}
-        {...register('password')}
-      />
-      <Button type="submit" disabled={isSubmitting || login.isPending}>
-        {login.isPending ? 'Signing in…' : 'Sign in'}
-      </Button>
-    </form>
+    <Form {...form}>
+      <form className="flex flex-col gap-4" onSubmit={onSubmit} noValidate>
+        <FormField
+          control={form.control}
+          name="email"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Email</FormLabel>
+              <FormControl>
+                <Input type="email" autoComplete="email" placeholder="you@example.com" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="password"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Password</FormLabel>
+              <FormControl>
+                <Input type="password" autoComplete="current-password" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <Button type="submit" disabled={isSubmitting || login.isPending}>
+          {login.isPending ? 'Signing in…' : 'Sign in'}
+        </Button>
+      </form>
+    </Form>
   );
 }
