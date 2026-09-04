@@ -2,12 +2,12 @@ import { compare } from 'bcryptjs';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import type { User } from '@prisma/client';
 import type { AuthUser } from '../../common/decorators/current-user.decorator';
-import type { UsersRepository } from '../users/users.repository';
-import type { UsersService } from '../users/users.service';
+import { UsersRepository } from '../users/users.repository';
+import { UsersService } from '../users/users.service';
 import { toUserResponse, type UserResponseDto } from '../users/dto/user-response.dto';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
-import type { TokenService } from './token.service';
+import { TokenService } from './token.service';
 
 /** Compared when the email is unknown so response timing does not leak existence. */
 const DUMMY_HASH = '$2b$10$CwTycUXWue0Thq9StjUM0uJ8.PxHqXn5vF/oYHiF7vB/vP/eN9lHy';

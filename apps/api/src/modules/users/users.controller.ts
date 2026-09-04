@@ -20,11 +20,11 @@ import {
 import { UserRole } from '@prisma/client';
 import type { Paginated } from '../../common/dto/pagination-query.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
-import type { CreateUserDto } from './dto/create-user.dto';
-import type { UpdateUserDto } from './dto/update-user.dto';
+import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { UserResponseDto } from './dto/user-response.dto';
-import type { UsersQueryDto } from './dto/users-query.dto';
-import type { UsersService } from './users.service';
+import { UsersQueryDto } from './dto/users-query.dto';
+import { UsersService } from './users.service';
 
 /**
  * Reference domain module — mirror this structure for new domains

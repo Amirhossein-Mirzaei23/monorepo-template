@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { type Observable, tap } from 'rxjs';
-import type { MetricsService } from '../../metrics/metrics.service';
+import { MetricsService } from '../../metrics/metrics.service';
 
 /**
  * Records http request duration into the Prometheus registry and fails soft:

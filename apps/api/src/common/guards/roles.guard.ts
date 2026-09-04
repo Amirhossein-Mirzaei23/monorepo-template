@@ -4,7 +4,7 @@ import {
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
-import type { Reflector } from '@nestjs/core';
+import { Reflector } from '@nestjs/core';
 import type { UserRole } from '@prisma/client';
 import type { AuthUser } from '../decorators/current-user.decorator';
 import { ROLES_KEY } from '../decorators/roles.decorator';

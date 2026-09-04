@@ -1,7 +1,8 @@
 import { Controller, Get, HttpCode, HttpStatus, ServiceUnavailableException } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../common/decorators/public.decorator';
-import type { HealthService, ReadinessReport } from './health.service';
+import { HealthService } from './health.service';
+import type { ReadinessReport } from './health.service';
 
 @ApiTags('health')
 @Public()

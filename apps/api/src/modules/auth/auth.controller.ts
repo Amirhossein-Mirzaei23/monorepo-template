@@ -9,7 +9,7 @@ import {
   Res,
   UnauthorizedException,
 } from '@nestjs/common';
-import type { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@nestjs/config';
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
@@ -23,10 +23,10 @@ import { Public } from '../../common/decorators/public.decorator';
 import { requireAppConfig } from '../../config/configuration';
 import { UserResponseDto } from '../users/dto/user-response.dto';
 import { REFRESH_COOKIE_NAME, REFRESH_COOKIE_PATH } from './auth.constants';
-import type { AuthService } from './auth.service';
-import type { LoginDto } from './dto/login.dto';
+import { AuthService } from './auth.service';
+import { LoginDto } from './dto/login.dto';
 import { LoginResponseDto } from './dto/login-response.dto';
-import type { RegisterDto } from './dto/register.dto';
+import { RegisterDto } from './dto/register.dto';
 
 type CookiesRequest = Request & { cookies?: Record<string, string> };
 

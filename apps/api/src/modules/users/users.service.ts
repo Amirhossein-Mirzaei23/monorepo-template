@@ -2,12 +2,12 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { type Prisma, UserRole } from '@prisma/client';
 import { hash } from 'bcryptjs';
 import { type Paginated, type ParsedSort, parseSort } from '../../common/dto/pagination-query.dto';
-import type { PrismaService } from '../../prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import type { CreateUserDto } from './dto/create-user.dto';
 import type { UpdateUserDto } from './dto/update-user.dto';
 import { type UserResponseDto, toUserResponse } from './dto/user-response.dto';
 import type { UsersQueryDto } from './dto/users-query.dto';
-import type { UsersRepository } from './users.repository';
+import { UsersRepository } from './users.repository';
 
 const BCRYPT_ROUNDS = 10;
 

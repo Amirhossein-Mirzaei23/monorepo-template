@@ -2,7 +2,7 @@ import { Controller, Get, HttpCode, HttpStatus, Res } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { Public } from '../common/decorators/public.decorator';
-import type { MetricsService } from './metrics.service';
+import { MetricsService } from './metrics.service';
 
 @ApiTags('metrics')
 @Public()

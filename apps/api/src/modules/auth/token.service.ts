@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
-import type { ConfigService } from '@nestjs/config';
-import type { JwtService } from '@nestjs/jwt';
-import type { PrismaService } from '../../prisma/prisma.service';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
+import { PrismaService } from '../../prisma/prisma.service';
 import type { AuthUser } from '../../common/decorators/current-user.decorator';
 import { requireAppConfig } from '../../config/configuration';
 
