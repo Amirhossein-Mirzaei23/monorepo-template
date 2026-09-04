@@ -10,5 +10,5 @@ export default function AuthError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  return <ErrorPanel title="The auth area hit a snag" message={error.message} onRetry={reset} />;
+  return <ErrorPanel title="در بخش ورود خطایی رخ داد" message={error.message} onRetry={reset} />;
 }

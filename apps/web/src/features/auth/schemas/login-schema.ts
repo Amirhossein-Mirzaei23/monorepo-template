@@ -5,8 +5,8 @@ import { z } from 'zod';
  * (doc/CONVENTIONS.md → Forms). Mirrors the API's LoginDto contract.
  */
 export const loginSchema = z.object({
-  email: z.email('Enter a valid email address'),
-  password: z.string().min(1, 'Password is required'),
+  email: z.email('ایمیل معتبر وارد کنید'),
+  password: z.string().min(1, 'گذرواژه الزامی است'),
 });
 
 export type LoginFormData = z.infer<typeof loginSchema>;

@@ -7,7 +7,7 @@ change, and commit one Prisma migration per schema change.
 
 ---
 
-### PLAT-001 — Persian / RTL foundation
+### PLAT-001 ✅ — Persian / RTL foundation
 
 **P0 · Phase 0 · Platform · S** — Deps: none
 

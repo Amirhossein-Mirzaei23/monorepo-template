@@ -18,7 +18,7 @@ export function ErrorPanel({ title, message, onRetry }: ErrorPanelProps) {
     >
       <h2>{title}</h2>
       <p>{message}</p>
-      <Button onClick={onRetry}>Try again</Button>
+      <Button onClick={onRetry}>تلاش دوباره</Button>
     </div>
   );
 }

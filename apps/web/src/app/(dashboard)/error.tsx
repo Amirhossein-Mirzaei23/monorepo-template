@@ -10,7 +10,5 @@ export default function DashboardError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  return (
-    <ErrorPanel title="Something went wrong on this page" message={error.message} onRetry={reset} />
-  );
+  return <ErrorPanel title="در این صفحه خطایی رخ داد" message={error.message} onRetry={reset} />;
 }

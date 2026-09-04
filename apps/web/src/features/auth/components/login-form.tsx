@@ -36,12 +36,12 @@ export function LoginForm() {
   const onSubmit = form.handleSubmit(async (values) => {
     try {
       await login.mutateAsync(values);
-      toast('Welcome back!', 'success');
+      toast('خوش آمدید!', 'success');
       router.push('/dashboard');
     } catch (error) {
       // Inline field errors already cover validation; anything here is an
       // API/network failure — report via toast, never raw response parsing.
-      const message = error instanceof Error ? error.message : 'Login failed';
+      const message = error instanceof Error ? error.message : 'ورود ناموفق بود';
       toast(message, 'error');
     }
   });
@@ -54,7 +54,7 @@ export function LoginForm() {
           name="email"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Email</FormLabel>
+              <FormLabel>ایمیل</FormLabel>
               <FormControl>
                 <Input type="email" autoComplete="email" placeholder="you@example.com" {...field} />
               </FormControl>
@@ -67,7 +67,7 @@ export function LoginForm() {
           name="password"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Password</FormLabel>
+              <FormLabel>گذرواژه</FormLabel>
               <FormControl>
                 <Input type="password" autoComplete="current-password" {...field} />
               </FormControl>
@@ -76,7 +76,7 @@ export function LoginForm() {
           )}
         />
         <Button type="submit" disabled={isSubmitting || login.isPending}>
-          {login.isPending ? 'Signing in…' : 'Sign in'}
+          {login.isPending ? 'در حال ورود…' : 'ورود'}
         </Button>
       </form>
     </Form>

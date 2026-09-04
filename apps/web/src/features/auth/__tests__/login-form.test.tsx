@@ -55,20 +55,20 @@ describe('LoginForm', () => {
     global.fetch = fetchMock as unknown as typeof global.fetch;
   });
 
-  it('renders labelled, keyboard-accessible fields', () => {
+  it('renders labelled, keyboard-accessible fields (Persian copy)', () => {
     renderLoginForm();
-    expect(screen.getByLabelText('Email')).toBeInTheDocument();
-    expect(screen.getByLabelText('Password')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Sign in' })).toHaveAttribute('type', 'submit');
+    expect(screen.getByLabelText('ایمیل')).toBeInTheDocument();
+    expect(screen.getByLabelText('گذرواژه')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'ورود' })).toHaveAttribute('type', 'submit');
   });
 
   it('shows inline schema errors for an invalid email', async () => {
     renderLoginForm();
-    await userEvent.type(screen.getByLabelText('Email'), 'not-an-email');
-    await userEvent.type(screen.getByLabelText('Password'), 'secret');
-    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await userEvent.type(screen.getByLabelText('ایمیل'), 'not-an-email');
+    await userEvent.type(screen.getByLabelText('گذرواژه'), 'secret');
+    await userEvent.click(screen.getByRole('button', { name: 'ورود' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Enter a valid email address');
+    expect(await screen.findByRole('alert')).toHaveTextContent('ایمیل معتبر وارد کنید');
     expect(fetchMock).not.toHaveBeenCalledWith('/api/auth/login', expect.anything());
   });
 
@@ -80,9 +80,9 @@ describe('LoginForm', () => {
     );
     renderLoginForm();
 
-    await userEvent.type(screen.getByLabelText('Email'), 'jane@example.com');
-    await userEvent.type(screen.getByLabelText('Password'), 'super-secret-1');
-    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await userEvent.type(screen.getByLabelText('ایمیل'), 'jane@example.com');
+    await userEvent.type(screen.getByLabelText('گذرواژه'), 'super-secret-1');
+    await userEvent.click(screen.getByRole('button', { name: 'ورود' }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -90,7 +90,7 @@ describe('LoginForm', () => {
         expect.objectContaining({ method: 'POST' }),
       );
     });
-    expect(await screen.findByText('Welcome back!')).toBeInTheDocument();
+    expect(await screen.findByText('خوش آمدید!')).toBeInTheDocument();
   });
 
   it('reports API failures as error toasts (not inline)', async () => {
@@ -102,9 +102,9 @@ describe('LoginForm', () => {
     );
     renderLoginForm();
 
-    await userEvent.type(screen.getByLabelText('Email'), 'jane@example.com');
-    await userEvent.type(screen.getByLabelText('Password'), 'wrong-pass');
-    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await userEvent.type(screen.getByLabelText('ایمیل'), 'jane@example.com');
+    await userEvent.type(screen.getByLabelText('گذرواژه'), 'wrong-pass');
+    await userEvent.click(screen.getByRole('button', { name: 'ورود' }));
 
     expect(await screen.findByText('Invalid email or password')).toBeInTheDocument();
   });

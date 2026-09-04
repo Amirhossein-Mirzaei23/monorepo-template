@@ -13,18 +13,22 @@ export function AuthHeader() {
 
   const onLogout = async () => {
     await logout();
-    toast('Signed out', 'info');
+    toast('خارج شدید', 'info');
     router.push('/login');
   };
 
+  const statusText = user
+    ? `${user.name} · ${user.role}`
+    : status === 'loading'
+      ? 'در حال بارگذاری…'
+      : 'وارد نشده‌اید';
+
   return (
     <header className="bg-card flex items-center gap-4 border-b px-6 py-3">
-      <span className="mr-auto font-bold">monorepo-template</span>
-      <span className="text-muted-foreground text-sm">
-        {user ? `${user.name} · ${user.role}` : status}
-      </span>
+      <span className="me-auto font-bold">راکدشو</span>
+      <span className="text-muted-foreground text-sm">{statusText}</span>
       <Button variant="secondary" size="sm" onClick={() => void onLogout()}>
-        Sign out
+        خروج
       </Button>
     </header>
   );

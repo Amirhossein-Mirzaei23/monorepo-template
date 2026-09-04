@@ -59,7 +59,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     <ToastContext.Provider value={value}>
       {children}
       <div
-        className="fixed right-6 bottom-6 z-[100] flex flex-col gap-2"
+        className="fixed end-6 bottom-6 z-[100] flex flex-col gap-2"
         aria-live="polite"
         role="status"
       >
@@ -76,7 +76,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               className="cursor-pointer border-none bg-transparent p-0 px-1 text-lg text-inherit"
-              aria-label="Dismiss notification"
+              aria-label="بستن پیام"
               onClick={() => dismiss(entry.id)}
             >
               ×

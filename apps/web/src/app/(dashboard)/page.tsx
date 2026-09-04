@@ -12,27 +12,27 @@ export default function DashboardPage() {
   const me = useMe();
 
   if (status === 'loading') {
-    return <p className="text-muted-foreground">Restoring session…</p>;
+    return <p className="text-muted-foreground">در حال بازیابی نشست…</p>;
   }
   if (status === 'unauthenticated') {
-    return <p className="text-muted-foreground">Session expired — please sign in again.</p>;
+    return <p className="text-muted-foreground">نشست منقضی شده است — دوباره وارد شوید.</p>;
   }
 
   const profile = me.data ?? user;
   return (
     <section>
-      <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">داشبورد</h1>
       {profile ? (
         <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
-          <dt className="text-muted-foreground">Name</dt>
+          <dt className="text-muted-foreground">نام</dt>
           <dd>{profile.name}</dd>
-          <dt className="text-muted-foreground">Email</dt>
+          <dt className="text-muted-foreground">ایمیل</dt>
           <dd>{profile.email}</dd>
-          <dt className="text-muted-foreground">Role</dt>
+          <dt className="text-muted-foreground">نقش</dt>
           <dd>{profile.role}</dd>
         </dl>
       ) : (
-        <p className="text-muted-foreground">Loading profile…</p>
+        <p className="text-muted-foreground">در حال بارگذاری مشخصات…</p>
       )}
     </section>
   );
