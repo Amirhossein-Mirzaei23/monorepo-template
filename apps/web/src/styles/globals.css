@@ -13,49 +13,55 @@
   --radius: 0.5rem;
   color-scheme: light;
 
-  /* Palette carried over from the previous token set (light) */
+  /*
+   * Rakdsho palette (doc/tech ui-patterns — set once, never per-screen):
+   * one deep-teal brand accent + zinc neutrals + semantic states only.
+   */
   --background: #ffffff;
-  --foreground: #16181d;
-  --card: #f6f7f9;
-  --card-foreground: #16181d;
+  --foreground: oklch(0.21 0.006 285.885); /* zinc-900 */
+  --card: oklch(0.985 0 0); /* zinc-50 */
+  --card-foreground: oklch(0.21 0.006 285.885); /* zinc-900 */
   --popover: #ffffff;
-  --popover-foreground: #16181d;
-  --primary: #2f5fdd;
+  --popover-foreground: oklch(0.21 0.006 285.885); /* zinc-900 */
+  --primary: oklch(0.55 0.11 180); /* deep teal ≈ #0f766e — the only brand color */
   --primary-foreground: #ffffff;
-  --secondary: #f6f7f9;
-  --secondary-foreground: #16181d;
-  --muted: #f6f7f9;
-  --muted-foreground: #5c6370;
-  --accent: #f6f7f9;
-  --accent-foreground: #16181d;
-  --destructive: #c2334d;
-  --border: #d7dbe2;
-  --input: #d7dbe2;
-  --ring: #2f5fdd;
+  --secondary: oklch(0.967 0.001 286.375); /* zinc-100 */
+  --secondary-foreground: oklch(0.21 0.006 285.885); /* zinc-900 */
+  --muted: oklch(0.967 0.001 286.375); /* zinc-100 */
+  --muted-foreground: oklch(0.552 0.016 285.938); /* zinc-500 */
+  --accent: oklch(0.967 0.001 286.375); /* zinc-100 */
+  --accent-foreground: oklch(0.21 0.006 285.885); /* zinc-900 */
+  --destructive: oklch(0.577 0.245 27.325); /* red-600 */
+  --success: oklch(0.596 0.145 163.225); /* emerald-600 — verified/success/online */
+  --warning: oklch(0.769 0.188 70.08); /* amber-500 — ending soon/warnings */
+  --border: oklch(0.92 0.004 286.32); /* zinc-200 */
+  --input: oklch(0.92 0.004 286.32); /* zinc-200 */
+  --ring: oklch(0.55 0.11 180); /* brand teal */
 }
 
 .dark {
   color-scheme: dark;
 
-  /* Palette carried over from the previous token set (dark) */
-  --background: #101217;
-  --foreground: #e8eaee;
-  --card: #191c23;
-  --card-foreground: #e8eaee;
-  --popover: #191c23;
-  --popover-foreground: #e8eaee;
-  --primary: #2f5fdd;
-  --primary-foreground: #ffffff;
-  --secondary: #191c23;
-  --secondary-foreground: #e8eaee;
-  --muted: #191c23;
-  --muted-foreground: #9aa1ad;
-  --accent: #191c23;
-  --accent-foreground: #e8eaee;
-  --destructive: #e5647a;
-  --border: #2b303a;
-  --input: #2b303a;
-  --ring: #8fb0ff;
+  --background: oklch(0.141 0.005 285.823); /* zinc-950 */
+  --foreground: oklch(0.985 0 0); /* zinc-100 */
+  --card: oklch(0.21 0.006 285.885); /* zinc-900 */
+  --card-foreground: oklch(0.985 0 0); /* zinc-100 */
+  --popover: oklch(0.21 0.006 285.885); /* zinc-900 */
+  --popover-foreground: oklch(0.985 0 0); /* zinc-100 */
+  --primary: oklch(0.777 0.152 181.912); /* teal-400 — brand, dark-adjusted */
+  --primary-foreground: oklch(0.141 0.005 285.823); /* zinc-950 */
+  --secondary: oklch(0.21 0.006 285.885); /* zinc-900 */
+  --secondary-foreground: oklch(0.985 0 0); /* zinc-100 */
+  --muted: oklch(0.21 0.006 285.885); /* zinc-900 */
+  --muted-foreground: oklch(0.705 0.015 286.067); /* zinc-400 */
+  --accent: oklch(0.21 0.006 285.885); /* zinc-900 */
+  --accent-foreground: oklch(0.985 0 0); /* zinc-100 */
+  --destructive: oklch(0.704 0.191 22.216); /* red-400 */
+  --success: oklch(0.696 0.17 162.48); /* emerald-400 */
+  --warning: oklch(0.828 0.189 84.429); /* amber-400 */
+  --border: oklch(0.274 0.006 286.033); /* zinc-800 */
+  --input: oklch(0.274 0.006 286.033); /* zinc-800 */
+  --ring: oklch(0.777 0.152 181.912); /* teal-400 */
 }
 
 @theme inline {
@@ -74,6 +80,8 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
