@@ -36,7 +36,7 @@ npm workspaces; node >= 20 (`.nvmrc` pins the dev version). No new top-level fol
 | `@monorepo/api`           | `apps/api`               | NestJS 11 REST API: controller → service → repository, Prisma, JWT + refresh rotation |
 | `@monorepo/web`           | `apps/web`               | Next.js 16 App Router SPA-ish frontend, feature-based structure                       |
 | `@monorepo/shared-types`  | `packages/shared-types`  | API contract: TS types + zod schemas generated from the swagger schema                |
-| `@monorepo/ui`            | `packages/ui`            | Design-system primitives (Button, Input, Dialog) + design tokens                      |
+| `@monorepo/ui`            | `packages/ui`            | Legacy design-system primitives — superseded by shadcn/ui in `apps/web`               |
 | `@monorepo/eslint-config` | `packages/eslint-config` | Shared ESLint flat configs: `base`, `node`, `web`, `react-tests`                      |
 | `@monorepo/tsconfig`      | `packages/tsconfig`      | Shared tsconfig presets: `base.json`, `nest.json`, `next.json`                        |
 
@@ -70,6 +70,7 @@ apps/api/
     ├── metrics/             # /metrics Prometheus endpoint
     ├── modules/             # ★ domain modules live here
     │   ├── auth/            # login/register, token.service (refresh rotation)
+    │   ├── sms/             # outbound SMS (IranPayamak pattern/OTP delivery)
     │   └── users/           # reference domain — mirror this for new modules
     ├── prisma/              # PrismaService (global Prisma module)
     ├── scripts/             # dump-swagger.ts (feeds gen:types), env-defaults.ts
@@ -104,10 +105,10 @@ apps/web/
     │       └── __tests__/
     ├── components/          # app-level shared components
     │   ├── auth-header.tsx
-    │   └── ui/              # wraps @monorepo/ui, app-themed (button, input, toast)
+    │   └── ui/              # shadcn/ui primitives (button, input, label, card, form, toast)
     ├── lib/                 # api-client (typed ApiError), bff helpers, config, logger, utils
     ├── providers/           # providers.tsx root + auth, query, theme providers
-    ├── styles/              # globals.css (token contract with @monorepo/ui)
+    ├── styles/              # globals.css (Tailwind v4 + shadcn theme variables)
     ├── types/               # ambient types (env.d.ts)
     ├── middleware.ts        # route protection before rendering
     └── instrumentation.ts   # OpenTelemetry entrypoint
@@ -124,7 +125,7 @@ packages/
 │       ├── generated/           # ★ generated — never hand-edit (schema.d.ts, schema.zod.ts)
 │       ├── index.ts             # public exports
 │       └── __tests__/
-├── ui/
+├── ui/                          # legacy design system — superseded by shadcn/ui in apps/web
 │   ├── tokens.css / ui.css      # design tokens + primitive styles
 │   └── src/
 │       ├── components/          # button, dialog, input
@@ -146,16 +147,16 @@ scripts/
 
 ## Where does new code go?
 
-| Adding                         | Location                                                                    | How                   |
-| ------------------------------ | --------------------------------------------------------------------------- | --------------------- |
-| API domain (orders, billing…)  | `apps/api/src/modules/<domain>/`                                            | `npm run gen:module`  |
-| Web feature                    | `apps/web/src/features/<feature>/`                                          | `npm run gen:feature` |
-| Cross-cutting API concern      | `apps/api/src/common/<guards                                                | interceptors          | filters | pipes | decorators>/` | manual |
-| App-level shared web component | `apps/web/src/components/` (or `components/ui/` if wrapping `@monorepo/ui`) | manual                |
-| Design-system primitive        | `packages/ui/src/components/`                                               | manual                |
-| API contract change            | `apps/api` DTOs → regenerate `shared-types`                                 | `npm run gen:types`   |
-| DB schema change               | `apps/api/prisma/schema.prisma`                                             | `prisma migrate dev`  |
-| Documentation                  | `doc/`                                                                      | manual                |
+| Adding                         | Location                                    | How                   |
+| ------------------------------ | ------------------------------------------- | --------------------- |
+| API domain (orders, billing…)  | `apps/api/src/modules/<domain>/`            | `npm run gen:module`  |
+| Web feature                    | `apps/web/src/features/<feature>/`          | `npm run gen:feature` |
+| Cross-cutting API concern      | `apps/api/src/common/<guards                | interceptors          | filters | pipes | decorators>/` | manual |
+| App-level shared web component | `apps/web/src/components/`                  | manual                |
+| UI primitive (shadcn/ui)       | `apps/web/src/components/ui/`               | `npx shadcn add`      |
+| API contract change            | `apps/api` DTOs → regenerate `shared-types` | `npm run gen:types`   |
+| DB schema change               | `apps/api/prisma/schema.prisma`             | `prisma migrate dev`  |
+| Documentation                  | `doc/`                                      | manual                |
 
 ## Do-not-touch (generated or managed)
 

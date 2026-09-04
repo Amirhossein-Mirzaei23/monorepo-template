@@ -53,10 +53,10 @@ apps/web/src/
 │       ├── types.ts
 │       └── __tests__/
 ├── components/              # app-level shared components (Button, Modal…)
-│   └── ui/                  # wraps packages/ui, app-themed
+│   └── ui/                  # shadcn/ui primitives (Tailwind v4, theme tokens in styles/globals.css)
 ├── lib/                     # utilities, axios/fetch client, constants
 ├── providers/               # react-query, theme, auth providers
-├── styles/                  # globals, tokens
+├── styles/                  # globals.css — Tailwind v4 + shadcn theme variables
 └── types/                   # ambient/global types
 ```
 
@@ -74,7 +74,7 @@ Rules:
 ## Shared
 
 - `packages/shared-types`: generated from the api's swagger schema (Phase 10); hand-authored DTO interfaces + zod schemas only until codegen lands.
-- `packages/ui`: design-system primitives (Button, Input, Dialog), styled with tokens; tokens contract shared with `apps/web/styles`.
+- `packages/ui`: legacy design-system primitives — superseded by shadcn/ui + Tailwind v4 in `apps/web` (no longer consumed by the web app).
 - `packages/tsconfig`: `base.json`, `nest.json`, `next.json` presets.
 - `packages/eslint-config`: flat config presets `web`, `node`, `react-tests`.
 

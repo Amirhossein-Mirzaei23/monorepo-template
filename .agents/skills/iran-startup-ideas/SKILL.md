@@ -1,6 +1,6 @@
 ---
 name: iran-startup-ideas
-description: Generate startup and product ideas tailored to the Iranian market, each architected as a responsive web platform plus a WebView mobile app (PWA wrapped with Capacitor/Cordova for Cafe Bazaar / direct APK distribution). Use whenever the user asks for Iran-focused startup ideas, Iranian or Persian app ideas (ایده استارتاپ), Iran market opportunities, or wants to brainstorm products for Iranian users — even if the word "startup" is never used.
+description: Generate startup and product ideas tailored to the Iranian market, each architected as a responsive web platform plus a WebView mobile app (PWA wrapped with Capacitor/Cordova for Cafe Bazaar / direct APK distribution). Use whenever the user asks for Iran-focused startup ideas, Iranian or Persian app ideas (ایده استارتاپ), Iran market opportunities, or wants to brainstorm products for Iranian users — even if the word "startup" is never used. After generating, every idea must be verified against the live market via web search for existing similar startups and apps (Iranian or regional) before it is presented as novel.
 ---
 
 # Iran Startup Idea Generation (Skill 1 of the Iran startup pipeline)
@@ -33,8 +33,21 @@ Proceed with defaults rather than blocking on questions; state the defaults you 
 3. For each idea produce **all five required fields** exactly as in the Output format below.
 4. The Tech Stack Brief must confirm dual deployment: a responsive web app **and** a WebView
    mobile app from the same codebase. Never propose a fully-native mobile stack.
-5. After generating, point the user to the companion skills for scoring and financial
-   estimates, or run the full pipeline if they asked for complete analysis.
+5. **Post-generation market check (mandatory).** After drafting, verify every idea against
+   the live market with web searches before presenting the ideas as final — an idea that a
+   single search could invalidate must not survive as "novel":
+   - Search in Persian **and** English: «[idea keywords] اپلیکیشن», «[idea] استارتاپ
+     ایرانی», "[idea] app Iran", plus incumbent-space queries (Divar, Snapp, Digikala,
+     Jabama, Cafe Bazaar / Myket listings; TechRasa / Digiato / Persian Wikipedia coverage).
+   - For each idea, record the closest existing products found: name, one line on what it
+     does, any scale/traction signal (downloads, funding, reviews), and the source name +
+     access date.
+   - If a direct, established equivalent exists, either replace the idea or reframe
+     "Why it works in Iran" around a concrete, search-evidenced gap the incumbent leaves
+     (recurring complaints in app reviews, an unserved segment, pricing structure).
+6. After generating (including the market check), point the user to the companion skills
+   for scoring and financial estimates, or run the full pipeline if they asked for
+   complete analysis.
 
 ## Output format
 
@@ -45,6 +58,9 @@ Per idea:
 - **Target Audience:** who in Iran, with rough scale and geography (Tehran-first vs national)
 - **Why it works in Iran:** the local cultural, economic, or technological pain points
 - **Tech Stack Brief:** web + WebView deployment plan (see Architecture standard below)
+- **Existing similar products:** (verified via web search, [date]) closest Iranian /
+  regional / global products found — name + one line each + traction signal if known;
+  then one line on this idea's wedge against them, or "no direct equivalent found"
 
 ## Example (frozen sample — do not reuse numbers verbatim)
 
@@ -58,6 +74,9 @@ Per idea:
   billing loops cheap to automate.
 - **Tech Stack Brief:** Next.js PWA + Capacitor (Cafe Bazaar/direct APK), NestJS +
   PostgreSQL, Zarinpal direct-to-manager, Kavenegar SMS, Jalali cycles, Excel import.
+- **Existing similar products:** (web-checked [date]) e.g. two micro building-charge apps
+  found on Cafe Bazaar — name them with links; wedge vs them = inflation-indexed budgets +
+  assembly voting, which their user reviews explicitly request.
 
 ## Architecture standard (every idea must comply)
 
@@ -111,6 +130,9 @@ Before finalizing, self-check each idea:
   volume, Telegram/Instagram channel sizes, incumbent app-review complaints, price spreads?
   Name where each signal can be checked; unobservable pain points weaken every downstream
   skill.
+- Did the post-generation market check run? "Existing similar products" must name real
+  found products (with sources and date) or state plainly that none were found — never
+  assume a gap.
 
 ## Full-pipeline compile contract
 
@@ -128,6 +150,7 @@ deliverable (default path in this repo: `doc/iran_startup_ideas.md`):
 ## Data freshness
 
 Time-sensitive claims: inflation rate, incumbents list, platform habits, regulation
-specifics. Anchor date: **2026-08-29** — re-verify via web search before relying on them in
-a new run. FX and benchmark figures across the three skills are anchored per their Data
+specifics, and market-check / competitor findings. Anchor date: **2026-09-04** — re-verify
+via web search before relying on them in a new run; competitor findings from an earlier
+run are stale and must be re-searched, not reused. FX and benchmark figures across the three skills are anchored per their Data
 freshness blocks; if skills disagree, re-verify and trust the most recently dated source.
