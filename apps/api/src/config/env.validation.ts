@@ -77,6 +77,27 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   SENTRY_DSN: string | undefined;
+
+  // SMS delivery (IranPayamak patterns) — optional, enforced at send time.
+  @IsOptional()
+  @IsString()
+  SMS_API_KEY: string | undefined;
+
+  @IsOptional()
+  @IsString()
+  SMS_PATTERN_URL = 'https://api.iranpayamak.com/ws/v1/sms/pattern';
+
+  @IsOptional()
+  @IsString()
+  SMS_LINE_NUMBER: string | undefined;
+
+  @IsOptional()
+  @IsString()
+  SMS_PATTERN_CODE_WEB: string | undefined;
+
+  @IsOptional()
+  @IsString()
+  SMS_PATTERN_CODE_ANDROID: string | undefined;
 }
 
 export function validateEnv(config: Record<string, unknown>): EnvironmentVariables {

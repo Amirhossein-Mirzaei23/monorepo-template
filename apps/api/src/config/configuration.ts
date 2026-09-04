@@ -22,6 +22,16 @@ export interface AppConfig {
     endpoint: string | undefined;
   };
   sentryDsn: string | undefined;
+  sms: SmsConfig;
+}
+
+/** IranPayamak pattern-SMS settings — optional; enforced at send time in SmsService. */
+export interface SmsConfig {
+  apiKey: string | undefined;
+  patternUrl: string;
+  lineNumber: string | undefined;
+  webPatternCode: string | undefined;
+  androidPatternCode: string | undefined;
 }
 
 export default (): { app: AppConfig } => ({
@@ -48,6 +58,13 @@ export default (): { app: AppConfig } => ({
       endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
     },
     sentryDsn: process.env.SENTRY_DSN || undefined,
+    sms: {
+      apiKey: process.env.SMS_API_KEY || undefined,
+      patternUrl: process.env.SMS_PATTERN_URL ?? 'https://api.iranpayamak.com/ws/v1/sms/pattern',
+      lineNumber: process.env.SMS_LINE_NUMBER || undefined,
+      webPatternCode: process.env.SMS_PATTERN_CODE_WEB || undefined,
+      androidPatternCode: process.env.SMS_PATTERN_CODE_ANDROID || undefined,
+    },
   },
 });
 
