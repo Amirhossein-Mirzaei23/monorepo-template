@@ -2,8 +2,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+const mockRouterPush = jest.fn();
+
 jest.mock('next/navigation', () => ({
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
+  useRouter: () => ({ push: mockRouterPush, replace: jest.fn(), back: jest.fn() }),
 }));
 
 import { ToastProvider } from '@/components/ui/toast';
@@ -30,7 +32,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   } as unknown as Response;
 }
 
-function renderLoginForm() {
+function renderLoginForm(redirectTo = '/dashboard') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -38,7 +40,7 @@ function renderLoginForm() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <ToastProvider>
-          <LoginForm />
+          <LoginForm redirectTo={redirectTo} />
         </ToastProvider>
       </AuthProvider>
     </QueryClientProvider>,
@@ -50,6 +52,7 @@ describe('LoginForm', () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
+    mockRouterPush.mockReset();
     // Default: the silent session-restore call fails (no cookie in tests).
     fetchMock.mockImplementation(async () => jsonResponse({ message: 'unauthenticated' }, 401));
     global.fetch = fetchMock as unknown as typeof global.fetch;
@@ -91,6 +94,24 @@ describe('LoginForm', () => {
       );
     });
     expect(await screen.findByText('خوش آمدید!')).toBeInTheDocument();
+    expect(mockRouterPush).toHaveBeenCalledWith('/dashboard');
+  });
+
+  it('redirects to the sanitized next target supplied by the login page', async () => {
+    fetchMock.mockImplementation(async (input) =>
+      String(input).includes('/api/auth/login')
+        ? jsonResponse(validLoginResponse, 200)
+        : jsonResponse({ message: 'unauthenticated' }, 401),
+    );
+    renderLoginForm('/onboarding');
+
+    await userEvent.type(screen.getByLabelText('ایمیل'), 'jane@example.com');
+    await userEvent.type(screen.getByLabelText('گذرواژه'), 'super-secret-1');
+    await userEvent.click(screen.getByRole('button', { name: 'ورود' }));
+
+    await waitFor(() => {
+      expect(mockRouterPush).toHaveBeenCalledWith('/onboarding');
+    });
   });
 
   it('reports API failures as error toasts (not inline)', async () => {

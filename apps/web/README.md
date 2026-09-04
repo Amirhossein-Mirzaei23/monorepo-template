@@ -4,7 +4,7 @@ App Router app. See `../../doc/ARCHITECTURE.md`.
 
 ## Structure
 
-- `src/app/` — routes and layouts only (thin): `(auth)`, `(dashboard)` route groups,
+- `src/app/` — routes and layouts only (thin): `(auth)`, `(public)`, `(app)` route groups,
   error boundaries, and the BFF (`src/app/api/auth/*` proxies to the api)
 - `src/features/<feature>/` — feature-owned components, hooks, api, schemas; public API via `index.ts`; reference: `src/features/auth`
 - `src/components/ui/` — shadcn/ui components (button, input, label, card, form) + toast provider; add more via `npx shadcn@latest add <component>`

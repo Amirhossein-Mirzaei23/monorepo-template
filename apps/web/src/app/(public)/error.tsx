@@ -2,8 +2,8 @@
 
 import { ErrorPanel } from '@/components/error-panel';
 
-/** Route-group error boundary for (dashboard) — doc/CONVENTIONS.md → Error Handling. */
-export default function DashboardError({
+/** Route-group error boundary for (public) — doc/CONVENTIONS.md → Error Handling. */
+export default function PublicError({
   error,
   reset,
 }: {

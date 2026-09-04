@@ -22,7 +22,7 @@ import { loginSchema, type LoginFormData } from '../schemas/login-schema';
  * react-hook-form + zod resolver via shadcn form primitives, inline field
  * errors from the schema, mutation failures surfaced as toasts.
  */
-export function LoginForm() {
+export function LoginForm({ redirectTo }: { redirectTo: string }) {
   const router = useRouter();
   const { toast } = useToast();
   const login = useLogin();
@@ -37,7 +37,9 @@ export function LoginForm() {
     try {
       await login.mutateAsync(values);
       toast('خوش آمدید!', 'success');
-      router.push('/dashboard');
+      // Post-auth destination: the sanitized `?next=` target from the login
+      // page, falling back to the dashboard (PLAT-002 route map).
+      router.push(redirectTo);
     } catch (error) {
       // Inline field errors already cover validation; anything here is an
       // API/network failure — report via toast, never raw response parsing.

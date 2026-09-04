@@ -31,7 +31,7 @@
 
 ## Error Handling (web)
 
-- Error boundaries at each route group (`app/(auth)`, `app/(dashboard)`), never per component.
+- Error boundaries at each route group (`app/(auth)`, `app/(public)`, `app/(app)`), never per component.
 - Mutations report failures via toasts; forms show inline field errors from zod resolver.
 - API errors normalized in `lib/api-client` to a typed `ApiError`; features never parse raw responses.
 

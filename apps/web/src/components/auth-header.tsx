@@ -14,7 +14,7 @@ export function AuthHeader() {
   const onLogout = async () => {
     await logout();
     toast('خارج شدید', 'info');
-    router.push('/login');
+    router.push('/');
   };
 
   const statusText = user

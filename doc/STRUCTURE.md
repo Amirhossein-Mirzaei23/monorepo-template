@@ -92,7 +92,8 @@ apps/web/
     ├── app/                 # routes only — thin, delegates to features
     │   ├── layout.tsx       # root layout (providers)
     │   ├── (auth)/          # auth route group: layout, error boundary, login/page
-    │   ├── (dashboard)/     # dashboard route group: layout, error boundary, page
+    │   ├── (public)/        # public route group: page (marketplace home), error boundary
+    │   ├── (app)/           # auth-gated app shell: layout, error boundary, dashboard/page
     │   └── api/auth/        # BFF route handlers: login, logout, me, refresh
     ├── features/            # ★ feature-based core
     │   └── auth/            # reference feature — mirror this for new features

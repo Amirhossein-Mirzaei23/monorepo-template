@@ -40,8 +40,9 @@ Rules:
 ```
 apps/web/src/
 ├── app/                     # routes only — thin, delegates to features
+│   ├── (public)/page.tsx    # public marketplace home (no auth)
 │   ├── (auth)/login/page.tsx
-│   ├── (dashboard)/layout.tsx
+│   ├── (app)/dashboard/     # auth-gated app shell (middleware-protected)
 │   └── api/                 # route handlers / BFF proxy to NestJS
 ├── features/                # ★ feature-based core
 │   └── <feature>/           # e.g. auth, users, billing

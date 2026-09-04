@@ -27,7 +27,7 @@ change, and commit one Prisma migration per schema change.
 - **DoD:** lint/typecheck/test green; screenshots of login RTL; `formatToman`, `formatFaDigits`, `formatJalali` exported from `@/lib/format`.
 - **Details for `lib/format.ts`:** `Intl.NumberFormat('fa-IR')`, `Intl.DateTimeFormat('fa-IR', { calendar: 'persian' })`, `formatToman(n)` → «۱۸۰٬۰۰۰٬۰۰۰ تومان».
 
-### PLAT-002 — Route restructure: public marketplace shell
+### PLAT-002 ✅ — Route restructure: public marketplace shell
 
 **P0 · Phase 0 · Platform · S** — Deps: PLAT-001
 
