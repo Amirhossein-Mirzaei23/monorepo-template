@@ -34,7 +34,7 @@ Complexity: XS 1 · S 22 · M 71 · L 12 · XL 1.
 | --------- | ------------------------------------- | --- | --- | --- | --- | -------- | ----------------------------------- | --- | --- | --- |
 | PLAT-001  | ✅ Persian/RTL foundation             | P0  | 0   | S   |     | CHT-001  | Conversation domain + get-or-create | P0  | 5   | M   |
 | PLAT-002  | ✅ Public marketplace shell/routes    | P0  | 0   | S   |     | CHT-002  | Conversations list API              | P0  | 5   | M   |
-| PLAT-003  | Env & config additions                | P0  | 0   | XS  |     | CHT-003  | Messages API (send/list/read)       | P0  | 5   | M   |
+| PLAT-003  | ✅ Env & config additions             | P0  | 0   | XS  |     | CHT-003  | Messages API (send/list/read)       | P0  | 5   | M   |
 | PLAT-004  | PWA manifest & icons                  | P1  | 10  | S   |     | CHT-004  | WebSocket gateway                   | P0  | 5   | L   |
 | PLAT-005  | SEO foundation                        | P1  | 10  | M   |     | CHT-005  | Conversations list UI               | P0  | 5   | L   |
 | PLAT-006  | Capacitor readiness spike             | P2  | 10  | M   |     | CHT-006  | Chat thread UI                      | P0  | 5   | L   |

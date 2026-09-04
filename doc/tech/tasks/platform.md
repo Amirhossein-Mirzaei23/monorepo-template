@@ -44,7 +44,7 @@ change, and commit one Prisma migration per schema change.
 - **Testing:** middleware unit test (cookie present/absent × routes).
 - **DoD:** routes green in dev, existing auth e2e still passes.
 
-### PLAT-003 — Env & config additions
+### PLAT-003 ✅ — Env & config additions
 
 **P0 · Phase 0 · Platform · XS** — Deps: none
 
