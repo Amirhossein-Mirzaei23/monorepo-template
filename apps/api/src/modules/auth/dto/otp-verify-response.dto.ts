@@ -16,8 +16,8 @@ export class OtpVerifyResponseDto {
   @ApiProperty({
     example: true,
     description:
-      'Whether the web should route to /onboarding instead of /dashboard. ' +
-      'Placeholder until ONB-001 lands the profile check.',
+      'Whether the web should route to /onboarding instead of /dashboard ' +
+      '(true once User.onboardingCompletedAt is set — see ONB-001).',
   })
   onboardingCompleted!: boolean;
 }

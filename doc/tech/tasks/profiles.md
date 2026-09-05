@@ -5,7 +5,7 @@ No business/legal documents in MVP. Public seller profile is a P0 trust surface.
 
 ---
 
-### ONB-001 — Profile domain + onboarding API
+### ONB-001 ✅ — Profile domain + onboarding API
 
 **P0 · Phase 1 · Profiles · M** — Deps: AUTH-003, CAT-001 (for interests)
 

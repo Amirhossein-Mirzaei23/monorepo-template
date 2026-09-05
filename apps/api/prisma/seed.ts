@@ -118,8 +118,10 @@ async function seedCategories(): Promise<{ roots: number; children: number }> {
 async function main(): Promise<void> {
   // AUTH-005: identity is phone-keyed. Every account upserts by phone, so the
   // seed is idempotent — re-running never duplicates rows and never touches
-  // data outside these fixture accounts. Sample users carry the User row only;
-  // profile fields land with ONB-001 (extend here then).
+  // data outside these fixture accounts. Categories land first so ONB-001
+  // profiles can reference their ids for interests.
+  const taxonomy = await seedCategories();
+
   const admin = {
     phone: '09120000000',
     email: 'admin@monorepo.local',
@@ -144,7 +146,7 @@ async function main(): Promise<void> {
   });
 
   // Sample buyer — logs in by phone OTP like every non-admin user.
-  await prisma.user.upsert({
+  const buyer = await prisma.user.upsert({
     where: { phone: buyerPhone },
     // Normalizes databases seeded before AUTH-005, where this row carried the
     // password/email of the old email/password seed — phone users have neither.
@@ -157,7 +159,7 @@ async function main(): Promise<void> {
   });
 
   // Sample seller.
-  await prisma.user.upsert({
+  const seller = await prisma.user.upsert({
     where: { phone: sellerPhone },
     update: {},
     create: {
@@ -167,13 +169,129 @@ async function main(): Promise<void> {
     },
   });
 
-  const taxonomy = await seedCategories();
+  const buyerProfile = await seedProfile(buyer.id, {
+    displayName: 'آرمان تهرانی',
+    province: 'tehran',
+    city: 'tehran',
+    bio: 'خریدار عمده پوشاک و کالای مصرفی',
+    instagram: 'arman.tehrani',
+    isBuyer: true,
+    interestSlugs: ['apparel', 'apparel-men', 'fmcg'],
+  });
+  const sellerProfile = await seedProfile(seller.id, {
+    displayName: 'مینا رضایی',
+    businessName: 'تولیدی پوشاک مینا',
+    province: 'isfahan',
+    city: 'isfahan',
+    bio: 'تولید و عرضه عمده پوشاک زنانه',
+    instagram: 'mina.apparel',
+    website: 'https://mina-apparel.ir',
+    isSeller: true,
+    sellerYearsActive: 6,
+    sellerBusinessType: 'MANUFACTURER',
+    sellerDescription: 'تولیدکننده پوشاک زنانه با ۶ سال سابقه صادرات به منطقه',
+    interestSlugs: ['apparel', 'apparel-women', 'bags-accessories'],
+  });
 
   console.info(`Seeded (upsert by phone/slug — safe to re-run):
 - ${admin.phone} — ADMIN, password login ${admin.email} / ${admin.password}
-- ${buyerPhone} — BUYER, phone OTP login
-- ${sellerPhone} — SELLER, phone OTP login
+- ${buyerPhone} — BUYER, onboarded: ${buyerProfile.displayName}
+- ${sellerPhone} — SELLER, onboarded: ${sellerProfile.businessName}
 - ${taxonomy.roots} root + ${taxonomy.children} child categories (CAT-001)`);
+}
+
+/**
+ * ONB-001: completed fixture profiles + interests for the sample users.
+ * Idempotent — the profile upserts by unique userId, the interest set is
+ * replaced wholesale, and onboardingCompletedAt is stamped only while null
+ * (the first-completion date survives re-runs, mirroring the API rule).
+ */
+async function seedProfile(
+  userId: string,
+  profile: {
+    displayName: string;
+    businessName?: string;
+    province?: string;
+    city?: string;
+    bio?: string;
+    instagram?: string;
+    website?: string;
+    isBuyer?: boolean;
+    isSeller?: boolean;
+    sellerYearsActive?: number;
+    sellerBusinessType?: string;
+    sellerDescription?: string;
+    interestSlugs: string[];
+  },
+): Promise<{ displayName: string; businessName: string | null }> {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    throw new Error(`Seed: user ${userId} missing — seed users before profiles`);
+  }
+
+  const roles: AccountRole[] = [
+    ...(profile.isBuyer ? [AccountRole.BUYER] : []),
+    ...(profile.isSeller ? [AccountRole.SELLER] : []),
+  ];
+  if (user.onboardingCompletedAt == null) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { accountRoles: roles, onboardingCompletedAt: new Date() },
+    });
+  } else {
+    await prisma.user.update({ where: { id: userId }, data: { accountRoles: roles } });
+  }
+
+  const row = await prisma.profile.upsert({
+    where: { userId },
+    update: {
+      displayName: profile.displayName,
+      businessName: profile.businessName ?? null,
+      province: profile.province ?? null,
+      city: profile.city ?? null,
+      bio: profile.bio ?? null,
+      instagram: profile.instagram ?? null,
+      website: profile.website ?? null,
+      isBuyer: profile.isBuyer ?? false,
+      isSeller: profile.isSeller ?? false,
+      sellerYearsActive: profile.sellerYearsActive ?? null,
+      sellerBusinessType: profile.sellerBusinessType ?? null,
+      sellerDescription: profile.sellerDescription ?? null,
+    },
+    create: {
+      userId,
+      displayName: profile.displayName,
+      businessName: profile.businessName,
+      province: profile.province,
+      city: profile.city,
+      bio: profile.bio,
+      instagram: profile.instagram,
+      website: profile.website,
+      isBuyer: profile.isBuyer ?? false,
+      isSeller: profile.isSeller ?? false,
+      sellerYearsActive: profile.sellerYearsActive,
+      sellerBusinessType: profile.sellerBusinessType,
+      sellerDescription: profile.sellerDescription,
+    },
+  });
+
+  const categoryIds = (
+    await Promise.all(
+      profile.interestSlugs.map((slug) => prisma.category.findUnique({ where: { slug } })),
+    )
+  )
+    .filter((category): category is NonNullable<typeof category> => category !== null)
+    .map((category) => category.id);
+  if (categoryIds.length !== profile.interestSlugs.length) {
+    throw new Error('Seed: unknown interest slug — run seedCategories first');
+  }
+
+  await prisma.profileInterest.deleteMany({ where: { profileId: row.id } });
+  await prisma.profileInterest.createMany({
+    data: categoryIds.map((categoryId) => ({ profileId: row.id, categoryId })),
+  });
+
+  return { displayName: row.displayName, businessName: row.businessName };
 }
 
 main()

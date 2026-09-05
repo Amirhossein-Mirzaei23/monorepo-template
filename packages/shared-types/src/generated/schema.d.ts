@@ -184,7 +184,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Current user profile (requires access token) */
+        /** Current user profile + onboarding flag (requires access token) */
         get: operations["AuthController_me"];
         put?: never;
         post?: never;
@@ -203,6 +203,40 @@ export interface paths {
         };
         /** Category tree (active only) — public, no auth */
         get: operations["CategoriesController_tree"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/profiles/onboarding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Submit onboarding — creates or idempotently updates the profile in one transaction */
+        put: operations["ProfilesController_submitOnboarding"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/profiles/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Own profile with interests and trust placeholders (404 before onboarding) */
+        get: operations["ProfilesController_me"];
         put?: never;
         post?: never;
         delete?: never;
@@ -332,7 +366,7 @@ export interface components {
             accessToken: string;
             user: components["schemas"]["UserResponseDto"];
             /**
-             * @description Whether the web should route to /onboarding instead of /dashboard. Placeholder until ONB-001 lands the profile check.
+             * @description Whether the web should route to /onboarding instead of /dashboard (true once User.onboardingCompletedAt is set — see ONB-001).
              * @example true
              */
             onboardingCompleted: boolean;
@@ -351,6 +385,39 @@ export interface components {
             accessToken: string;
             user: components["schemas"]["UserResponseDto"];
         };
+        MeResponseDto: {
+            /** @example clx…cuid */
+            id: string;
+            /**
+             * @description Normalized `09xxxxxxxxx`
+             * @example 09120000000
+             */
+            phone: string;
+            /** @example jane@example.com */
+            email: string | null;
+            /** @example Jane Doe */
+            name: string;
+            /** @enum {string} */
+            role: "USER" | "ADMIN";
+            /** @enum {string} */
+            status: "ACTIVE" | "SUSPENDED" | "BLOCKED" | "DELETED";
+            accountRoles: ("BUYER" | "SELLER")[];
+            /**
+             * Format: date-time
+             * @example 2026-01-01T00:00:00.000Z
+             */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @example 2026-01-01T00:00:00.000Z
+             */
+            updatedAt: string;
+            /**
+             * @description Whether the web should route to /onboarding instead of /dashboard (true once onboardingCompletedAt is set).
+             * @example false
+             */
+            onboardingCompleted: boolean;
+        };
         CategoryTreeNodeDto: {
             /** @example clx…cuid */
             id: string;
@@ -361,6 +428,120 @@ export interface components {
             /** @example apparel */
             slug: string;
             children: components["schemas"]["CategoryTreeNodeDto"][];
+        };
+        SaveOnboardingDto: {
+            /**
+             * @description Acts as a buyer (mirrors User.accountRoles)
+             * @example true
+             */
+            isBuyer: boolean;
+            /**
+             * @description Acts as a seller (mirrors User.accountRoles)
+             * @example false
+             */
+            isSeller: boolean;
+            /** @example مینا رضایی */
+            displayName: string;
+            /**
+             * @description Required when isSeller (service-level rule)
+             * @example تولیدی پوشاک مینا
+             */
+            businessName?: string | null;
+            /**
+             * @description Province slug from the static geo list — must be sent together with city
+             * @example isfahan
+             */
+            province?: string | null;
+            /**
+             * @description City slug; validated against the province (pair check in ProfilesService)
+             * @example kashan
+             */
+            city?: string | null;
+            /** @example خرید عمده پوشاک برای فروشگاه */
+            bio?: Record<string, never> | null;
+            /**
+             * @description Instagram handle (username only, no URL)
+             * @example mina.apparel
+             */
+            instagram?: string | null;
+            /**
+             * Format: url
+             * @example https://mina-apparel.ir
+             */
+            website?: string | null;
+            /** @example 6 */
+            sellerYearsActive?: Record<string, never> | null;
+            /** @enum {string|null} */
+            sellerBusinessType?: "MANUFACTURER" | "WORKSHOP" | "WHOLESALER" | "RETAILER" | "TRADING" | "SERVICE" | "OTHER" | null;
+            /** @example تولیدکننده پوشاک زنانه با ۶ سال سابقه صادرات */
+            sellerDescription?: Record<string, never> | null;
+            /**
+             * @description Interest category ids (active categories only)
+             * @example [
+             *       "clx…cuid",
+             *       "clx…cuid"
+             *     ]
+             */
+            interests?: string[];
+        };
+        ProfileInterestCategoryDto: {
+            /** @example clx…cuid */
+            id: string;
+            /** @example پوشاک */
+            nameFa: string;
+            /** @example apparel */
+            slug: string;
+        };
+        ProfileResponseDto: {
+            /** @example clx…cuid */
+            id: string;
+            /** @example clx…cuid */
+            userId: string;
+            /** @example مینا رضایی */
+            displayName: string;
+            /** @example تولیدی پوشاک مینا */
+            businessName?: string | null;
+            /** @example isfahan */
+            province?: string | null;
+            /** @example kashan */
+            city?: string | null;
+            /** @example خرید عمده پوشاک */
+            bio?: string | null;
+            /** @example mina.apparel */
+            instagram?: string | null;
+            /** @example https://mina-apparel.ir */
+            website?: string | null;
+            /** @example true */
+            isBuyer: boolean;
+            /** @example false */
+            isSeller: boolean;
+            /** @example 6 */
+            sellerYearsActive?: number | null;
+            /** @enum {string|null} */
+            sellerBusinessType?: "MANUFACTURER" | "WORKSHOP" | "WHOLESALER" | "RETAILER" | "TRADING" | "SERVICE" | "OTHER" | null;
+            /** @example تولیدکننده پوشاک زنانه */
+            sellerDescription?: string | null;
+            interests: components["schemas"]["ProfileInterestCategoryDto"][];
+            /**
+             * @description Placeholder until TRS-001 lands verification badges
+             * @example []
+             */
+            verificationBadges: string[];
+            /**
+             * @description User.onboardingCompletedAt is set — mirrors the /auth/me flag
+             * @example true
+             */
+            onboardingCompleted: boolean;
+            /**
+             * Format: date-time
+             * @example 2026-01-01T00:00:00.000Z
+             */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @example 2026-01-01T00:00:00.000Z
+             */
+            updatedAt: string;
         };
     };
     responses: never;
@@ -654,7 +835,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserResponseDto"];
+                    "application/json": components["schemas"]["MeResponseDto"];
                 };
             };
         };
@@ -675,6 +856,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CategoryTreeNodeDto"][];
+                };
+            };
+        };
+    };
+    ProfilesController_submitOnboarding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveOnboardingDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileResponseDto"];
+                };
+            };
+        };
+    };
+    ProfilesController_me: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileResponseDto"];
                 };
             };
         };

@@ -175,7 +175,8 @@ describe('AuthController (e2e)', () => {
       expect(response.body.user.name).toMatch(/^کاربر /);
       expect(response.body.user.status).toBe('ACTIVE');
       expect(response.body.user.accountRoles).toEqual([]);
-      expect(response.body.onboardingCompleted).toBe(true);
+      // ONB-001: real check — a fresh user is routed to /onboarding.
+      expect(response.body.onboardingCompleted).toBe(false);
       expect(response.body).not.toHaveProperty('refreshToken');
 
       const setCookie = response.headers['set-cookie'] as unknown as string[];

@@ -46,10 +46,14 @@ model User {
   role          UserRole       @default(USER)
   status        UserStatus     @default(ACTIVE)
   accountRoles  AccountRole[]  @default([])
+  /// Set once by the first PUT /profiles/onboarding and never reset afterwards
+  /// (ONB-001) — re-onboarding updates the profile but keeps the original date.
+  onboardingCompletedAt DateTime?
   deletedAt     DateTime?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   refreshTokens RefreshToken[]
+  profile       Profile?
 
   @@index([status])
 }
@@ -91,6 +95,8 @@ model Category {
   /// categories (lots keep referencing them).
   parent    Category?  @relation("CategoryChildren", fields: [parentId], references: [id], onDelete: Restrict)
   children  Category[] @relation("CategoryChildren")
+  /// Back-relation for the explicit ProfileInterest join (ONB-001).
+  interests ProfileInterest[]
   sortOrder Int
   isActive  Boolean    @default(true)
   createdAt DateTime   @default(now())
@@ -116,4 +122,49 @@ model OtpCode {
   createdAt  DateTime   @default(now())
 
   @@index([phone, createdAt])
+}
+
+/// Business identity, 1–1 with User (ONB-001, plan §3). The "Business" entity is
+/// deliberately folded into nullable seller fields here — one account, dual
+/// buyer/seller hats. province/city store slugs from the static geo list
+/// (`src/common/constants/iran-geo.ts`); isBuyer/isSeller mirror
+/// User.accountRoles and are written only through the onboarding transaction.
+/// sellerBusinessType is a plain String validated against the DTO allowlist
+/// (not a DB enum) so the list can grow without migrations.
+model Profile {
+  id                 String            @id @default(cuid())
+  userId             String            @unique
+  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName        String
+  businessName       String?
+  /// Province slug from iran-geo.ts (EN key; Persian label resolved client-side).
+  province           String?
+  /// City slug from iran-geo.ts — always written together with its province.
+  city               String?
+  bio                String?
+  instagram          String?
+  website            String?
+  isBuyer            Boolean           @default(false)
+  isSeller           Boolean           @default(false)
+  sellerYearsActive  Int?
+  sellerBusinessType String?
+  sellerDescription  String?
+  interests          ProfileInterest[]
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+}
+
+/// Explicit profile↔category interests join (ONB-001) — a real FK table, not a
+/// Prisma implicit m–n, per the relational-spine rule. The interest set is
+/// replaced wholesale inside the onboarding transaction.
+model ProfileInterest {
+  id         String   @id @default(cuid())
+  profileId  String
+  profile    Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([profileId, categoryId])
+  @@index([categoryId])
 }

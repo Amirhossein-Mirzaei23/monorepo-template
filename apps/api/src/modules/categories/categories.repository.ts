@@ -52,6 +52,14 @@ export class CategoriesRepository {
     return this.client(tx).category.findUnique({ where: { id } });
   }
 
+  /**
+   * Rows for an exact set of ids (any depth; active-state checks are the
+   * caller's rule). Used by ONB-001 to validate interest ids.
+   */
+  async findManyByIds(ids: string[], tx: Tx = undefined): Promise<Category[]> {
+    return this.client(tx).category.findMany({ where: { id: { in: ids } } });
+  }
+
   async findBySlug(slug: string, tx: Tx = undefined): Promise<Category | null> {
     return this.client(tx).category.findUnique({ where: { slug } });
   }

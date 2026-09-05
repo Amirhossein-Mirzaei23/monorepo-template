@@ -3,6 +3,8 @@ import {
   type OtpCode,
   OtpPurpose,
   type Prisma,
+  type Profile,
+  type ProfileInterest,
   type User,
   UserRole,
   UserStatus,
@@ -33,6 +35,7 @@ type UserOrderBy = Record<string, 'asc' | 'desc'>;
 type CategoryWhere = {
   isActive?: boolean;
   parentId?: string | null;
+  id?: { in: string[] };
 };
 type CategoryOrderBy = Record<string, 'asc' | 'desc'>;
 /** Exactly the surface CategoriesRepository uses: one level of included children. */
@@ -43,6 +46,13 @@ type CategoryFindManyArgs = {
   take?: number;
   include?: { children?: { where?: CategoryWhere; orderBy?: CategoryOrderBy | CategoryOrderBy[] } };
 };
+
+/** Exactly the surface ProfilesRepository reads back (interests + category). */
+type ProfileWithInterestsRow = Profile & {
+  interests: (ProfileInterest & { category: Category })[];
+};
+/** Writable subset of the onboarding upsert payload (all scalars, no relations). */
+type ProfileUpsertData = Omit<Profile, 'id' | 'userId' | 'createdAt' | 'updatedAt'>;
 
 type OtpWhere = {
   id?: string;
@@ -58,15 +68,17 @@ const nowIso = () => new Date();
 
 /**
  * Deterministic in-memory Prisma stand-in covering exactly the surface this app
- * uses (user + refreshToken + otpCode + category tables, interactive
- * $transaction, $queryRaw). Lets unit and e2e suites run green without a
- * database.
+ * uses (user + refreshToken + otpCode + category + profile + profileInterest
+ * tables, interactive $transaction, $queryRaw). Lets unit and e2e suites run
+ * green without a database.
  */
 export class FakePrisma {
   private readonly users = new Map<string, User>();
   private readonly refreshTokens = new Map<string, RefreshTokenRow>();
   private readonly otpCodes = new Map<string, OtpCode>();
   private readonly categories = new Map<string, Category>();
+  private readonly profiles = new Map<string, Profile>();
+  private readonly profileInterests = new Map<string, ProfileInterest>();
 
   readonly user = {
     findMany: async ({
@@ -120,6 +132,7 @@ export class FakePrisma {
         role: (data.role as UserRole | undefined) ?? UserRole.USER,
         status: (data.status as UserStatus | undefined) ?? UserStatus.ACTIVE,
         accountRoles: (data.accountRoles as AccountRole[] | undefined) ?? [],
+        onboardingCompletedAt: (data.onboardingCompletedAt as Date | null | undefined) ?? null,
         deletedAt: null,
         createdAt: nowIso(),
         updatedAt: nowIso(),
@@ -152,6 +165,9 @@ export class FakePrisma {
         ...(data.status !== undefined ? { status: data.status as UserStatus } : {}),
         ...(data.accountRoles !== undefined
           ? { accountRoles: data.accountRoles as AccountRole[] }
+          : {}),
+        ...(data.onboardingCompletedAt !== undefined
+          ? { onboardingCompletedAt: data.onboardingCompletedAt as Date | null }
           : {}),
         ...(data.deletedAt !== undefined ? { deletedAt: data.deletedAt as Date | null } : {}),
         updatedAt: nowIso(),
@@ -376,6 +392,89 @@ export class FakePrisma {
     },
   };
 
+  /** Exactly the surface ProfilesRepository uses (ONB-001). */
+  readonly profile = {
+    findUnique: async ({
+      where,
+    }: {
+      where: { userId?: string; id?: string };
+    }): Promise<ProfileWithInterestsRow | null> => {
+      let found: Profile | undefined;
+      if (where.userId !== undefined) {
+        found = [...this.profiles.values()].find((row) => row.userId === where.userId);
+      } else if (where.id !== undefined) {
+        found = this.profiles.get(where.id);
+      }
+      if (!found) {
+        return null;
+      }
+      const interests = [...this.profileInterests.values()]
+        .filter((row) => row.profileId === found.id)
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+        .map((row) => {
+          const category = this.categories.get(row.categoryId);
+          if (!category) {
+            throw new Error(`FakePrisma: interest ${row.id} references a missing category`);
+          }
+          return { ...cloneInterest(row), category: cloneCategory(category) };
+        });
+      return { ...cloneProfile(found), interests };
+    },
+    upsert: async ({
+      where,
+      create,
+      update,
+    }: {
+      where: { userId: string };
+      create: { userId: string } & ProfileUpsertData;
+      update: ProfileUpsertData;
+    }): Promise<Profile> => {
+      const existing = [...this.profiles.values()].find((row) => row.userId === where.userId);
+      if (!existing) {
+        const row: Profile = {
+          id: randomUUID(),
+          ...create,
+          createdAt: nowIso(),
+          updatedAt: nowIso(),
+        };
+        this.profiles.set(row.id, row);
+        return cloneProfile(row);
+      }
+      const next: Profile = { ...existing, ...update, updatedAt: nowIso() };
+      this.profiles.set(existing.id, next);
+      return cloneProfile(next);
+    },
+  };
+
+  readonly profileInterest = {
+    createMany: async ({
+      data,
+    }: {
+      data: Array<{ profileId: string; categoryId: string }>;
+    }): Promise<{ count: number }> => {
+      for (const item of data) {
+        const row: ProfileInterest = {
+          id: randomUUID(),
+          profileId: item.profileId,
+          categoryId: item.categoryId,
+          createdAt: nowIso(),
+        };
+        this.profileInterests.set(row.id, row);
+      }
+      return { count: data.length };
+    },
+    deleteMany: async ({ where }: { where: { profileId: string } }): Promise<{ count: number }> => {
+      let count = 0;
+      for (const [id, row] of this.profileInterests) {
+        if (row.profileId === where.profileId) {
+          this.profileInterests.delete(id);
+          count += 1;
+        }
+      }
+      return { count };
+    },
+  };
+
   async $transaction<T>(fn: (tx: this) => Promise<T>): Promise<T> {
     return fn(this);
   }
@@ -395,6 +494,7 @@ export class FakePrisma {
       role?: UserRole;
       status?: UserStatus;
       accountRoles?: AccountRole[];
+      onboardingCompletedAt?: Date | null;
     },
   ): User {
     const row: User = {
@@ -406,6 +506,7 @@ export class FakePrisma {
       role: user.role ?? UserRole.USER,
       status: user.status ?? UserStatus.ACTIVE,
       accountRoles: user.accountRoles ?? [],
+      onboardingCompletedAt: user.onboardingCompletedAt ?? null,
       deletedAt: null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -463,6 +564,63 @@ export class FakePrisma {
     this.categories.set(row.id, row);
     return cloneCategory(row);
   }
+
+  /** Test helper: pre-onboarded profile (GET /profiles/me fixtures). */
+  seedProfile(profile: {
+    userId: string;
+    displayName: string;
+    businessName?: string | null;
+    province?: string | null;
+    city?: string | null;
+    bio?: string | null;
+    instagram?: string | null;
+    website?: string | null;
+    isBuyer?: boolean;
+    isSeller?: boolean;
+    sellerYearsActive?: number | null;
+    sellerBusinessType?: string | null;
+    sellerDescription?: string | null;
+    interestCategoryIds?: string[];
+  }): ProfileWithInterestsRow {
+    const row: Profile = {
+      id: randomUUID(),
+      userId: profile.userId,
+      displayName: profile.displayName,
+      businessName: profile.businessName ?? null,
+      province: profile.province ?? null,
+      city: profile.city ?? null,
+      bio: profile.bio ?? null,
+      instagram: profile.instagram ?? null,
+      website: profile.website ?? null,
+      isBuyer: profile.isBuyer ?? false,
+      isSeller: profile.isSeller ?? false,
+      sellerYearsActive: profile.sellerYearsActive ?? null,
+      sellerBusinessType: profile.sellerBusinessType ?? null,
+      sellerDescription: profile.sellerDescription ?? null,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+    this.profiles.set(row.id, row);
+    for (const categoryId of profile.interestCategoryIds ?? []) {
+      const interest: ProfileInterest = {
+        id: randomUUID(),
+        profileId: row.id,
+        categoryId,
+        createdAt: nowIso(),
+      };
+      this.profileInterests.set(interest.id, interest);
+    }
+    const interests = [...this.profileInterests.values()]
+      .filter((interest) => interest.profileId === row.id)
+      .map((interest) => {
+        const category = this.categories.get(interest.categoryId);
+        if (!category) {
+          throw new Error(`FakePrisma: interest ${interest.id} references a missing category`);
+        }
+        return { ...cloneInterest(interest), category: cloneCategory(category) };
+      });
+    return { ...cloneProfile(row), interests };
+  }
 }
 
 function matchesWhere(where: UserWhere | undefined): (user: User) => boolean {
@@ -500,7 +658,8 @@ function cloneOtp(row: OtpCode): OtpCode {
 function matchesCategoryWhere(where: CategoryWhere | undefined): (row: Category) => boolean {
   return (row) =>
     (where?.isActive === undefined || row.isActive === where.isActive) &&
-    (where?.parentId === undefined || row.parentId === where.parentId);
+    (where?.parentId === undefined || row.parentId === where.parentId) &&
+    (where?.id === undefined || where.id.in.includes(row.id));
 }
 
 /** Multi-key stable sort (orderBy is a single object or an array of them). */
@@ -524,4 +683,12 @@ function sortRows<T extends Category | User>(
 
 function cloneCategory(row: Category): Category {
   return { ...row, createdAt: new Date(row.createdAt), updatedAt: new Date(row.updatedAt) };
+}
+
+function cloneProfile(row: Profile): Profile {
+  return { ...row, createdAt: new Date(row.createdAt), updatedAt: new Date(row.updatedAt) };
+}
+
+function cloneInterest(row: ProfileInterest): ProfileInterest {
+  return { ...row, createdAt: new Date(row.createdAt) };
 }

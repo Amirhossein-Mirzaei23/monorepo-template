@@ -69,6 +69,19 @@ export const loginResponseDtoSchema = z.object({
   user: userResponseDtoSchema,
 });
 
+export const meResponseDtoSchema = z.object({
+  id: z.string(),
+  phone: z.string(),
+  email: z.string().nullable(),
+  name: z.string(),
+  role: z.enum(['USER', 'ADMIN']),
+  status: z.enum(['ACTIVE', 'SUSPENDED', 'BLOCKED', 'DELETED']),
+  accountRoles: z.array(z.enum(['BUYER', 'SELLER'])),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  onboardingCompleted: z.boolean(),
+});
+
 type CategoryTreeNodeDto = components['schemas']['CategoryTreeNodeDto'];
 export const categoryTreeNodeDtoSchema: z.ZodType<CategoryTreeNodeDto> = z.object({
   id: z.string(),
@@ -76,6 +89,56 @@ export const categoryTreeNodeDtoSchema: z.ZodType<CategoryTreeNodeDto> = z.objec
   nameEn: z.string().nullable().optional(),
   slug: z.string(),
   children: z.array(z.lazy(() => categoryTreeNodeDtoSchema)),
+});
+
+export const saveOnboardingDtoSchema = z.object({
+  isBuyer: z.boolean(),
+  isSeller: z.boolean(),
+  displayName: z.string(),
+  businessName: z.string().nullable().optional(),
+  province: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  bio:   z.object({
+
+    }).nullable().optional(),
+  instagram: z.string().nullable().optional(),
+  website: z.string().nullable().optional(),
+  sellerYearsActive:   z.object({
+
+    }).nullable().optional(),
+  sellerBusinessType: z.enum(['MANUFACTURER', 'WORKSHOP', 'WHOLESALER', 'RETAILER', 'TRADING', 'SERVICE', 'OTHER']).nullable().optional(),
+  sellerDescription:   z.object({
+
+    }).nullable().optional(),
+  interests: z.array(z.string()).optional(),
+});
+
+export const profileInterestCategoryDtoSchema = z.object({
+  id: z.string(),
+  nameFa: z.string(),
+  slug: z.string(),
+});
+
+export const profileResponseDtoSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  displayName: z.string(),
+  businessName: z.string().nullable().optional(),
+  province: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  bio: z.string().nullable().optional(),
+  instagram: z.string().nullable().optional(),
+  website: z.string().nullable().optional(),
+  isBuyer: z.boolean(),
+  isSeller: z.boolean(),
+  sellerYearsActive: z.number().nullable().optional(),
+  sellerBusinessType: z.enum(['MANUFACTURER', 'WORKSHOP', 'WHOLESALER', 'RETAILER', 'TRADING', 'SERVICE', 'OTHER']).nullable().optional(),
+  sellerDescription: z.string().nullable().optional(),
+  interests: z.array(profileInterestCategoryDtoSchema),
+  verificationBadges: z.array(z.string()),
+  onboardingCompleted: z.boolean(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
 });
 
 export const apiSchemas = {
@@ -89,5 +152,9 @@ export const apiSchemas = {
   OtpVerifyResponseDto: otpVerifyResponseDtoSchema,
   LoginDto: loginDtoSchema,
   LoginResponseDto: loginResponseDtoSchema,
+  MeResponseDto: meResponseDtoSchema,
   CategoryTreeNodeDto: categoryTreeNodeDtoSchema,
+  SaveOnboardingDto: saveOnboardingDtoSchema,
+  ProfileInterestCategoryDto: profileInterestCategoryDtoSchema,
+  ProfileResponseDto: profileResponseDtoSchema,
 } as const;

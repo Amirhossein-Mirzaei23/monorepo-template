@@ -16,11 +16,11 @@ import type { Request, Response } from 'express';
 import { type AuthUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { requireAppConfig } from '../../config/configuration';
-import { UserResponseDto } from '../users/dto/user-response.dto';
 import { OTP_REQUEST_THROTTLE, REFRESH_COOKIE_NAME, REFRESH_COOKIE_PATH } from './auth.constants';
 import { AuthService, type Session } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { LoginResponseDto } from './dto/login-response.dto';
+import { MeResponseDto } from './dto/me-response.dto';
 import { OtpRequestDto } from './dto/otp-request.dto';
 import { OtpRequestResponseDto } from './dto/otp-request-response.dto';
 import { OtpVerifyDto } from './dto/otp-verify.dto';
@@ -119,9 +119,9 @@ export class AuthController {
 
   @Get('me')
   @ApiBearerAuth('access-token')
-  @ApiOkResponse({ type: UserResponseDto })
-  @ApiOperation({ summary: 'Current user profile (requires access token)' })
-  async me(@CurrentUser() user: AuthUser): Promise<UserResponseDto> {
+  @ApiOkResponse({ type: MeResponseDto })
+  @ApiOperation({ summary: 'Current user profile + onboarding flag (requires access token)' })
+  async me(@CurrentUser() user: AuthUser): Promise<MeResponseDto> {
     return this.auth.getProfile(user.sub);
   }
 

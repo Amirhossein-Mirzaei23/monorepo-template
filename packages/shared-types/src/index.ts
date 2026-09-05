@@ -19,10 +19,15 @@ export type OtpRequestDto = components['schemas']['OtpRequestDto'];
 export type OtpRequestResponseDto = components['schemas']['OtpRequestResponseDto'];
 export type OtpVerifyDto = components['schemas']['OtpVerifyDto'];
 export type OtpVerifyResponseDto = components['schemas']['OtpVerifyResponseDto'];
+export type MeResponseDto = components['schemas']['MeResponseDto'];
+export type SaveOnboardingDto = components['schemas']['SaveOnboardingDto'];
+export type ProfileResponseDto = components['schemas']['ProfileResponseDto'];
 /** The API inlines the role enum into its DTOs; derive it from the user shape. */
 export type UserRole = UserResponseDto['role'];
 export type UserStatus = UserResponseDto['status'];
 export type AccountRole = UserResponseDto['accountRoles'][number];
+/** Closed seller-business-type allowlist (profile DTO; plain string in the DB). */
+export type SellerBusinessType = NonNullable<SaveOnboardingDto['sellerBusinessType']>;
 
 // --- runtime validation schemas (zod, generated from the same document) ---
 export const userResponseSchema = apiSchemas.UserResponseDto;
@@ -35,6 +40,9 @@ export const otpRequestSchema = apiSchemas.OtpRequestDto;
 export const otpRequestResponseSchema = apiSchemas.OtpRequestResponseDto;
 export const otpVerifySchema = apiSchemas.OtpVerifyDto;
 export const otpVerifyResponseSchema = apiSchemas.OtpVerifyResponseDto;
+export const meResponseSchema = apiSchemas.MeResponseDto;
+export const saveOnboardingSchema = apiSchemas.SaveOnboardingDto;
+export const profileResponseSchema = apiSchemas.ProfileResponseDto;
 
 // --- shared helpers ---
 

@@ -1,7 +1,7 @@
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { OtpPurpose, UserRole, UserStatus } from '@prisma/client';
+import { AccountRole, OtpPurpose, UserRole, UserStatus } from '@prisma/client';
 import { hash } from 'bcryptjs';
 import type { PrismaService } from '../../../prisma/prisma.service';
 import { FakePrisma } from '../../../test/fakes/fake-prisma';
@@ -172,12 +172,24 @@ describe('AuthService', () => {
       expect(result.user.accountRoles).toEqual([]);
       // Placeholder display name, not a schema default.
       expect(result.user.name).toBe('کاربر 0912***444');
-      // Placeholder onboarding hint: name set → treated as onboarded (ONB-001 replaces this).
-      expect(result.onboardingCompleted).toBe(true);
+      // ONB-001: real check — false until onboardingCompletedAt is stamped.
+      expect(result.onboardingCompleted).toBe(false);
       expect(result.refreshToken).toEqual(expect.any(String));
 
       const stored = await fake.user.findUnique({ where: { phone: '09123334444' } });
       expect(stored?.passwordHash).toBeNull();
+      expect(stored?.onboardingCompletedAt).toBeNull();
+    });
+
+    it('flags onboardingCompleted for a user that finished onboarding (ONB-001)', async () => {
+      fake.seedUser({
+        phone: '09123334444',
+        name: 'Ali',
+        onboardingCompletedAt: new Date('2026-01-01T00:00:00.000Z'),
+      });
+
+      const result = await auth.verifyOtp({ phone: '09123334444', code: '123456' });
+      expect(result.onboardingCompleted).toBe(true);
     });
 
     it('reuses the existing user and never duplicates rows', async () => {
@@ -231,6 +243,36 @@ describe('AuthService', () => {
       await expect(auth.refresh(session.refreshToken)).rejects.toBeInstanceOf(
         UnauthorizedException,
       );
+    });
+  });
+
+  describe('getProfile (GET /auth/me — MeResponseDto since ONB-001)', () => {
+    it('returns the user shape plus the onboarding routing flag', async () => {
+      const seeded = fake.seedUser({
+        phone: '09123334444',
+        name: 'Ali',
+        accountRoles: [AccountRole.BUYER],
+        onboardingCompletedAt: new Date(),
+      });
+
+      const me = await auth.getProfile(seeded.id);
+
+      expect(me.id).toBe(seeded.id);
+      expect(me.phone).toBe('09123334444');
+      expect(me.accountRoles).toEqual([AccountRole.BUYER]);
+      expect(me.onboardingCompleted).toBe(true);
+    });
+
+    it('reports onboardingCompleted false while onboarding is pending', async () => {
+      const seeded = fake.seedUser({ phone: '09123334444', name: 'Ali' });
+
+      const me = await auth.getProfile(seeded.id);
+
+      expect(me.onboardingCompleted).toBe(false);
+    });
+
+    it('rejects a user that no longer exists with 401', async () => {
+      await expect(auth.getProfile('missing-id')).rejects.toBeInstanceOf(UnauthorizedException);
     });
   });
 });

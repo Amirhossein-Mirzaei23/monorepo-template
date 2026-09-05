@@ -16,6 +16,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { OtpModule } from './modules/otp/otp.module';
+import { ProfilesModule } from './modules/profiles/profiles.module';
 import { UsersModule } from './modules/users/users.module';
 import { SmsModule } from './modules/sms/sms.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -73,6 +74,7 @@ import { PrismaModule } from './prisma/prisma.module';
     SmsModule,
     OtpModule,
     CategoriesModule,
+    ProfilesModule,
   ],
   providers: [
     // Guard order: rate limit → authenticate → authorize

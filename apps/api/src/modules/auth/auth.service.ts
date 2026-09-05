@@ -9,6 +9,7 @@ import { UsersRepository } from '../users/users.repository';
 import { toUserResponse, type UserResponseDto } from '../users/dto/user-response.dto';
 import { AUTH_ERROR_CODES, type AuthErrorCode } from './auth.constants';
 import type { LoginDto } from './dto/login.dto';
+import type { MeResponseDto } from './dto/me-response.dto';
 import type { OtpRequestDto } from './dto/otp-request.dto';
 import type { OtpVerifyDto } from './dto/otp-verify.dto';
 import { TokenService } from './token.service';
@@ -116,22 +117,21 @@ export class AuthService {
     }
   }
 
-  async getProfile(userId: AuthUser['sub']): Promise<UserResponseDto> {
+  async getProfile(userId: AuthUser['sub']): Promise<MeResponseDto> {
     const user = await this.usersRepository.findById(userId);
     if (!user) {
       throw new UnauthorizedException('User no longer exists');
     }
-    return toUserResponse(user);
+    return { ...toUserResponse(user), onboardingCompleted: this.isOnboardingCompleted(user) };
   }
 
   /**
-   * Placeholder routing hint until ONB-001 lands the Profile check: a user
-   * record with a usable name counts as onboarded, so existing flows keep
-   * routing to /dashboard. ONB-001 replaces this body with the real
-   * profile-completion check — no schema fields are added here.
+   * Routing flag since ONB-001: onboarding is complete once the first
+   * PUT /profiles/onboarding stamped `onboardingCompletedAt` (the date is
+   * never reset on re-onboarding, so this stays true afterwards).
    */
   private isOnboardingCompleted(user: User): boolean {
-    return user.name.trim().length > 0;
+    return user.onboardingCompletedAt != null;
   }
 
   /**

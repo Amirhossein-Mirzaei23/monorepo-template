@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { Prisma, User, UserRole } from '@prisma/client';
+import type { AccountRole, Prisma, User, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 export interface ListUsersParams {
@@ -64,6 +64,19 @@ export class UsersRepository {
   }
 
   async update(id: string, data: Prisma.UserUpdateInput, tx: Tx = undefined): Promise<User> {
+    return this.client(tx).user.update({ where: { id }, data });
+  }
+
+  /**
+   * ONB-001: the User-side writes of the onboarding transaction — sync
+   * accountRoles to the submitted hats and stamp onboardingCompletedAt.
+   * The caller computes the first-completion semantics (never reset).
+   */
+  async updateOnboarding(
+    id: string,
+    data: { accountRoles: AccountRole[]; onboardingCompletedAt: Date },
+    tx: Tx = undefined,
+  ): Promise<User> {
     return this.client(tx).user.update({ where: { id }, data });
   }
 
