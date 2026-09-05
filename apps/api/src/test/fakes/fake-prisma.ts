@@ -1,4 +1,12 @@
-import { type Prisma, type User, UserRole, UserStatus, AccountRole } from '@prisma/client';
+import {
+  type OtpCode,
+  OtpPurpose,
+  type Prisma,
+  type User,
+  UserRole,
+  UserStatus,
+  AccountRole,
+} from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 
 interface RefreshTokenRow {
@@ -21,16 +29,27 @@ type UserWhere = {
 };
 type UserOrderBy = Record<string, 'asc' | 'desc'>;
 
+type OtpWhere = {
+  id?: string;
+  phone?: string;
+  purpose?: OtpPurpose;
+  consumedAt?: Date | null;
+  expiresAt?: { gt: Date };
+  lastSentAt?: { gte: Date };
+};
+type OtpOrderBy = Record<string, 'asc' | 'desc'>;
+
 const nowIso = () => new Date();
 
 /**
  * Deterministic in-memory Prisma stand-in covering exactly the surface this app
- * uses (user + refreshToken tables, interactive $transaction, $queryRaw).
- * Lets unit and e2e suites run green without a database.
+ * uses (user + refreshToken + otpCode tables, interactive $transaction,
+ * $queryRaw). Lets unit and e2e suites run green without a database.
  */
 export class FakePrisma {
   private readonly users = new Map<string, User>();
   private readonly refreshTokens = new Map<string, RefreshTokenRow>();
+  private readonly otpCodes = new Map<string, OtpCode>();
 
   readonly user = {
     findMany: async ({
@@ -194,6 +213,88 @@ export class FakePrisma {
     },
   };
 
+  readonly otpCode = {
+    findFirst: async ({
+      where,
+      orderBy,
+    }: {
+      where?: OtpWhere;
+      orderBy?: OtpOrderBy;
+    }): Promise<OtpCode | null> => {
+      let rows = [...this.otpCodes.values()].filter(matchesOtpWhere(where));
+      for (const [field, order] of Object.entries(orderBy ?? {})) {
+        rows = rows.sort((a, b) => {
+          const av = a[field as keyof OtpCode] as string | Date;
+          const bv = b[field as keyof OtpCode] as string | Date;
+          const cmp = av > bv ? 1 : av < bv ? -1 : 0;
+          return order === 'desc' ? -cmp : cmp;
+        });
+      }
+      const first = rows[0];
+      return first ? cloneOtp(first) : null;
+    },
+    count: async ({ where }: { where?: OtpWhere } = {}): Promise<number> =>
+      [...this.otpCodes.values()].filter(matchesOtpWhere(where)).length,
+    create: async ({
+      data,
+    }: {
+      data: {
+        phone: string;
+        codeHash: string;
+        purpose: OtpPurpose;
+        expiresAt: Date;
+        consumedAt?: Date | null;
+        attempts?: number;
+        lastSentAt: Date;
+      };
+    }): Promise<OtpCode> => {
+      const row: OtpCode = {
+        id: randomUUID(),
+        phone: data.phone,
+        codeHash: data.codeHash,
+        purpose: data.purpose,
+        expiresAt: data.expiresAt,
+        consumedAt: data.consumedAt ?? null,
+        attempts: data.attempts ?? 0,
+        lastSentAt: data.lastSentAt,
+        createdAt: nowIso(),
+      };
+      this.otpCodes.set(row.id, row);
+      return cloneOtp(row);
+    },
+    update: async ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: { attempts?: { increment: number } };
+    }): Promise<OtpCode> => {
+      const row = this.otpCodes.get(where.id);
+      if (!row) {
+        throw new Error(`FakePrisma: otpCode ${where.id} not found`);
+      }
+      const next: OtpCode = { ...row, attempts: row.attempts + (data.attempts?.increment ?? 0) };
+      this.otpCodes.set(row.id, next);
+      return cloneOtp(next);
+    },
+    updateMany: async ({
+      where,
+      data,
+    }: {
+      where?: OtpWhere;
+      data: { consumedAt: Date };
+    }): Promise<{ count: number }> => {
+      let count = 0;
+      for (const row of this.otpCodes.values()) {
+        if (matchesOtpWhere(where)(row)) {
+          row.consumedAt = data.consumedAt;
+          count += 1;
+        }
+      }
+      return { count };
+    },
+  };
+
   async $transaction<T>(fn: (tx: this) => Promise<T>): Promise<T> {
     return fn(this);
   }
@@ -231,6 +332,32 @@ export class FakePrisma {
     this.users.set(row.id, row);
     return cloneUser(row);
   }
+
+  /** Test helper: direct seeded rows (controlled lastSentAt/createdAt for send-cap windows). */
+  seedOtpCode(code: {
+    phone: string;
+    codeHash?: string;
+    purpose?: OtpPurpose;
+    expiresAt?: Date;
+    consumedAt?: Date | null;
+    attempts?: number;
+    lastSentAt?: Date;
+    createdAt?: Date;
+  }): OtpCode {
+    const row: OtpCode = {
+      id: randomUUID(),
+      phone: code.phone,
+      codeHash: code.codeHash ?? 'seeded-code-hash',
+      purpose: code.purpose ?? OtpPurpose.LOGIN,
+      expiresAt: code.expiresAt ?? new Date(nowIso().getTime() + 300_000),
+      consumedAt: code.consumedAt ?? null,
+      attempts: code.attempts ?? 0,
+      lastSentAt: code.lastSentAt ?? nowIso(),
+      createdAt: code.createdAt ?? nowIso(),
+    };
+    this.otpCodes.set(row.id, row);
+    return cloneOtp(row);
+  }
 }
 
 function matchesWhere(where: UserWhere | undefined): (user: User) => boolean {
@@ -243,4 +370,24 @@ function matchesWhere(where: UserWhere | undefined): (user: User) => boolean {
 
 function cloneUser(user: User): User {
   return { ...user, createdAt: new Date(user.createdAt), updatedAt: new Date(user.updatedAt) };
+}
+
+function matchesOtpWhere(where: OtpWhere | undefined): (row: OtpCode) => boolean {
+  return (row) =>
+    (where?.id === undefined || row.id === where.id) &&
+    (where?.phone === undefined || row.phone === where.phone) &&
+    (where?.purpose === undefined || row.purpose === where.purpose) &&
+    (where?.consumedAt === undefined || row.consumedAt === where.consumedAt) &&
+    (where?.expiresAt === undefined || row.expiresAt > where.expiresAt.gt) &&
+    (where?.lastSentAt === undefined || row.lastSentAt >= where.lastSentAt.gte);
+}
+
+function cloneOtp(row: OtpCode): OtpCode {
+  return {
+    ...row,
+    expiresAt: new Date(row.expiresAt),
+    consumedAt: row.consumedAt === null ? null : new Date(row.consumedAt),
+    lastSentAt: new Date(row.lastSentAt),
+    createdAt: new Date(row.createdAt),
+  };
 }

@@ -25,7 +25,7 @@ to phone+OTP while keeping the session/refresh machinery and the admin password 
 - **Testing:** update `auth.service.spec`, `token.service.spec`, `users.service.spec`; migration tested on a copy of seed data.
 - **DoD:** `npm run gen:types` regenerated; all suites green.
 
-### AUTH-002 — OTP service (issue, verify, throttling, dev mode)
+### AUTH-002 ✅ — OTP service (issue, verify, throttling, dev mode)
 
 **P0 · Phase 1 · Auth · M** — Deps: AUTH-001
 
