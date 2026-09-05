@@ -12,6 +12,24 @@ App Router app. See `../../doc/ARCHITECTURE.md`.
 - `src/providers/` — react-query (staleTime 60s / retry 1), theme, auth session
 - `src/middleware.ts` — route protection (refresh-cookie presence gate)
 
+## Login flow
+
+`src/features/auth` implements the two-step phone OTP login (Persian, RTL — there is no
+email/password form for users):
+
+1. **Phone step** — `09xxxxxxxxx` input (fa digits are normalized to en); submits through the
+   feature's mutation hooks to the BFF route `src/app/api/auth/otp/request`, which proxies
+   `POST /auth/otp/request` on the api.
+2. **Code step** — six-digit input with auto-submit, masked phone display, edit-phone link and
+   a 120 s resend countdown; submits to `src/app/api/auth/otp/verify`, which proxies
+   `POST /auth/otp/verify`.
+
+On success the verify BFF route re-issues the httpOnly refresh cookie (same handling as the
+legacy login route — the token never reaches client JS) and the client routes to the `next`
+param, or `/onboarding` when `onboardingCompleted=false`, else `/dashboard`. Admins use the
+retained email + password path — `POST /auth/login` on the api is admin-only and is proxied by
+the BFF route `src/app/api/auth/login` (no admin login form in the web UI).
+
 ## Scripts
 
 | Script                    | What it does                                 |

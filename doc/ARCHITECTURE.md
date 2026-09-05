@@ -81,7 +81,13 @@ Rules:
 
 ## Security
 
-- **Auth**: JWT access tokens (short-lived) + refresh-token rotation. The refresh token is stored in an httpOnly cookie and exchanged only through the web BFF (`app/api/*` route handlers proxying the api) so it never touches client JS.
+- **Auth**: identity is phone-number OTP — users log in with `09xxxxxxxxx` + a single-use 6-digit
+  SMS code (`/auth/otp/request` → `/auth/otp/verify`, login-or-register; codes stored as sha256
+  hashes only, throttled per phone and locked after repeated wrong attempts). Email + password
+  login is **admin-only** (admins are seeded/managed, never self-registered). Session machinery
+  is unchanged: JWT access tokens (short-lived) + refresh-token rotation; the refresh token is
+  stored in an httpOnly cookie and exchanged only through the web BFF (`app/api/*` route handlers
+  proxying the api) so it never touches client JS.
 - **RBAC**: roles guard + `@Roles()` decorator on the api; `middleware.ts` route protection on the web before rendering protected routes.
 - **API hardening**: helmet, env-driven CORS allowlist, `@nestjs/throttler` rate limits, `ValidationPipe` whitelist.
 - **Web hardening**: CSP and security headers via `next.config` `headers()`.

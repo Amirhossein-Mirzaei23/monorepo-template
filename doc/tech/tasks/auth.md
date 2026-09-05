@@ -82,7 +82,7 @@ to phone+OTP while keeping the session/refresh machinery and the admin password 
 - **Testing:** component tests (steps, countdown, normalization); hook tests with mocked BFF.
 - **DoD:** email/password form deleted; `features/auth` barrel updated; lint/typecheck/test green.
 
-### AUTH-005 — Seed + docs refresh for phone auth
+### AUTH-005 ✅ — Seed + docs refresh for phone auth
 
 **P0 · Phase 1 · Auth · S** — Deps: AUTH-003
 
