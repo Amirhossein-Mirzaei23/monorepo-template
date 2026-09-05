@@ -6,7 +6,7 @@ Lot lifecycle: `DRAFT → PENDING_REVIEW → ACTIVE ⇄ PAUSED; → SOLD | EXPIR
 
 ---
 
-### CAT-001 — Category domain + seed
+### CAT-001 ✅ — Category domain + seed
 
 **P0 · Phase 2 · Catalog · M** — Deps: AUTH-001 (migration order)
 

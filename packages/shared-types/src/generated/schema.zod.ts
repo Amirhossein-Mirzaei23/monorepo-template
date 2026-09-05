@@ -3,6 +3,7 @@
 /* eslint-disable */
 
 import { z } from 'zod';
+import type { components } from './schema';
 
 export const objectSchema = z.object({
 
@@ -68,6 +69,15 @@ export const loginResponseDtoSchema = z.object({
   user: userResponseDtoSchema,
 });
 
+type CategoryTreeNodeDto = components['schemas']['CategoryTreeNodeDto'];
+export const categoryTreeNodeDtoSchema: z.ZodType<CategoryTreeNodeDto> = z.object({
+  id: z.string(),
+  nameFa: z.string(),
+  nameEn: z.string().nullable().optional(),
+  slug: z.string(),
+  children: z.array(z.lazy(() => categoryTreeNodeDtoSchema)),
+});
+
 export const apiSchemas = {
   Object: objectSchema,
   UserResponseDto: userResponseDtoSchema,
@@ -79,4 +89,5 @@ export const apiSchemas = {
   OtpVerifyResponseDto: otpVerifyResponseDtoSchema,
   LoginDto: loginDtoSchema,
   LoginResponseDto: loginResponseDtoSchema,
+  CategoryTreeNodeDto: categoryTreeNodeDtoSchema,
 } as const;

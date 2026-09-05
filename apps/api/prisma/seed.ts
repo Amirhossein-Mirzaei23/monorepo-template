@@ -6,6 +6,115 @@ const prisma = new PrismaClient();
 /** Same cost as UsersService — seeded passwords must verify through bcryptjs compare. */
 const BCRYPT_ROUNDS = 10;
 
+/**
+ * CAT-001: initial two-level taxonomy — the task card is authoritative.
+ * Children get parent-prefixed kebab-case slugs; `sortOrder` is sequential
+ * among siblings (1-based), matching the (parentId, sortOrder) index.
+ */
+interface SeedCategory {
+  nameFa: string;
+  slug: string;
+  children?: { nameFa: string; slug: string }[];
+}
+
+const CATEGORY_TAXONOMY: SeedCategory[] = [
+  {
+    nameFa: 'پوشاک',
+    slug: 'apparel',
+    children: [
+      { nameFa: 'مردانه', slug: 'apparel-men' },
+      { nameFa: 'زنانه', slug: 'apparel-women' },
+      { nameFa: 'بچگانه', slug: 'apparel-kids' },
+      { nameFa: 'لباس زیر', slug: 'apparel-underwear' },
+      { nameFa: 'اسپرت', slug: 'apparel-sports' },
+    ],
+  },
+  {
+    nameFa: 'کفش',
+    slug: 'shoes',
+    children: [
+      { nameFa: 'مردانه', slug: 'shoes-men' },
+      { nameFa: 'زنانه', slug: 'shoes-women' },
+      { nameFa: 'بچگانه', slug: 'shoes-kids' },
+      { nameFa: 'ورزشی', slug: 'shoes-sports' },
+    ],
+  },
+  {
+    nameFa: 'کیف و اکسسوری',
+    slug: 'bags-accessories',
+    children: [
+      { nameFa: 'کیف', slug: 'bags-accessories-bag' },
+      { nameFa: 'کمربند', slug: 'bags-accessories-belt' },
+      { nameFa: 'کلاه', slug: 'bags-accessories-hat' },
+      { nameFa: 'عینک', slug: 'bags-accessories-glasses' },
+      { nameFa: 'اکسسوری', slug: 'bags-accessories-accessory' },
+    ],
+  },
+  {
+    nameFa: 'خانه و لوازم خانگی',
+    slug: 'home-kitchen',
+    children: [
+      { nameFa: 'آشپزخانه', slug: 'home-kitchen-kitchenware' },
+      { nameFa: 'دکوراتیو', slug: 'home-kitchen-decor' },
+      { nameFa: 'اتاق خواب', slug: 'home-kitchen-bedroom' },
+      { nameFa: 'ملزومات خانگی', slug: 'home-kitchen-household' },
+    ],
+  },
+  // Deliberately childless (CAT-001 taxonomy).
+  { nameFa: 'زیبایی و بهداشتی', slug: 'beauty-health' },
+  {
+    nameFa: 'کالا مصرفی FMCG',
+    slug: 'fmcg',
+    children: [
+      { nameFa: 'مواد غذایی بسته‌بندی', slug: 'fmcg-packaged-food' },
+      { nameFa: 'شوینده', slug: 'fmcg-detergents' },
+      { nameFa: 'اقلام مصرفی', slug: 'fmcg-consumables' },
+    ],
+  },
+];
+
+/**
+ * Upserts every category by slug — idempotent. The `update` arm re-asserts
+ * nameFa/parentId/sortOrder/isActive so a re-run converges drifted dev data
+ * back to the canonical taxonomy without touching admin-created rows.
+ */
+async function seedCategories(): Promise<{ roots: number; children: number }> {
+  let children = 0;
+  for (const [parentIndex, parent] of CATEGORY_TAXONOMY.entries()) {
+    const parentRow = await prisma.category.upsert({
+      where: { slug: parent.slug },
+      update: {
+        nameFa: parent.nameFa,
+        nameEn: null,
+        parentId: null,
+        sortOrder: parentIndex + 1,
+        isActive: true,
+      },
+      create: { nameFa: parent.nameFa, slug: parent.slug, sortOrder: parentIndex + 1 },
+    });
+    for (const [childIndex, child] of (parent.children ?? []).entries()) {
+      await prisma.category.upsert({
+        where: { slug: child.slug },
+        update: {
+          nameFa: child.nameFa,
+          nameEn: null,
+          parentId: parentRow.id,
+          sortOrder: childIndex + 1,
+          isActive: true,
+        },
+        create: {
+          nameFa: child.nameFa,
+          slug: child.slug,
+          parentId: parentRow.id,
+          sortOrder: childIndex + 1,
+        },
+      });
+      children += 1;
+    }
+  }
+  return { roots: CATEGORY_TAXONOMY.length, children };
+}
+
 async function main(): Promise<void> {
   // AUTH-005: identity is phone-keyed. Every account upserts by phone, so the
   // seed is idempotent — re-running never duplicates rows and never touches
@@ -58,10 +167,13 @@ async function main(): Promise<void> {
     },
   });
 
-  console.info(`Seeded (upsert by phone — safe to re-run):
+  const taxonomy = await seedCategories();
+
+  console.info(`Seeded (upsert by phone/slug — safe to re-run):
 - ${admin.phone} — ADMIN, password login ${admin.email} / ${admin.password}
 - ${buyerPhone} — BUYER, phone OTP login
-- ${sellerPhone} — SELLER, phone OTP login`);
+- ${sellerPhone} — SELLER, phone OTP login
+- ${taxonomy.roots} root + ${taxonomy.children} child categories (CAT-001)`);
 }
 
 main()

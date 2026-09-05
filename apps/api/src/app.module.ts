@@ -14,6 +14,7 @@ import { validateEnv } from './config/env.validation';
 import { HealthModule } from './health/health.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { CategoriesModule } from './modules/categories/categories.module';
 import { OtpModule } from './modules/otp/otp.module';
 import { UsersModule } from './modules/users/users.module';
 import { SmsModule } from './modules/sms/sms.module';
@@ -71,6 +72,7 @@ import { PrismaModule } from './prisma/prisma.module';
     AuthModule,
     SmsModule,
     OtpModule,
+    CategoriesModule,
   ],
   providers: [
     // Guard order: rate limit → authenticate → authorize

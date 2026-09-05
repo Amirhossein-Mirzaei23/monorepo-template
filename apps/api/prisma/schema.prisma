@@ -71,6 +71,34 @@ model RefreshToken {
   @@index([userId])
 }
 
+/// Two-level marketplace taxonomy (CAT-001, plan §3). Admin-managed data —
+/// never hardcoded enums in the UI. Depth ≤ 2 (a category may only nest under
+/// a top-level parent) is a SERVICE-level rule (CategoriesService), not a DB
+/// constraint. Inactive rows stay resolvable by id for historical lots; they
+/// are only hidden from the public tree.
+model Category {
+  id        String     @id @default(cuid())
+  /// Persian display name — the primary label (RTL default).
+  nameFa    String
+  /// Optional Latin name for admin/tooling display; `slug` is the EN key.
+  nameEn    String?
+  /// Unique kebab-case EN slug (validated `^[a-z0-9]+(-[a-z0-9]+)*$`).
+  slug      String     @unique
+  parentId  String?
+  /// onDelete: Restrict — deleting a parent with children must be an explicit
+  /// two-step admin action (re-parent or delete children first, CAT-004);
+  /// deactivation, not deletion, is the normal lifecycle for referenced
+  /// categories (lots keep referencing them).
+  parent    Category?  @relation("CategoryChildren", fields: [parentId], references: [id], onDelete: Restrict)
+  children  Category[] @relation("CategoryChildren")
+  sortOrder Int
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([parentId, sortOrder])
+}
+
 /// Phone OTP codes — only sha256 hashes are persisted; rows are hard-deleted
 /// once expired (prune job, plan §12). Issued/verified by OtpService (AUTH-002).
 /// NOTE: the "one active OTP per phone+purpose" guarantee is a partial unique

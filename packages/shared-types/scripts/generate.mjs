@@ -37,14 +37,37 @@ const lowerFirst = (value) => value.charAt(0).toLowerCase() + value.slice(1);
 const constName = (schemaName) => `${lowerFirst(schemaName)}Schema`;
 const q = (value) => `'${String(value).replaceAll("'", "\\'")}'`;
 
-function propertyToZod(prop, depth) {
+/**
+ * True when `prop` (directly or through inline nesting) $refs `rootName` —
+ * self-referencing schemas (trees) need `z.lazy` plus an explicit type
+ * annotation, because TypeScript cannot infer a circular initializer (TS7022).
+ */
+function refsSelf(prop, rootName) {
+  if (prop.$ref) {
+    return prop.$ref === `#/components/schemas/${rootName}`;
+  }
+  if (prop.anyOf || prop.oneOf) {
+    return (prop.anyOf ?? prop.oneOf).some((variant) => refsSelf(variant, rootName));
+  }
+  if (prop.type === 'array') {
+    return refsSelf(prop.items ?? { type: 'string' }, rootName);
+  }
+  if (prop.type === 'object' || prop.properties) {
+    return Object.values(prop.properties ?? {}).some((nested) => refsSelf(nested, rootName));
+  }
+  return false;
+}
+
+function propertyToZod(prop, depth, rootName) {
   const pad = '  '.repeat(depth);
   if (prop.$ref) {
     const name = prop.$ref.replace('#/components/schemas/', '');
-    return constName(name);
+    return name === rootName ? `z.lazy(() => ${constName(name)})` : constName(name);
   }
   if (prop.anyOf || prop.oneOf) {
-    const variants = (prop.anyOf ?? prop.oneOf).map((variant) => propertyToZod(variant, depth));
+    const variants = (prop.anyOf ?? prop.oneOf).map((variant) =>
+      propertyToZod(variant, depth, rootName),
+    );
     return `z.union([${variants.join(', ')}])`;
   }
   let inner;
@@ -72,11 +95,11 @@ function propertyToZod(prop, depth) {
       inner = 'z.boolean()';
       break;
     case 'array':
-      inner = `z.array(${propertyToZod(prop.items ?? { type: 'string' }, depth)})`;
+      inner = `z.array(${propertyToZod(prop.items ?? { type: 'string' }, depth, rootName)})`;
       break;
     case 'object':
     default: {
-      const nested = objectToZod(prop, depth + 1);
+      const nested = objectToZod(prop, depth + 1, rootName);
       inner = `${pad}${nested}`;
       break;
     }
@@ -84,12 +107,12 @@ function propertyToZod(prop, depth) {
   return prop.nullable === true ? `${inner}.nullable()` : inner;
 }
 
-function objectToZod(schema, depth) {
+function objectToZod(schema, depth, rootName) {
   const pad = '  '.repeat(depth);
   const properties = schema.properties ?? {};
   const required = new Set(schema.required ?? []);
   const fields = Object.entries(properties).map(([name, prop]) => {
-    const expression = propertyToZod(prop, depth + 1);
+    const expression = propertyToZod(prop, depth + 1, rootName);
     const optional = required.has(name) ? '' : '.optional()';
     return `${pad}  ${/^[A-Za-z_$][\w$]*$/.test(name) ? name : q(name)}: ${expression}${optional},`;
   });
@@ -102,8 +125,25 @@ const blocks = entries.map(([name, schema]) => {
   }
   const objectSchema =
     schema.type === 'object' || schema.properties ? schema : { type: 'object', properties: {} };
-  return `export const ${constName(name)} = ${objectToZod(objectSchema, 0)};`;
+  if (refsSelf(objectSchema, name)) {
+    // Recursive schema: the annotation (typed from schema.d.ts) is what lets
+    // the z.lazy self-reference typecheck — TS cannot infer a circular value.
+    return (
+      `type ${name} = components['schemas']['${name}'];\n` +
+      `export const ${constName(name)}: z.ZodType<${name}> = ${objectToZod(objectSchema, 0, name)};`
+    );
+  }
+  return `export const ${constName(name)} = ${objectToZod(objectSchema, 0, name)};`;
 });
+
+const needsComponentsImport = entries.some(
+  ([name, schema]) =>
+    !Array.isArray(schema.enum) &&
+    refsSelf(
+      schema.type === 'object' || schema.properties ? schema : { type: 'object', properties: {} },
+      name,
+    ),
+);
 
 const registry = `export const apiSchemas = {\n${entries
   .map(([name]) => `  ${/^[A-Za-z_$][\w$]*$/.test(name) ? name : q(name)}: ${constName(name)},`)
@@ -116,6 +156,8 @@ const banner =
 
 writeFileSync(
   zodOut,
-  `${banner}\nimport { z } from 'zod';\n\n${blocks.join('\n\n')}\n\n${registry}`,
+  `${banner}\nimport { z } from 'zod';${
+    needsComponentsImport ? `\nimport type { components } from './schema';` : ''
+  }\n\n${blocks.join('\n\n')}\n\n${registry}`,
 );
 console.info(`Wrote ${zodOut} (${entries.length} schemas)`);
