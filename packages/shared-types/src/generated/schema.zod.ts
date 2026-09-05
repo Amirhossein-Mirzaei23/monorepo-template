@@ -36,10 +36,30 @@ export const updateUserDtoSchema = z.object({
   role: z.enum(['USER', 'ADMIN']).optional(),
 });
 
-export const registerDtoSchema = z.object({
+export const otpRequestDtoSchema = z.object({
   phone: z.string(),
-  email: z.email().optional(),
-  name: z.string(),
+  clientType: z.enum(['web', 'android']).optional(),
+});
+
+export const otpRequestResponseDtoSchema = z.object({
+  expiresAt: z.iso.datetime(),
+  devCode: z.string().optional(),
+});
+
+export const otpVerifyDtoSchema = z.object({
+  phone: z.string(),
+  code: z.string(),
+  clientType: z.enum(['web', 'android']).optional(),
+});
+
+export const otpVerifyResponseDtoSchema = z.object({
+  accessToken: z.string(),
+  user: userResponseDtoSchema,
+  onboardingCompleted: z.boolean(),
+});
+
+export const loginDtoSchema = z.object({
+  email: z.email(),
   password: z.string(),
 });
 
@@ -48,17 +68,15 @@ export const loginResponseDtoSchema = z.object({
   user: userResponseDtoSchema,
 });
 
-export const loginDtoSchema = z.object({
-  email: z.email(),
-  password: z.string(),
-});
-
 export const apiSchemas = {
   Object: objectSchema,
   UserResponseDto: userResponseDtoSchema,
   CreateUserDto: createUserDtoSchema,
   UpdateUserDto: updateUserDtoSchema,
-  RegisterDto: registerDtoSchema,
-  LoginResponseDto: loginResponseDtoSchema,
+  OtpRequestDto: otpRequestDtoSchema,
+  OtpRequestResponseDto: otpRequestResponseDtoSchema,
+  OtpVerifyDto: otpVerifyDtoSchema,
+  OtpVerifyResponseDto: otpVerifyResponseDtoSchema,
   LoginDto: loginDtoSchema,
+  LoginResponseDto: loginResponseDtoSchema,
 } as const;

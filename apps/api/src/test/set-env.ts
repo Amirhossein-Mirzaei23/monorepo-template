@@ -13,3 +13,7 @@ process.env.JWT_ACCESS_SECRET =
 process.env.JWT_REFRESH_SECRET =
   process.env.JWT_REFRESH_SECRET ?? 'test-refresh-secret-test-refresh-secret';
 process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? 'http://localhost:3000';
+// OTP dev mode for the e2e suites: `POST /auth/otp/*` echoes the issued code
+// in the response instead of calling the SMS provider (refused in production
+// by env validation, so this never leaks out of test/development).
+process.env.OTP_DEV_MODE = process.env.OTP_DEV_MODE ?? 'true';

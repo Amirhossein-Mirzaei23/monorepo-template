@@ -53,8 +53,10 @@ export class UsersRepository {
       phone: string;
       email?: string | null;
       name: string;
-      passwordHash: string;
-      role: UserRole;
+      /** Optional: phone-OTP users have no password (admin-only path, plan §2.7). */
+      passwordHash?: string | null;
+      /** Optional: defaults to USER at the database level. */
+      role?: UserRole;
     },
     tx: Tx = undefined,
   ): Promise<User> {

@@ -32,8 +32,9 @@ describe('UsersController (e2e)', () => {
 
     const adminLogin = await login(app, 'admin@monorepo.local', ADMIN_PASSWORD);
     adminToken = adminLogin.accessToken;
-    const userLogin = await login(app, 'user@monorepo.local', USER_PASSWORD);
-    userToken = userLogin.accessToken;
+    // Non-admin sessions come from the OTP flow now that password login is
+    // ADMIN-only (AUTH-003); OTP_DEV_MODE echoes the code in the response.
+    userToken = await otpLogin(app, '09120000001');
   });
 
   afterAll(async () => {
@@ -155,4 +156,23 @@ async function login(
     );
   }
   return response.body as { accessToken: string };
+}
+
+/** Non-admin session via OTP dev mode (AUTH-003: password login is ADMIN-only). */
+async function otpLogin(app: INestApplication, phone: string): Promise<string> {
+  const issued = await request(app.getHttpServer()).post('/auth/otp/request').send({ phone });
+  if (issued.status !== 200 || typeof issued.body.devCode !== 'string') {
+    throw new Error(
+      `otp request failed for ${phone}: ${issued.status} ${JSON.stringify(issued.body)}`,
+    );
+  }
+  const verified = await request(app.getHttpServer())
+    .post('/auth/otp/verify')
+    .send({ phone, code: issued.body.devCode });
+  if (verified.status !== 200) {
+    throw new Error(
+      `otp verify failed for ${phone}: ${verified.status} ${JSON.stringify(verified.body)}`,
+    );
+  }
+  return verified.body.accessToken as string;
 }

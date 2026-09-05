@@ -28,6 +28,10 @@ export async function createTestApp(): Promise<TestApp> {
   // Mirror the production global middleware from main.ts.
   app.use(cookieParser());
   app.useGlobalPipes(createGlobalValidationPipe());
+  // Test-only: honor X-Forwarded-For so per-IP @Throttle suites get isolated
+  // buckets per test (tests send a unique XFF per scenario instead of sharing
+  // the supertest loopback address).
+  app.getHttpAdapter().getInstance().set('trust proxy', true);
   await app.init();
   return { app, prisma };
 }

@@ -92,7 +92,7 @@ export interface paths {
         patch: operations["UsersController_update"];
         trace?: never;
     };
-    "/auth/register": {
+    "/auth/otp/request": {
         parameters: {
             query?: never;
             header?: never;
@@ -101,8 +101,25 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Register a user and start a session */
-        post: operations["AuthController_register"];
+        /** Request a login OTP for a phone number (stricter throttle: 5/min/IP) */
+        post: operations["AuthController_requestOtp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/otp/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify the OTP and log in (registers the account on first login) */
+        post: operations["AuthController_verifyOtp"];
         delete?: never;
         options?: never;
         head?: never;
@@ -118,7 +135,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Exchange email + password for tokens (refresh set as cookie) */
+        /** ADMIN-only email + password login (refresh set as cookie) */
         post: operations["AuthController_login"];
         delete?: never;
         options?: never;
@@ -252,26 +269,56 @@ export interface components {
              */
             role: "USER" | "ADMIN";
         };
-        RegisterDto: {
+        OtpRequestDto: {
             /**
              * @description Normalized `09xxxxxxxxx`
-             * @example 09120000000
+             * @example 09121234567
              */
             phone: string;
             /**
-             * Format: email
-             * @example jane@example.com
+             * @description Selects the SMS provider pattern variant
+             * @default web
+             * @enum {string}
              */
-            email?: string;
-            /** @example Jane Doe */
-            name: string;
-            /** @example s3cure-pass */
-            password: string;
+            clientType: "web" | "android";
         };
-        LoginResponseDto: {
+        OtpRequestResponseDto: {
+            /**
+             * Format: date-time
+             * @description When the issued code expires (resend allowed afterwards at the latest)
+             * @example 2026-01-01T00:02:00.000Z
+             */
+            expiresAt: string;
+            /**
+             * @description The issued code itself — present ONLY when OTP_DEV_MODE is enabled (never in production) so agents and tests can log in without SMS.
+             * @example 123456
+             */
+            devCode?: string;
+        };
+        OtpVerifyDto: {
+            /**
+             * @description Normalized `09xxxxxxxxx`
+             * @example 09121234567
+             */
+            phone: string;
+            /** @example 123456 */
+            code: string;
+            /**
+             * @description Ignored on verify — kept for symmetry with the request step
+             * @default web
+             * @enum {string}
+             */
+            clientType: "web" | "android";
+        };
+        OtpVerifyResponseDto: {
             /** @description Short-lived JWT access token (bearer) */
             accessToken: string;
             user: components["schemas"]["UserResponseDto"];
+            /**
+             * @description Whether the web should route to /onboarding instead of /dashboard. Placeholder until ONB-001 lands the profile check.
+             * @example true
+             */
+            onboardingCompleted: boolean;
         };
         LoginDto: {
             /**
@@ -281,6 +328,11 @@ export interface components {
             email: string;
             /** @example s3cure-pass */
             password: string;
+        };
+        LoginResponseDto: {
+            /** @description Short-lived JWT access token (bearer) */
+            accessToken: string;
+            user: components["schemas"]["UserResponseDto"];
         };
     };
     responses: never;
@@ -455,7 +507,7 @@ export interface operations {
             };
         };
     };
-    AuthController_register: {
+    AuthController_requestOtp: {
         parameters: {
             query?: never;
             header?: never;
@@ -464,16 +516,39 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RegisterDto"];
+                "application/json": components["schemas"]["OtpRequestDto"];
             };
         };
         responses: {
-            201: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LoginResponseDto"];
+                    "application/json": components["schemas"]["OtpRequestResponseDto"];
+                };
+            };
+        };
+    };
+    AuthController_verifyOtp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OtpVerifyDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OtpVerifyResponseDto"];
                 };
             };
         };

@@ -1,5 +1,12 @@
 import { apiSchemas } from '../generated/schema.zod';
-import { loginResponseSchema, loginSchema, userResponseSchema } from '../index';
+import {
+  loginResponseSchema,
+  loginSchema,
+  otpVerifyResponseSchema,
+  otpRequestSchema,
+  otpVerifySchema,
+  userResponseSchema,
+} from '../index';
 
 const sampleUser = {
   id: 'clxsamplecuid',
@@ -46,11 +53,44 @@ describe('generated zod schemas', () => {
     expect(loginResponseSchema.safeParse({ accessToken: 'a.b.c' }).success).toBe(false);
   });
 
+  it('validates OTP request/verify payloads', () => {
+    // Structural checks only — the phone regex / 6-digit code rules are
+    // enforced by the API's class-validator DTOs and re-declared client-side
+    // by AUTH-004's zod schemas (the codegen maps types, not patterns).
+    expect(otpRequestSchema.safeParse({ phone: '09121234567' }).success).toBe(true);
+    expect(
+      otpRequestSchema.safeParse({ phone: '09121234567', clientType: 'android' }).success,
+    ).toBe(true);
+    expect(otpRequestSchema.safeParse({}).success).toBe(false);
+    expect(otpRequestSchema.safeParse({ phone: '09121234567', clientType: 'ios' }).success).toBe(
+      false,
+    );
+
+    expect(otpVerifySchema.safeParse({ phone: '09121234567', code: '123456' }).success).toBe(true);
+    expect(otpVerifySchema.safeParse({ phone: '09121234567' }).success).toBe(false);
+  });
+
+  it('validates OTP verify responses (session + onboarding flag)', () => {
+    expect(
+      otpVerifyResponseSchema.safeParse({
+        accessToken: 'a.b.c',
+        user: sampleUser,
+        onboardingCompleted: true,
+      }).success,
+    ).toBe(true);
+    expect(
+      otpVerifyResponseSchema.safeParse({ accessToken: 'a.b.c', user: sampleUser }).success,
+    ).toBe(false);
+  });
+
   it('exposes every component schema in the registry', () => {
     const names = Object.keys(apiSchemas);
     for (const expected of [
       'LoginDto',
-      'RegisterDto',
+      'OtpRequestDto',
+      'OtpRequestResponseDto',
+      'OtpVerifyDto',
+      'OtpVerifyResponseDto',
       'UserResponseDto',
       'LoginResponseDto',
       'CreateUserDto',

@@ -14,8 +14,11 @@ export type UserResponseDto = components['schemas']['UserResponseDto'];
 export type CreateUserDto = components['schemas']['CreateUserDto'];
 export type UpdateUserDto = components['schemas']['UpdateUserDto'];
 export type LoginDto = components['schemas']['LoginDto'];
-export type RegisterDto = components['schemas']['RegisterDto'];
 export type LoginResponseDto = components['schemas']['LoginResponseDto'];
+export type OtpRequestDto = components['schemas']['OtpRequestDto'];
+export type OtpRequestResponseDto = components['schemas']['OtpRequestResponseDto'];
+export type OtpVerifyDto = components['schemas']['OtpVerifyDto'];
+export type OtpVerifyResponseDto = components['schemas']['OtpVerifyResponseDto'];
 /** The API inlines the role enum into its DTOs; derive it from the user shape. */
 export type UserRole = UserResponseDto['role'];
 export type UserStatus = UserResponseDto['status'];
@@ -27,8 +30,11 @@ export const userRoleSchema = userResponseSchema.shape.role;
 export const createUserSchema = apiSchemas.CreateUserDto;
 export const updateUserSchema = apiSchemas.UpdateUserDto;
 export const loginSchema = apiSchemas.LoginDto;
-export const registerSchema = apiSchemas.RegisterDto;
 export const loginResponseSchema = apiSchemas.LoginResponseDto;
+export const otpRequestSchema = apiSchemas.OtpRequestDto;
+export const otpRequestResponseSchema = apiSchemas.OtpRequestResponseDto;
+export const otpVerifySchema = apiSchemas.OtpVerifyDto;
+export const otpVerifyResponseSchema = apiSchemas.OtpVerifyResponseDto;
 
 // --- shared helpers ---
 
@@ -45,6 +51,10 @@ export interface ApiErrorBody {
   statusCode: number;
   error: string;
   message: string | string[];
+  /** Machine-readable error code (e.g. `TOO_MANY_REQUESTS`, `ACCOUNT_SUSPENDED`). */
+  code?: string;
+  /** Present on 429s — retry hint in seconds, mirrored in the Retry-After header. */
+  retryAfterSeconds?: number;
   requestId?: string;
   timestamp?: string;
 }

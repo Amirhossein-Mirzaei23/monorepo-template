@@ -98,7 +98,8 @@ export class FakePrisma {
         phone: String(data.phone),
         email: data.email == null ? null : String(data.email),
         name: String(data.name ?? ''),
-        passwordHash: data.passwordHash === undefined ? null : String(data.passwordHash),
+        // Prisma semantics: omitted and explicit null are both null (not "null").
+        passwordHash: data.passwordHash == null ? null : String(data.passwordHash),
         role: (data.role as UserRole | undefined) ?? UserRole.USER,
         status: (data.status as UserStatus | undefined) ?? UserStatus.ACTIVE,
         accountRoles: (data.accountRoles as AccountRole[] | undefined) ?? [],

@@ -44,7 +44,7 @@ to phone+OTP while keeping the session/refresh machinery and the admin password 
 - **Testing:** service unit tests with fake prisma + fake sms; brute-force sequence test.
 - **DoD:** module registered; linters/tests green; `OTP_DEV_MODE` refuses to enable in production env (boot check).
 
-### AUTH-003 — OTP endpoints: request + verify (login-or-register)
+### AUTH-003 ✅ — OTP endpoints: request + verify (login-or-register)
 
 **P0 · Phase 1 · Auth · M** — Deps: AUTH-002
 
