@@ -3,8 +3,9 @@
  * may use (doc/ARCHITECTURE.md → Frontend rules).
  */
 export { LoginForm } from './components/login-form';
-export { useLogin } from './hooks/use-login';
+export { useOtpRequest } from './hooks/use-otp-request';
+export { useOtpVerify } from './hooks/use-otp-verify';
 export { useMe } from './hooks/use-me';
-export { loginSchema } from './schemas/login-schema';
-export type { LoginFormData } from './schemas/login-schema';
+export { otpRequestSchema, otpVerifySchema, toEnglishDigits } from './schemas/otp-schema';
+export type { OtpRequestFormData, OtpVerifyFormData } from './schemas/otp-schema';
 export type { Session, CurrentUser } from './types';

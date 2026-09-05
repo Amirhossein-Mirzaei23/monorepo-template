@@ -41,7 +41,7 @@ Complexity: XS 1 · S 22 · M 71 · L 12 · XL 1.
 | AUTH-001  | ✅ Phone-based User + OtpCode schema  | P0  | 1   | M   |     | CHT-007  | Media messages                      | P0  | 5   | M   |
 | AUTH-002  | ✅ OTP service + throttling           | P0  | 1   | M   |     | CHT-008  | Quick actions in chat               | P0  | 5   | S   |
 | AUTH-003  | ✅ OTP endpoints (login-or-register)  | P0  | 1   | M   |     | CHT-009  | Block & report conversation         | P1  | 9   | M   |
-| AUTH-004  | Web OTP login UI + BFF                | P0  | 1   | M   |     | CHT-010  | Presence                            | P2  | 10  | M   |
+| AUTH-004  | ✅ Web OTP login UI + BFF             | P0  | 1   | M   |     | CHT-010  | Presence                            | P2  | 10  | M   |
 | AUTH-005  | Seed + docs refresh                   | P0  | 1   | S   |     | OFR-001  | Offer domain + state machine        | P0  | 6   | M   |
 | AUTH-006  | Session/device management             | P1  | 9   | M   |     | OFR-002  | Offers API                          | P0  | 6   | M   |
 | AUTH-007  | Change phone number                   | P1  | 9   | M   |     | OFR-003  | Offer expiry job                    | P0  | 6   | S   |

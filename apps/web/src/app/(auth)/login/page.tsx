@@ -22,7 +22,7 @@ export default async function LoginPage({
     <>
       <h1 className="text-2xl font-semibold tracking-tight">ورود به راکدشو</h1>
       <p className="text-muted-foreground text-sm">
-        حساب‌های نمونه: <code>admin@monorepo.local</code> / <code>admin-password-123</code>
+        شماره موبایل خود را وارد کنید تا کد ورود برایتان پیامک شود.
       </p>
       <LoginForm redirectTo={safeNextTarget(next) ?? '/dashboard'} />
     </>

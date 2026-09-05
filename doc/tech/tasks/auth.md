@@ -63,7 +63,7 @@ to phone+OTP while keeping the session/refresh machinery and the admin password 
 - **Testing:** controller e2e (supertest) incl. rate-limit and lockout paths; `gen:types` regenerated.
 - **DoD:** old register/login-with-password user flows removed from swagger for non-admin; suites green.
 
-### AUTH-004 — Web OTP login UI + BFF routes
+### AUTH-004 ✅ — Web OTP login UI + BFF routes
 
 **P0 · Phase 1 · Auth · M** — Deps: AUTH-003, PLAT-001
 
