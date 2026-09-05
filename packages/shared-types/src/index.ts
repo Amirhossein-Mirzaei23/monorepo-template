@@ -18,6 +18,8 @@ export type RegisterDto = components['schemas']['RegisterDto'];
 export type LoginResponseDto = components['schemas']['LoginResponseDto'];
 /** The API inlines the role enum into its DTOs; derive it from the user shape. */
 export type UserRole = UserResponseDto['role'];
+export type UserStatus = UserResponseDto['status'];
+export type AccountRole = UserResponseDto['accountRoles'][number];
 
 // --- runtime validation schemas (zod, generated from the same document) ---
 export const userResponseSchema = apiSchemas.UserResponseDto;

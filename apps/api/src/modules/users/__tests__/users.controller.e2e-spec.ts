@@ -16,12 +16,14 @@ describe('UsersController (e2e)', () => {
     const testApp = await createTestApp();
     app = testApp.app;
     testApp.prisma.seedUser({
+      phone: '09120000000',
       email: 'admin@monorepo.local',
       name: 'Admin',
       passwordHash: await hash(ADMIN_PASSWORD, 4),
       role: UserRole.ADMIN,
     });
     testApp.prisma.seedUser({
+      phone: '09120000001',
       email: 'user@monorepo.local',
       name: 'User',
       passwordHash: await hash(USER_PASSWORD, 4),
@@ -70,15 +72,19 @@ describe('UsersController (e2e)', () => {
     const created = await request(app.getHttpServer())
       .post('/users')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ email: 'crud@example.com', name: 'Crud', password: 'super-secret-1' })
+      .send({ phone: '09129990001', name: 'Crud', password: 'super-secret-1' })
       .expect(201);
     const id = created.body.id as string;
+    expect(created.body.phone).toBe('09129990001');
+    expect(created.body.email).toBeNull();
+    expect(created.body.status).toBe('ACTIVE');
+    expect(created.body.accountRoles).toEqual([]);
 
     await request(app.getHttpServer())
       .get(`/users/${id}`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200)
-      .expect((res) => expect(res.body.email).toBe('crud@example.com'));
+      .expect((res) => expect(res.body.phone).toBe('09129990001'));
 
     await request(app.getHttpServer())
       .patch(`/users/${id}`)
@@ -98,11 +104,24 @@ describe('UsersController (e2e)', () => {
       .expect(404);
   });
 
+  it('rejects malformed phone numbers with 400', async () => {
+    await request(app.getHttpServer())
+      .post('/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ phone: 'not-a-phone', name: 'Bad', password: 'super-secret-1' })
+      .expect(400);
+  });
+
   it('rejects non-whitelisted payload fields', async () => {
     await request(app.getHttpServer())
       .post('/users')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ email: 'hacker@example.com', name: 'H', password: 'super-secret-1', role: 'ADMIN' })
+      .send({
+        phone: '09129990002',
+        name: 'H',
+        password: 'super-secret-1',
+        role: 'ADMIN',
+      })
       // role is whitelisted (enum) but `isAdmin` sneaking through must be rejected
       .expect((res) => {
         if ('isAdmin' in res.body) throw new Error('non-whitelisted field leaked through');

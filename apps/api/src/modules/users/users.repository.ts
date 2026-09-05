@@ -40,12 +40,22 @@ export class UsersRepository {
     return this.client(tx).user.findUnique({ where: { id } });
   }
 
+  async findByPhone(phone: string, tx: Tx = undefined): Promise<User | null> {
+    return this.client(tx).user.findUnique({ where: { phone } });
+  }
+
   async findByEmail(email: string, tx: Tx = undefined): Promise<User | null> {
     return this.client(tx).user.findUnique({ where: { email } });
   }
 
   async create(
-    data: { email: string; name: string; passwordHash: string; role: UserRole },
+    data: {
+      phone: string;
+      email?: string | null;
+      name: string;
+      passwordHash: string;
+      role: UserRole;
+    },
     tx: Tx = undefined,
   ): Promise<User> {
     return this.client(tx).user.create({ data });

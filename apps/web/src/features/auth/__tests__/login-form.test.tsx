@@ -16,9 +16,12 @@ const validLoginResponse = {
   accessToken: 'header.payload.signature',
   user: {
     id: 'user-1',
+    phone: '09120000000',
     email: 'jane@example.com',
     name: 'Jane Doe',
     role: 'USER',
+    status: 'ACTIVE',
+    accountRoles: [],
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
   },

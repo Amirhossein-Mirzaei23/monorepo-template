@@ -11,7 +11,7 @@ import { UsersRepository } from './users.repository';
 
 const BCRYPT_ROUNDS = 10;
 
-const SORT_FIELDS = ['createdAt', 'email', 'name'] as const;
+const SORT_FIELDS = ['createdAt', 'phone', 'email', 'name'] as const;
 type UserSortField = (typeof SORT_FIELDS)[number];
 const DEFAULT_SORT: ParsedSort<UserSortField> = { field: 'createdAt', order: 'desc' };
 
@@ -29,6 +29,7 @@ export class UsersService {
   async list(query: UsersQueryDto): Promise<Paginated<UserResponseDto>> {
     const sort = parseSort(query.sort, SORT_FIELDS, DEFAULT_SORT);
     const where: Prisma.UserWhereInput = {
+      phone: query.phone,
       email: query.email,
       role: query.role,
     };
@@ -57,12 +58,21 @@ export class UsersService {
   }
 
   async create(dto: CreateUserDto): Promise<UserResponseDto> {
-    const existing = await this.repository.findByEmail(dto.email);
+    const existing = await this.repository.findByPhone(dto.phone);
     if (existing) {
-      throw new ConflictException(`Email ${dto.email} is already registered`);
+      throw new ConflictException(`Phone ${dto.phone} is already registered`);
+    }
+    // `!= null` (not `!== undefined`): class-validator's @IsOptional() lets an
+    // explicit `email: null` through, and null must not reach a unique lookup.
+    if (dto.email != null) {
+      const emailClash = await this.repository.findByEmail(dto.email);
+      if (emailClash) {
+        throw new ConflictException(`Email ${dto.email} is already registered`);
+      }
     }
 
     const user = await this.repository.create({
+      phone: dto.phone,
       email: dto.email,
       name: dto.name,
       passwordHash: await hash(dto.password, BCRYPT_ROUNDS),
@@ -77,7 +87,14 @@ export class UsersService {
       if (!current) {
         throw new NotFoundException(`User ${id} not found`);
       }
-      if (dto.email && dto.email !== current.email) {
+      if (dto.phone !== undefined && dto.phone !== current.phone) {
+        const clash = await this.repository.findByPhone(dto.phone, tx);
+        if (clash) {
+          throw new ConflictException(`Phone ${dto.phone} is already registered`);
+        }
+      }
+      // `!= null`: an explicit null means "clear the email" below — no lookup.
+      if (dto.email != null && dto.email !== current.email) {
         const clash = await this.repository.findByEmail(dto.email, tx);
         if (clash) {
           throw new ConflictException(`Email ${dto.email} is already registered`);
@@ -85,6 +102,7 @@ export class UsersService {
       }
 
       const data: Prisma.UserUpdateInput = {};
+      if (dto.phone !== undefined) data.phone = dto.phone;
       if (dto.email !== undefined) data.email = dto.email;
       if (dto.name !== undefined) data.name = dto.name;
       if (dto.role !== undefined) data.role = dto.role;

@@ -37,27 +37,43 @@ describe('AuthService', () => {
   describe('login', () => {
     it('returns a session with an access token and user profile', async () => {
       const seeded = fake.seedUser({
+        phone: '09120000000',
         email: 'admin@monorepo.local',
         name: 'Admin',
         passwordHash: await hash(ADMIN_PASSWORD, 4),
         role: UserRole.ADMIN,
       });
 
-      const session = await auth.login({ email: seeded.email, password: ADMIN_PASSWORD });
+      const session = await auth.login({ email: 'admin@monorepo.local', password: ADMIN_PASSWORD });
       expect(session.accessToken.split('.')).toHaveLength(3);
-      expect(session.user.email).toBe(seeded.email);
-      expect(session.refreshToken).not.toContain(seeded.email);
+      expect(session.user.phone).toBe(seeded.phone);
+      expect(session.user.status).toBe('ACTIVE');
+      expect(session.user.accountRoles).toEqual([]);
+      expect(session.refreshToken).not.toContain(seeded.phone);
       expect(session.refreshExpiresAt.getTime()).toBeGreaterThan(Date.now());
     });
 
     it('rejects wrong passwords', async () => {
       fake.seedUser({
+        phone: '09120000000',
         email: 'admin@monorepo.local',
         name: 'Admin',
         passwordHash: await hash(ADMIN_PASSWORD, 4),
       });
       await expect(
         auth.login({ email: 'admin@monorepo.local', password: 'wrong-password' }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    it('rejects phone-OTP users without a stored password hash', async () => {
+      fake.seedUser({
+        phone: '09123334444',
+        email: 'otp@monorepo.local',
+        name: 'Otp User',
+        passwordHash: null,
+      });
+      await expect(
+        auth.login({ email: 'otp@monorepo.local', password: 'whatever-pass' }),
       ).rejects.toBeInstanceOf(UnauthorizedException);
     });
 
@@ -71,18 +87,21 @@ describe('AuthService', () => {
   describe('register', () => {
     it('creates the user and starts a session', async () => {
       const session = await auth.register({
-        email: 'new@example.com',
+        phone: '09123334444',
         name: 'New',
         password: 'super-secret-1',
       });
-      expect(session.user.email).toBe('new@example.com');
+      expect(session.user.phone).toBe('09123334444');
+      expect(session.user.email).toBeNull();
       expect(session.user.role).toBe(UserRole.USER);
+      expect(session.user.status).toBe('ACTIVE');
+      expect(session.user.accountRoles).toEqual([]);
     });
 
-    it('propagates duplicate-email conflicts', async () => {
-      await auth.register({ email: 'new@example.com', name: 'New', password: 'super-secret-1' });
+    it('propagates duplicate-phone conflicts', async () => {
+      await auth.register({ phone: '09123334444', name: 'New', password: 'super-secret-1' });
       await expect(
-        auth.register({ email: 'new@example.com', name: 'New', password: 'super-secret-1' }),
+        auth.register({ phone: '09123334444', name: 'New 2', password: 'super-secret-1' }),
       ).rejects.toBeInstanceOf(ConflictException);
     });
   });
@@ -90,7 +109,7 @@ describe('AuthService', () => {
   describe('refresh', () => {
     it('rotates the refresh token and mints a new access token', async () => {
       const session = await auth.register({
-        email: 'new@example.com',
+        phone: '09123334444',
         name: 'New',
         password: 'super-secret-1',
       });

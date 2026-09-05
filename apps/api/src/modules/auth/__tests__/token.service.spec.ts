@@ -30,15 +30,20 @@ describe('TokenService', () => {
   });
 
   describe('access tokens', () => {
-    it('signs and verifies a round trip', async () => {
+    it('signs and verifies a round trip with the phone-based payload', async () => {
       const token = await tokens.issueAccessToken({
         id: 'user-1',
-        email: 'jane@example.com',
+        phone: '09120000000',
         role: 'USER',
+        status: 'ACTIVE',
       });
       const payload = await tokens.verifyAccessToken(token);
       expect(payload.sub).toBe('user-1');
-      expect(payload.email).toBe('jane@example.com');
+      expect(payload.phone).toBe('09120000000');
+      expect(payload.role).toBe('USER');
+      expect(payload.status).toBe('ACTIVE');
+      // email is no longer part of the access-token payload (AUTH-001).
+      expect(payload).not.toHaveProperty('email');
     });
 
     it('rejects tampered tokens', async () => {

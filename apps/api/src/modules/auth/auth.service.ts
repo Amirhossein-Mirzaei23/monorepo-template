@@ -27,6 +27,11 @@ export class AuthService {
     private readonly tokens: TokenService,
   ) {}
 
+  /**
+   * Email + password login — the retained ADMIN path (plan §2.7). The formal
+   * role=ADMIN restriction lands with the OTP endpoints in AUTH-003; phone-OTP
+   * users have no passwordHash, so their password logins already fail here.
+   */
   async login(dto: LoginDto): Promise<Session> {
     const user = await this.usersRepository.findByEmail(dto.email);
     const passwordMatches = await compare(dto.password, user?.passwordHash ?? DUMMY_HASH);
@@ -38,6 +43,7 @@ export class AuthService {
 
   async register(dto: RegisterDto): Promise<Session> {
     const created = await this.usersService.create({
+      phone: dto.phone,
       email: dto.email,
       name: dto.name,
       password: dto.password,

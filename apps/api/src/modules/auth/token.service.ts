@@ -47,13 +47,14 @@ export class TokenService {
 
   async issueAccessToken(user: {
     id: string;
-    email: string;
+    phone: string;
     role: AuthUser['role'];
+    status: AuthUser['status'];
   }): Promise<string> {
     const { jwt } = requireAppConfig(this.config);
     // expiresIn as seconds (number): the jwt typings no longer accept raw strings.
     return this.jwt.signAsync(
-      { sub: user.id, email: user.email, role: user.role },
+      { sub: user.id, phone: user.phone, role: user.role, status: user.status },
       { secret: jwt.accessSecret, expiresIn: parseDuration(jwt.accessTtl) / 1000 },
     );
   }

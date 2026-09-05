@@ -1,11 +1,12 @@
 import { createParamDecorator, type ExecutionContext } from '@nestjs/common';
-import type { UserRole } from '@prisma/client';
+import type { UserRole, UserStatus } from '@prisma/client';
 
 /** Access-token payload attached by JwtAuthGuard. */
 export interface AuthUser {
   sub: string;
-  email: string;
+  phone: string;
   role: UserRole;
+  status: UserStatus;
 }
 
 export const CurrentUser = createParamDecorator(

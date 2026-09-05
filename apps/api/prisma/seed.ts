@@ -4,13 +4,19 @@ import { hash } from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function main(): Promise<void> {
+  // Phone-keyed since AUTH-001; the migration backfills the same numbers for
+  // databases seeded before the switch, so the upserts stay idempotent.
+  // (Full Rakdsho seed — sample buyer/seller — arrives with AUTH-005.)
+  const adminPhone = '09120000000';
   const adminEmail = 'admin@monorepo.local';
+  const userPhone = '09120000001';
   const userEmail = 'user@monorepo.local';
 
   await prisma.user.upsert({
-    where: { email: adminEmail },
+    where: { phone: adminPhone },
     update: {},
     create: {
+      phone: adminPhone,
       email: adminEmail,
       name: 'Template Admin',
       role: UserRole.ADMIN,
@@ -19,9 +25,10 @@ async function main(): Promise<void> {
   });
 
   await prisma.user.upsert({
-    where: { email: userEmail },
+    where: { phone: userPhone },
     update: {},
     create: {
+      phone: userPhone,
       email: userEmail,
       name: 'Template User',
       role: UserRole.USER,
@@ -29,7 +36,9 @@ async function main(): Promise<void> {
     },
   });
 
-  console.info(`Seeded ${adminEmail} (admin-password-123) and ${userEmail} (user-password-123)`);
+  console.info(
+    `Seeded ${adminPhone} (${adminEmail}, admin-password-123) and ${userPhone} (${userEmail}, user-password-123)`,
+  );
 }
 
 main()

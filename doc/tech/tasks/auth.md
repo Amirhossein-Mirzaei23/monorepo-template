@@ -6,7 +6,7 @@ to phone+OTP while keeping the session/refresh machinery and the admin password 
 
 ---
 
-### AUTH-001 — Prisma migration: phone-based User + OtpCode
+### AUTH-001 ✅ — Prisma migration: phone-based User + OtpCode
 
 **P0 · Phase 1 · Auth · M** — Deps: PLAT-003
 

@@ -14,6 +14,7 @@ describe('AuthController (e2e)', () => {
     const testApp = await createTestApp();
     app = testApp.app;
     testApp.prisma.seedUser({
+      phone: '09120000000',
       email: 'admin@monorepo.local',
       name: 'Admin',
       passwordHash: await hash(ADMIN_PASSWORD, 4),
@@ -33,6 +34,7 @@ describe('AuthController (e2e)', () => {
         .expect(200);
 
       expect(response.body.accessToken).toEqual(expect.any(String));
+      expect(response.body.user.phone).toBe('09120000000');
       expect(response.body.user.email).toBe('admin@monorepo.local');
       expect(response.body).not.toHaveProperty('refreshToken');
 
@@ -63,17 +65,27 @@ describe('AuthController (e2e)', () => {
     it('creates a user and returns a session', async () => {
       const response = await request(app.getHttpServer())
         .post('/auth/register')
-        .send({ email: 'newbie@example.com', name: 'Newbie', password: 'super-secret-1' })
+        .send({ phone: '09123334444', name: 'Newbie', password: 'super-secret-1' })
         .expect(201);
 
-      expect(response.body.user.email).toBe('newbie@example.com');
+      expect(response.body.user.phone).toBe('09123334444');
+      expect(response.body.user.email).toBeNull();
       expect(response.body.user.role).toBe(UserRole.USER);
+      expect(response.body.user.status).toBe('ACTIVE');
+      expect(response.body.user.accountRoles).toEqual([]);
     });
 
     it('rejects weak passwords with 400', async () => {
       await request(app.getHttpServer())
         .post('/auth/register')
-        .send({ email: 'weak@example.com', name: 'Weak', password: 'short' })
+        .send({ phone: '09123334445', name: 'Weak', password: 'short' })
+        .expect(400);
+    });
+
+    it('rejects malformed phone numbers with 400', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({ phone: '12345', name: 'Bad Phone', password: 'super-secret-1' })
         .expect(400);
     });
   });
@@ -89,7 +101,10 @@ describe('AuthController (e2e)', () => {
         .set('Authorization', `Bearer ${login.body.accessToken as string}`)
         .expect(200)
         .expect((res) => {
+          expect(res.body.phone).toBe('09120000000');
           expect(res.body.email).toBe('admin@monorepo.local');
+          expect(res.body.status).toBe('ACTIVE');
+          expect(res.body.accountRoles).toEqual([]);
         });
     });
 

@@ -1,4 +1,4 @@
-import { type Prisma, type User, UserRole } from '@prisma/client';
+import { type Prisma, type User, UserRole, UserStatus, AccountRole } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 
 interface RefreshTokenRow {
@@ -7,10 +7,18 @@ interface RefreshTokenRow {
   userId: string;
   expiresAt: Date;
   revokedAt: Date | null;
+  deviceLabel: string | null;
+  userAgent: string | null;
+  lastUsedAt: Date | null;
   createdAt: Date;
 }
 
-type UserWhere = { email?: string; role?: UserRole };
+type UserWhere = {
+  phone?: string;
+  email?: string | null;
+  role?: UserRole;
+  status?: UserStatus;
+};
 type UserOrderBy = Record<string, 'asc' | 'desc'>;
 
 const nowIso = () => new Date();
@@ -53,11 +61,13 @@ export class FakePrisma {
     findUnique: async ({
       where,
     }: {
-      where: { id?: string; email?: string };
+      where: { id?: string; phone?: string; email?: string | null };
     }): Promise<User | null> => {
       let found: User | undefined;
       if (where.id !== undefined) {
         found = this.users.get(where.id);
+      } else if (where.phone !== undefined) {
+        found = [...this.users.values()].find((user) => user.phone === where.phone);
       } else if (where.email !== undefined) {
         found = [...this.users.values()].find((user) => user.email === where.email);
       }
@@ -66,10 +76,14 @@ export class FakePrisma {
     create: async ({ data }: { data: Prisma.UserUncheckedCreateInput }): Promise<User> => {
       const row: User = {
         id: randomUUID(),
-        email: String(data.email),
+        phone: String(data.phone),
+        email: data.email == null ? null : String(data.email),
         name: String(data.name ?? ''),
-        passwordHash: String(data.passwordHash ?? ''),
+        passwordHash: data.passwordHash === undefined ? null : String(data.passwordHash),
         role: (data.role as UserRole | undefined) ?? UserRole.USER,
+        status: (data.status as UserStatus | undefined) ?? UserStatus.ACTIVE,
+        accountRoles: (data.accountRoles as AccountRole[] | undefined) ?? [],
+        deletedAt: null,
         createdAt: nowIso(),
         updatedAt: nowIso(),
       };
@@ -89,10 +103,20 @@ export class FakePrisma {
       }
       const next: User = {
         ...row,
-        ...(data.email !== undefined ? { email: String(data.email) } : {}),
+        ...(data.phone !== undefined ? { phone: String(data.phone) } : {}),
+        ...(data.email !== undefined
+          ? { email: data.email === null ? null : String(data.email) }
+          : {}),
         ...(data.name !== undefined ? { name: String(data.name) } : {}),
-        ...(data.passwordHash !== undefined ? { passwordHash: String(data.passwordHash) } : {}),
+        ...(data.passwordHash !== undefined
+          ? { passwordHash: data.passwordHash === null ? null : String(data.passwordHash) }
+          : {}),
         ...(data.role !== undefined ? { role: data.role as UserRole } : {}),
+        ...(data.status !== undefined ? { status: data.status as UserStatus } : {}),
+        ...(data.accountRoles !== undefined
+          ? { accountRoles: data.accountRoles as AccountRole[] }
+          : {}),
+        ...(data.deletedAt !== undefined ? { deletedAt: data.deletedAt as Date | null } : {}),
         updatedAt: nowIso(),
       };
       this.users.set(row.id, next);
@@ -112,7 +136,14 @@ export class FakePrisma {
     create: async ({
       data,
     }: {
-      data: { tokenHash: string; userId: string; expiresAt: Date };
+      data: {
+        tokenHash: string;
+        userId: string;
+        expiresAt: Date;
+        deviceLabel?: string | null;
+        userAgent?: string | null;
+        lastUsedAt?: Date | null;
+      };
     }): Promise<RefreshTokenRow> => {
       const row: RefreshTokenRow = {
         id: randomUUID(),
@@ -120,6 +151,9 @@ export class FakePrisma {
         userId: data.userId,
         expiresAt: data.expiresAt,
         revokedAt: null,
+        deviceLabel: data.deviceLabel ?? null,
+        userAgent: data.userAgent ?? null,
+        lastUsedAt: data.lastUsedAt ?? null,
         createdAt: nowIso(),
       };
       this.refreshTokens.set(row.id, row);
@@ -140,7 +174,7 @@ export class FakePrisma {
       data,
     }: {
       where: { id?: string; userId?: string; tokenHash?: string; revokedAt?: null };
-      data: { revokedAt: Date };
+      data: { revokedAt: Date; lastUsedAt?: Date };
     }): Promise<number> => {
       let changed = 0;
       for (const row of this.refreshTokens.values()) {
@@ -150,6 +184,9 @@ export class FakePrisma {
         const unrevokedMatch = where.revokedAt === null ? row.revokedAt === null : true;
         if (idMatch && userIdMatch && hashMatch && unrevokedMatch) {
           row.revokedAt = data.revokedAt;
+          if (data.lastUsedAt !== undefined) {
+            row.lastUsedAt = data.lastUsedAt;
+          }
           changed += 1;
         }
       }
@@ -169,13 +206,25 @@ export class FakePrisma {
   async $disconnect(): Promise<void> {}
 
   /** Test helper: direct seeded rows (e.g. a pre-existing admin). */
-  seedUser(user: Pick<User, 'email' | 'name' | 'passwordHash'> & { role?: UserRole }): User {
+  seedUser(
+    user: Pick<User, 'phone' | 'name'> & {
+      email?: string | null;
+      passwordHash?: string | null;
+      role?: UserRole;
+      status?: UserStatus;
+      accountRoles?: AccountRole[];
+    },
+  ): User {
     const row: User = {
       id: randomUUID(),
-      email: user.email,
+      phone: user.phone,
+      email: user.email ?? null,
       name: user.name,
-      passwordHash: user.passwordHash,
+      passwordHash: user.passwordHash ?? null,
       role: user.role ?? UserRole.USER,
+      status: user.status ?? UserStatus.ACTIVE,
+      accountRoles: user.accountRoles ?? [],
+      deletedAt: null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -186,8 +235,10 @@ export class FakePrisma {
 
 function matchesWhere(where: UserWhere | undefined): (user: User) => boolean {
   return (user) =>
+    (where?.phone === undefined || user.phone === where.phone) &&
     (where?.email === undefined || user.email === where.email) &&
-    (where?.role === undefined || user.role === where.role);
+    (where?.role === undefined || user.role === where.role) &&
+    (where?.status === undefined || user.status === where.status);
 }
 
 function cloneUser(user: User): User {

@@ -1,6 +1,6 @@
 // GENERATED from openapi.json by scripts/generate.mjs — DO NOT EDIT.
 // Regenerate with `npm run gen:types` at the repo root.
- 
+/* eslint-disable */
 
 import { z } from 'zod';
 
@@ -10,29 +10,35 @@ export const objectSchema = z.object({
 
 export const userResponseDtoSchema = z.object({
   id: z.string(),
-  email: z.string(),
+  phone: z.string(),
+  email: z.string().nullable(),
   name: z.string(),
   role: z.enum(['USER', 'ADMIN']),
+  status: z.enum(['ACTIVE', 'SUSPENDED', 'BLOCKED', 'DELETED']),
+  accountRoles: z.array(z.enum(['BUYER', 'SELLER'])),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });
 
 export const createUserDtoSchema = z.object({
-  email: z.email(),
+  phone: z.string(),
+  email: z.email().nullable().optional(),
   name: z.string(),
   password: z.string(),
   role: z.enum(['USER', 'ADMIN']).optional(),
 });
 
 export const updateUserDtoSchema = z.object({
-  email: z.email().optional(),
+  phone: z.string().optional(),
+  email: z.email().nullable().optional(),
   name: z.string().optional(),
   password: z.string().optional(),
   role: z.enum(['USER', 'ADMIN']).optional(),
 });
 
 export const registerDtoSchema = z.object({
-  email: z.email(),
+  phone: z.string(),
+  email: z.email().optional(),
   name: z.string(),
   password: z.string(),
 });

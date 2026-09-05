@@ -1,10 +1,23 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsEmail, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { USER_PHONE_REGEX } from '../../../common/constants/phone';
 
+/**
+ * Phone-based registration (transitional until OTP login-or-register lands in
+ * AUTH-003). Email is optional profile data, not the identity.
+ */
 export class RegisterDto {
-  @ApiProperty({ example: 'jane@example.com', format: 'email' })
+  @ApiProperty({ example: '09120000000', description: 'Normalized `09xxxxxxxxx`' })
+  @IsString()
+  @Matches(USER_PHONE_REGEX, {
+    message: 'phone must be a valid Iranian mobile number (09xxxxxxxxx)',
+  })
+  phone!: string;
+
+  @ApiPropertyOptional({ example: 'jane@example.com', format: 'email' })
+  @IsOptional()
   @IsEmail()
-  email!: string;
+  email?: string;
 
   @ApiProperty({ example: 'Jane Doe' })
   @IsString()

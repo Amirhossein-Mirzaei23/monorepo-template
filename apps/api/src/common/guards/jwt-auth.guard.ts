@@ -36,7 +36,12 @@ export class JwtAuthGuard {
     try {
       const { accessSecret } = requireAppConfig(this.configService).jwt;
       const payload = await this.jwtService.verifyAsync<AuthUser>(token, { secret: accessSecret });
-      request.user = { sub: payload.sub, email: payload.email, role: payload.role };
+      request.user = {
+        sub: payload.sub,
+        phone: payload.phone,
+        role: payload.role,
+        status: payload.status,
+      };
       return true;
     } catch {
       throw new UnauthorizedException('Invalid or expired access token');

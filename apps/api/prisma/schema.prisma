@@ -15,26 +15,77 @@ enum UserRole {
   ADMIN
 }
 
+/// Account lifecycle (plan §3) — DELETED is the soft-delete state (AUTH-008).
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BLOCKED
+  DELETED
+}
+
+/// Buyer/seller hats on one account — never mutually exclusive (plan §2.7).
+enum AccountRole {
+  BUYER
+  SELLER
+}
+
+/// What an OTP code unlocks (plan §3).
+enum OtpPurpose {
+  LOGIN
+  PHONE_CHANGE
+}
+
 model User {
-  id             String         @id @default(cuid())
-  email          String         @unique
-  name           String
-  passwordHash   String
-  role           UserRole       @default(USER)
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-  refreshTokens  RefreshToken[]
+  id            String         @id @default(cuid())
+  /// Iranian mobile number, normalized and stored as `09xxxxxxxxx`.
+  phone         String         @unique
+  email         String?        @unique
+  name          String
+  /// Admin password login only — phone-OTP users have no password (plan §2.7).
+  passwordHash  String?
+  role          UserRole       @default(USER)
+  status        UserStatus     @default(ACTIVE)
+  accountRoles  AccountRole[]  @default([])
+  deletedAt     DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  refreshTokens RefreshToken[]
+
+  @@index([status])
 }
 
 /// Refresh-token rotation store: only sha256 hashes are persisted.
+/// deviceLabel/userAgent/lastUsedAt feed session management (AUTH-006).
 model RefreshToken {
-  id        String    @id @default(cuid())
-  tokenHash String    @unique
-  userId    String
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt DateTime
-  revokedAt DateTime?
-  createdAt DateTime  @default(now())
+  id          String    @id @default(cuid())
+  tokenHash   String    @unique
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  deviceLabel String?
+  userAgent   String?
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
 
   @@index([userId])
+}
+
+/// Phone OTP codes — only sha256 hashes are persisted; rows are hard-deleted
+/// once expired (prune job, plan §12). Issued/verified by OtpService (AUTH-002).
+/// NOTE: the "one active OTP per phone+purpose" guarantee is a partial unique
+/// index (WHERE "consumedAt" IS NULL) that Prisma cannot express — it lives in
+/// the AUTH-001 migration SQL.
+model OtpCode {
+  id         String     @id @default(cuid())
+  phone      String
+  codeHash   String
+  purpose    OtpPurpose
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int        @default(0)
+  lastSentAt DateTime
+  createdAt  DateTime   @default(now())
+
+  @@index([phone, createdAt])
 }

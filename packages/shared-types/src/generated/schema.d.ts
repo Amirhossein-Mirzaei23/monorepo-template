@@ -185,12 +185,20 @@ export interface components {
         UserResponseDto: {
             /** @example clx…cuid */
             id: string;
+            /**
+             * @description Normalized `09xxxxxxxxx`
+             * @example 09120000000
+             */
+            phone: string;
             /** @example jane@example.com */
-            email: string;
+            email: string | null;
             /** @example Jane Doe */
             name: string;
             /** @enum {string} */
             role: "USER" | "ADMIN";
+            /** @enum {string} */
+            status: "ACTIVE" | "SUSPENDED" | "BLOCKED" | "DELETED";
+            accountRoles: ("BUYER" | "SELLER")[];
             /**
              * Format: date-time
              * @example 2026-01-01T00:00:00.000Z
@@ -204,10 +212,15 @@ export interface components {
         };
         CreateUserDto: {
             /**
+             * @description Normalized `09xxxxxxxxx`
+             * @example 09120000000
+             */
+            phone: string;
+            /**
              * Format: email
              * @example jane@example.com
              */
-            email: string;
+            email?: string | null;
             /** @example Jane Doe */
             name: string;
             /** @example s3cure-pass */
@@ -220,10 +233,15 @@ export interface components {
         };
         UpdateUserDto: {
             /**
+             * @description Normalized `09xxxxxxxxx`
+             * @example 09120000000
+             */
+            phone?: string;
+            /**
              * Format: email
              * @example jane@example.com
              */
-            email?: string;
+            email?: string | null;
             /** @example Jane Doe */
             name?: string;
             /** @example s3cure-pass */
@@ -236,10 +254,15 @@ export interface components {
         };
         RegisterDto: {
             /**
+             * @description Normalized `09xxxxxxxxx`
+             * @example 09120000000
+             */
+            phone: string;
+            /**
              * Format: email
              * @example jane@example.com
              */
-            email: string;
+            email?: string;
             /** @example Jane Doe */
             name: string;
             /** @example s3cure-pass */
@@ -325,6 +348,7 @@ export interface operations {
                 page?: components["schemas"]["Object"];
                 limit?: components["schemas"]["Object"];
                 sort?: string;
+                phone?: string;
                 email?: string;
                 role?: "USER" | "ADMIN";
             };
