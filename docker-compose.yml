@@ -30,6 +30,13 @@ services:
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-local-dev-access-secret-change-me}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-local-dev-refresh-secret-change-me}
       CORS_ORIGINS: http://localhost:3000
+      # Media storage (MEDIA-001) — named volume so uploads survive restarts.
+      STORAGE_DIR: /app/apps/api/storage
+      PUBLIC_MEDIA_BASE_URL: http://localhost:3001/media
+    volumes:
+      # The image ships an empty, nonroot-owned dir at this path so the volume
+      # inherits writable ownership (the api runs as USER nonroot).
+      - media-data:/app/apps/api/storage
     ports:
       - '3001:3001'
     depends_on:
@@ -53,3 +60,4 @@ services:
 
 volumes:
   postgres-data:
+  media-data:

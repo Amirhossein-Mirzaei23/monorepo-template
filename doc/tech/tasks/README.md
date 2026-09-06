@@ -30,67 +30,67 @@ Complexity: XS 1 · S 22 · M 71 · L 12 · XL 1.
 
 ## Task table (ID · title · P · phase · complexity)
 
-| ID        | Title                                 | P   | Ph  | C   |     | ID       | Title                               | P   | Ph  | C   |
-| --------- | ------------------------------------- | --- | --- | --- | --- | -------- | ----------------------------------- | --- | --- | --- |
-| PLAT-001  | ✅ Persian/RTL foundation             | P0  | 0   | S   |     | CHT-001  | Conversation domain + get-or-create | P0  | 5   | M   |
-| PLAT-002  | ✅ Public marketplace shell/routes    | P0  | 0   | S   |     | CHT-002  | Conversations list API              | P0  | 5   | M   |
-| PLAT-003  | ✅ Env & config additions             | P0  | 0   | XS  |     | CHT-003  | Messages API (send/list/read)       | P0  | 5   | M   |
-| PLAT-004  | PWA manifest & icons                  | P1  | 10  | S   |     | CHT-004  | WebSocket gateway                   | P0  | 5   | L   |
-| PLAT-005  | SEO foundation                        | P1  | 10  | M   |     | CHT-005  | Conversations list UI               | P0  | 5   | L   |
-| PLAT-006  | Capacitor readiness spike             | P2  | 10  | M   |     | CHT-006  | Chat thread UI                      | P0  | 5   | L   |
-| AUTH-001  | ✅ Phone-based User + OtpCode schema  | P0  | 1   | M   |     | CHT-007  | Media messages                      | P0  | 5   | M   |
-| AUTH-002  | ✅ OTP service + throttling           | P0  | 1   | M   |     | CHT-008  | Quick actions in chat               | P0  | 5   | S   |
-| AUTH-003  | ✅ OTP endpoints (login-or-register)  | P0  | 1   | M   |     | CHT-009  | Block & report conversation         | P1  | 9   | M   |
-| AUTH-004  | ✅ Web OTP login UI + BFF             | P0  | 1   | M   |     | CHT-010  | Presence                            | P2  | 10  | M   |
-| AUTH-005  | ✅ Seed + docs refresh                | P0  | 1   | S   |     | OFR-001  | Offer domain + state machine        | P0  | 6   | M   |
-| AUTH-006  | Session/device management             | P1  | 9   | M   |     | OFR-002  | Offers API                          | P0  | 6   | M   |
-| AUTH-007  | Change phone number                   | P1  | 9   | M   |     | OFR-003  | Offer expiry job                    | P0  | 6   | S   |
-| AUTH-008  | Account deletion                      | P1  | 9   | S   |     | OFR-004  | Offers UI                           | P0  | 6   | M   |
-| ONB-001   | ✅ Profile domain + onboarding API    | P0  | 1   | M   |     | DEAL-001 | Deal domain + state machine         | P0  | 6   | L   |
-| ONB-002   | ✅ Mobile-first onboarding UI         | P0  | 1   | L   |     | DEAL-002 | Deal creation API                   | P0  | 6   | M   |
-| PROF-001  | ✅ My profile view/edit               | P0  | 1   | M   |     | DEAL-003 | Deal transitions API                | P0  | 6   | M   |
-| PROF-002  | Public seller profile page            | P0  | 1   | M   |     | DEAL-004 | Deals UI                            | P0  | 6   | M   |
-| PROF-003  | Public buyer profile                  | P1  | 9   | S   |     | DEAL-005 | Completion effects                  | P0  | 6   | M   |
-| PROF-004  | Avatar upload                         | P1  | 9   | M   |     | DEAL-006 | Payment recording + commission      | P0  | 6   | S   |
-| PROF-005  | Seller metrics rollup job             | P1  | 9   | M   |     | DEAL-007 | Dispute handling                    | P1  | 9   | M   |
-| CAT-001   | ✅ Category domain + seed             | P0  | 2   | M   |     | TRS-001  | Verification domain + admin API     | P0  | 7   | M   |
-| CAT-002   | _(folded into CAT-001)_               | —   | —   | —   |     | TRS-002  | Badge display                       | P0  | 7   | S   |
-| CAT-003   | ✅ Category picker components         | P0  | 2   | S   |     | TRS-003  | Reports domain + create API         | P0  | 7   | M   |
-| CAT-004   | ✅ Admin categories CRUD API          | P0  | 2   | M   |     | TRS-004  | Report UI                           | P0  | 7   | S   |
-| LOT-001   | ✅ Lot domain model + repository      | P0  | 2   | L   |     | TRS-005  | Lot moderation queue API            | P0  | 7   | M   |
-| LOT-002   | ✅ Lot create/update API              | P0  | 2   | M   |     | TRS-006  | Moderation wiring (seller view)     | P0  | 7   | S   |
-| LOT-003   | ✅ Lot lifecycle actions API          | P0  | 2   | M   |     | TRS-007  | Inspection workflow                 | P1  | 9   | M   |
-| LOT-004   | Create/edit lot UI (wizard)           | P0  | 2   | L   |     | ADM-001  | Admin shell + overview              | P0  | 7   | M   |
-| LOT-005   | My Lots management UI                 | P0  | 2   | M   |     | ADM-002  | Admin users management              | P0  | 7   | M   |
-| LOT-006   | ✅ Lot expiration job                 | P0  | 2   | S   |     | ADM-003  | Admin lots moderation UI            | P0  | 7   | L   |
-| MEDIA-001 | StorageService + MediaAsset + serving | P0  | 3   | M   |     | ADM-004  | Admin reports queue                 | P0  | 7   | M   |
-| MEDIA-002 | Image upload API (sharp variants)     | P0  | 3   | M   |     | ADM-005  | Admin deals view                    | P0  | 7   | M   |
-| MEDIA-003 | Video upload API (client poster)      | P0  | 3   | M   |     | ADM-006  | Admin verification review           | P0  | 7   | M   |
-| MEDIA-004 | Web uploader components               | P0  | 3   | L   |     | ADM-007  | Admin categories management         | P0  | 7   | M   |
-| MEDIA-005 | Lot media attach/organize             | P0  | 3   | S   |     | ADM-008  | Admin dashboard completeness        | P0  | 7   | S   |
-| MEDIA-006 | S3-compatible storage driver          | P1  | 9   | M   |     | REV-001  | Reviews API (deal-gated)            | P1  | 9   | M   |
-| MKT-001   | Public lot listing API                | P0  | 4   | M   |     | REV-002  | Reviews UI                          | P1  | 9   | M   |
-| MKT-002   | Filters API                           | P0  | 4   | M   |     | DSH-001  | App shell + bottom tabs             | P0  | 8   | M   |
-| MKT-003   | Search API (pg_trgm)                  | P0  | 4   | M   |     | DSH-002  | Seller dashboard overview           | P0  | 8   | M   |
-| MKT-004   | Marketplace home page                 | P0  | 4   | L   |     | DSH-003  | Buyer dashboard overview            | P0  | 8   | M   |
-| MKT-005   | Lot card component                    | P0  | 4   | M   |     | DSH-004  | Settings page                       | P0  | 8   | S   |
-| MKT-006   | Browse page + infinite scroll         | P0  | 4   | M   |     | SAV-001  | Saved lots API                      | P0  | 8   | S   |
-| MKT-007   | Search UI                             | P0  | 4   | S   |     | SAV-002  | Saved lots page                     | P0  | 8   | M   |
-| MKT-008   | Filters & sort UI                     | P0  | 4   | M   |     | SAV-003  | Saved searches                      | P1  | 9   | M   |
-| MKT-009   | Lot detail page                       | P0  | 4   | L   |     | SAV-004  | Saved-search notifications          | P2  | 10  | M   |
-| MKT-010   | Share                                 | P0  | 4   | S   |     | NTF-001  | Notification domain + wiring        | P1  | 9   | M   |
-| MKT-011   | Engagement counters + events          | P1  | 9   | M   |     | NTF-002  | Notifications API                   | P1  | 9   | S   |
-| MKT-012   | Recommendations (placeholder)         | P2  | 10  | L   |     | NTF-003  | Notifications UI                    | P1  | 9   | M   |
-|           |                                       |     |     |     |     | NTF-004  | Web push (PWA)                      | P2  | 10  | M   |
-|           |                                       |     |     |     |     | NTF-005  | SMS critical events                 | P1  | 9   | S   |
-|           |                                       |     |     |     |     | ANL-001  | Analytics event capture + rollups   | P1  | 9   | M   |
-|           |                                       |     |     |     |     | ANL-002  | Seller analytics page               | P1  | 9   | M   |
-|           |                                       |     |     |     |     | ANL-003  | Admin marketplace metrics           | P1  | 9   | M   |
-|           |                                       |     |     |     |     | QA-001   | E2E critical-journey suite          | P0  | 10  | XL  |
-|           |                                       |     |     |     |     | QA-002   | Permission & state-machine suite    | P0  | 10  | M   |
-|           |                                       |     |     |     |     | QA-003   | RTL/mobile/a11y QA pass             | P0  | 10  | M   |
-|           |                                       |     |     |     |     | QA-004   | Security & load review              | P1  | 10  | M   |
-|           |                                       |     |     |     |     | QA-005   | Launch readiness execution          | P0  | 10  | M   |
+| ID        | Title                                    | P   | Ph  | C   |     | ID       | Title                               | P   | Ph  | C   |
+| --------- | ---------------------------------------- | --- | --- | --- | --- | -------- | ----------------------------------- | --- | --- | --- |
+| PLAT-001  | ✅ Persian/RTL foundation                | P0  | 0   | S   |     | CHT-001  | Conversation domain + get-or-create | P0  | 5   | M   |
+| PLAT-002  | ✅ Public marketplace shell/routes       | P0  | 0   | S   |     | CHT-002  | Conversations list API              | P0  | 5   | M   |
+| PLAT-003  | ✅ Env & config additions                | P0  | 0   | XS  |     | CHT-003  | Messages API (send/list/read)       | P0  | 5   | M   |
+| PLAT-004  | PWA manifest & icons                     | P1  | 10  | S   |     | CHT-004  | WebSocket gateway                   | P0  | 5   | L   |
+| PLAT-005  | SEO foundation                           | P1  | 10  | M   |     | CHT-005  | Conversations list UI               | P0  | 5   | L   |
+| PLAT-006  | Capacitor readiness spike                | P2  | 10  | M   |     | CHT-006  | Chat thread UI                      | P0  | 5   | L   |
+| AUTH-001  | ✅ Phone-based User + OtpCode schema     | P0  | 1   | M   |     | CHT-007  | Media messages                      | P0  | 5   | M   |
+| AUTH-002  | ✅ OTP service + throttling              | P0  | 1   | M   |     | CHT-008  | Quick actions in chat               | P0  | 5   | S   |
+| AUTH-003  | ✅ OTP endpoints (login-or-register)     | P0  | 1   | M   |     | CHT-009  | Block & report conversation         | P1  | 9   | M   |
+| AUTH-004  | ✅ Web OTP login UI + BFF                | P0  | 1   | M   |     | CHT-010  | Presence                            | P2  | 10  | M   |
+| AUTH-005  | ✅ Seed + docs refresh                   | P0  | 1   | S   |     | OFR-001  | Offer domain + state machine        | P0  | 6   | M   |
+| AUTH-006  | Session/device management                | P1  | 9   | M   |     | OFR-002  | Offers API                          | P0  | 6   | M   |
+| AUTH-007  | Change phone number                      | P1  | 9   | M   |     | OFR-003  | Offer expiry job                    | P0  | 6   | S   |
+| AUTH-008  | Account deletion                         | P1  | 9   | S   |     | OFR-004  | Offers UI                           | P0  | 6   | M   |
+| ONB-001   | ✅ Profile domain + onboarding API       | P0  | 1   | M   |     | DEAL-001 | Deal domain + state machine         | P0  | 6   | L   |
+| ONB-002   | ✅ Mobile-first onboarding UI            | P0  | 1   | L   |     | DEAL-002 | Deal creation API                   | P0  | 6   | M   |
+| PROF-001  | ✅ My profile view/edit                  | P0  | 1   | M   |     | DEAL-003 | Deal transitions API                | P0  | 6   | M   |
+| PROF-002  | Public seller profile page               | P0  | 1   | M   |     | DEAL-004 | Deals UI                            | P0  | 6   | M   |
+| PROF-003  | Public buyer profile                     | P1  | 9   | S   |     | DEAL-005 | Completion effects                  | P0  | 6   | M   |
+| PROF-004  | Avatar upload                            | P1  | 9   | M   |     | DEAL-006 | Payment recording + commission      | P0  | 6   | S   |
+| PROF-005  | Seller metrics rollup job                | P1  | 9   | M   |     | DEAL-007 | Dispute handling                    | P1  | 9   | M   |
+| CAT-001   | ✅ Category domain + seed                | P0  | 2   | M   |     | TRS-001  | Verification domain + admin API     | P0  | 7   | M   |
+| CAT-002   | _(folded into CAT-001)_                  | —   | —   | —   |     | TRS-002  | Badge display                       | P0  | 7   | S   |
+| CAT-003   | ✅ Category picker components            | P0  | 2   | S   |     | TRS-003  | Reports domain + create API         | P0  | 7   | M   |
+| CAT-004   | ✅ Admin categories CRUD API             | P0  | 2   | M   |     | TRS-004  | Report UI                           | P0  | 7   | S   |
+| LOT-001   | ✅ Lot domain model + repository         | P0  | 2   | L   |     | TRS-005  | Lot moderation queue API            | P0  | 7   | M   |
+| LOT-002   | ✅ Lot create/update API                 | P0  | 2   | M   |     | TRS-006  | Moderation wiring (seller view)     | P0  | 7   | S   |
+| LOT-003   | ✅ Lot lifecycle actions API             | P0  | 2   | M   |     | TRS-007  | Inspection workflow                 | P1  | 9   | M   |
+| LOT-004   | Create/edit lot UI (wizard)              | P0  | 2   | L   |     | ADM-001  | Admin shell + overview              | P0  | 7   | M   |
+| LOT-005   | My Lots management UI                    | P0  | 2   | M   |     | ADM-002  | Admin users management              | P0  | 7   | M   |
+| LOT-006   | ✅ Lot expiration job                    | P0  | 2   | S   |     | ADM-003  | Admin lots moderation UI            | P0  | 7   | L   |
+| MEDIA-001 | ✅ StorageService + MediaAsset + serving | P0  | 3   | M   |     | ADM-004  | Admin reports queue                 | P0  | 7   | M   |
+| MEDIA-002 | Image upload API (sharp variants)        | P0  | 3   | M   |     | ADM-005  | Admin deals view                    | P0  | 7   | M   |
+| MEDIA-003 | Video upload API (client poster)         | P0  | 3   | M   |     | ADM-006  | Admin verification review           | P0  | 7   | M   |
+| MEDIA-004 | Web uploader components                  | P0  | 3   | L   |     | ADM-007  | Admin categories management         | P0  | 7   | M   |
+| MEDIA-005 | Lot media attach/organize                | P0  | 3   | S   |     | ADM-008  | Admin dashboard completeness        | P0  | 7   | S   |
+| MEDIA-006 | S3-compatible storage driver             | P1  | 9   | M   |     | REV-001  | Reviews API (deal-gated)            | P1  | 9   | M   |
+| MKT-001   | Public lot listing API                   | P0  | 4   | M   |     | REV-002  | Reviews UI                          | P1  | 9   | M   |
+| MKT-002   | Filters API                              | P0  | 4   | M   |     | DSH-001  | App shell + bottom tabs             | P0  | 8   | M   |
+| MKT-003   | Search API (pg_trgm)                     | P0  | 4   | M   |     | DSH-002  | Seller dashboard overview           | P0  | 8   | M   |
+| MKT-004   | Marketplace home page                    | P0  | 4   | L   |     | DSH-003  | Buyer dashboard overview            | P0  | 8   | M   |
+| MKT-005   | Lot card component                       | P0  | 4   | M   |     | DSH-004  | Settings page                       | P0  | 8   | S   |
+| MKT-006   | Browse page + infinite scroll            | P0  | 4   | M   |     | SAV-001  | Saved lots API                      | P0  | 8   | S   |
+| MKT-007   | Search UI                                | P0  | 4   | S   |     | SAV-002  | Saved lots page                     | P0  | 8   | M   |
+| MKT-008   | Filters & sort UI                        | P0  | 4   | M   |     | SAV-003  | Saved searches                      | P1  | 9   | M   |
+| MKT-009   | Lot detail page                          | P0  | 4   | L   |     | SAV-004  | Saved-search notifications          | P2  | 10  | M   |
+| MKT-010   | Share                                    | P0  | 4   | S   |     | NTF-001  | Notification domain + wiring        | P1  | 9   | M   |
+| MKT-011   | Engagement counters + events             | P1  | 9   | M   |     | NTF-002  | Notifications API                   | P1  | 9   | S   |
+| MKT-012   | Recommendations (placeholder)            | P2  | 10  | L   |     | NTF-003  | Notifications UI                    | P1  | 9   | M   |
+|           |                                          |     |     |     |     | NTF-004  | Web push (PWA)                      | P2  | 10  | M   |
+|           |                                          |     |     |     |     | NTF-005  | SMS critical events                 | P1  | 9   | S   |
+|           |                                          |     |     |     |     | ANL-001  | Analytics event capture + rollups   | P1  | 9   | M   |
+|           |                                          |     |     |     |     | ANL-002  | Seller analytics page               | P1  | 9   | M   |
+|           |                                          |     |     |     |     | ANL-003  | Admin marketplace metrics           | P1  | 9   | M   |
+|           |                                          |     |     |     |     | QA-001   | E2E critical-journey suite          | P0  | 10  | XL  |
+|           |                                          |     |     |     |     | QA-002   | Permission & state-machine suite    | P0  | 10  | M   |
+|           |                                          |     |     |     |     | QA-003   | RTL/mobile/a11y QA pass             | P0  | 10  | M   |
+|           |                                          |     |     |     |     | QA-004   | Security & load review              | P1  | 10  | M   |
+|           |                                          |     |     |     |     | QA-005   | Launch readiness execution          | P0  | 10  | M   |
 
 ## Recommended execution order
 

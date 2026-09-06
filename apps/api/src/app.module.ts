@@ -18,6 +18,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { LotsModule } from './modules/lots/lots.module';
+import { MediaModule } from './modules/media/media.module';
 import { OtpModule } from './modules/otp/otp.module';
 import { ProfilesModule } from './modules/profiles/profiles.module';
 import { UsersModule } from './modules/users/users.module';
@@ -81,6 +82,7 @@ import { PrismaModule } from './prisma/prisma.module';
     CategoriesModule,
     ProfilesModule,
     LotsModule,
+    MediaModule,
     JobsModule,
   ],
   providers: [

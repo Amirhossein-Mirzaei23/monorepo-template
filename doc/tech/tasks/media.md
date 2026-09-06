@@ -7,7 +7,7 @@ on the distroless API). Limits (PLAT-003): image ≤ 10 MB × 15/lot, video ≤ 
 
 ---
 
-### MEDIA-001 — StorageService abstraction + MediaAsset + serving
+### MEDIA-001 ✅ — StorageService abstraction + MediaAsset + serving
 
 **P0 · Phase 3 · Media · M** — Deps: PLAT-003
 

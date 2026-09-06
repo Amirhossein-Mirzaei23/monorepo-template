@@ -19,6 +19,11 @@ RUN npm run build --workspace @monorepo/shared-types \
  && npm run build --workspace @monorepo/api \
  && npm prune --omit=dev
 
+# Storage root (MEDIA-001): empty dir owned by the distroless `nonroot` user
+# (uid 65532). The compose `media-data` named volume mounts over this path and
+# inherits the ownership, so the runtime user can write uploads.
+RUN mkdir -p apps/api/storage && chown 65532:65532 apps/api/storage
+
 # --- runtime (distroless) ------------------------------------------------------
 # Note: the Prisma query engine needs libssl. distroless/debian12 ships it;
 # if you hit engine-load errors on a different base, fall back to
@@ -30,6 +35,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/api/package.json ./apps/api/package.json
 COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY --from=build /app/apps/api/prisma ./apps/api/prisma
+COPY --from=build /app/apps/api/storage ./apps/api/storage
 EXPOSE 3001
 USER nonroot
 CMD ["apps/api/dist/main.js"]

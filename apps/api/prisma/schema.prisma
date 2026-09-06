@@ -91,6 +91,13 @@ enum LotUnit {
   OTHER
 }
 
+/// Kind of binary a MediaAsset holds (plan §3) — drives the per-kind upload
+/// limits/quota (MEDIA-002/003): images ≤ 10 MB × 15/lot, videos ≤ 50 MB × 60 s × 3/lot.
+enum MediaType {
+  IMAGE
+  VIDEO
+}
+
 model User {
   id            String         @id @default(cuid())
   /// Iranian mobile number, normalized and stored as `09xxxxxxxxx`.
@@ -112,6 +119,8 @@ model User {
   profile       Profile?
   /// Lots owned by this account (seller side of the data spine, plan §3).
   lots          Lot[]
+  /// Uploaded media (MEDIA-001).
+  mediaAssets   MediaAsset[]
 
   @@index([status])
 }
@@ -304,4 +313,37 @@ model Lot {
   /// migration; declared here with matching names so migrate diff sees no drift.
   @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "Lot_title_trgm_idx")
   @@index([description(ops: raw("gin_trgm_ops"))], type: Gin, map: "Lot_description_trgm_idx")
+}
+
+/// An uploaded binary and its storage metadata (MEDIA-001, plan §3). The bytes
+/// live behind a StorageService driver (local disk now, S3-compatible later —
+/// MEDIA-006); only keys/metadata are relational. `storageKey` is the
+/// driver-relative path `{yyyy}/{mm}/{cuid}.{ext}` (unguessable: random id +
+/// no filename reuse) and is UNIQUE so serving is an O(1) lookup by key.
+/// Content-type/size are read back from THIS row at serving time — never from
+/// the request. width/height/durationMs are set by the upload pipeline
+/// (MEDIA-002/003); thumbKey is the WebP thumbnail variant key (MEDIA-002).
+model MediaAsset {
+  id         String    @id @default(cuid())
+  ownerId    String
+  /// onDelete: Restrict — users are soft-deleted (plan §12); mirrors
+  /// Lot.seller: a hard user delete behind live assets must be impossible.
+  owner      User      @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  type       MediaType
+  /// Driver-relative storage key; `secure/`-prefixed keys are chat media
+  /// served only behind JWT (GET /media/secure/:key), the rest are public.
+  storageKey String    @unique
+  /// Optional thumbnail variant key (MEDIA-002 sharp pipeline).
+  thumbKey   String?
+  mime       String
+  sizeBytes  Int
+  width      Int?
+  height     Int?
+  durationMs Int?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  /// (ownerId, createdAt) per plan §3 — quota counting (MEDIA-002) is
+  /// "rows for owner in window", which this composite also covers.
+  @@index([ownerId, createdAt])
 }

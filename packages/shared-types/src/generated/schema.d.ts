@@ -417,6 +417,40 @@ export interface paths {
         patch: operations["LotsController_update"];
         trace?: never;
     };
+    "/media/secure/{year}/{month}/{file}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream a bearer-only media asset (chat media) by storage key */
+        get: operations["MediaController_serveSecure"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/{year}/{month}/{file}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream a public media asset (lot image variants, avatars) by storage key */
+        get: operations["MediaController_servePublic"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1948,6 +1982,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LotOwnerResponseDto"];
+                };
+            };
+        };
+    };
+    MediaController_serveSecure: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                year: string;
+                month: string;
+                file: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string;
+                };
+            };
+        };
+    };
+    MediaController_servePublic: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                year: string;
+                month: string;
+                file: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string;
                 };
             };
         };

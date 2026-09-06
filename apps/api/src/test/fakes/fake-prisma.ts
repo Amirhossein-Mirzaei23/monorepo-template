@@ -5,6 +5,8 @@ import {
   LotCondition,
   LotStatus,
   LotUnit,
+  type MediaAsset,
+  MediaType,
   type OtpCode,
   OtpPurpose,
   type Prisma,
@@ -70,8 +72,27 @@ type OtpWhere = {
 };
 type OtpOrderBy = Record<string, 'asc' | 'desc'>;
 
-/** Exactly the surface LotsRepository composes (LOT-001 findPublic + lookups). */
-type LotEnumFilter<T extends string> = T | { in: T[] };
+/** Exactly the surface MediaRepository composes (MEDIA-001 serving + CRUD). */
+type MediaAssetWhere = {
+  id?: string;
+  storageKey?: string;
+};
+/** Create payload: all scalars (no relations — ownerId is the FK column). */
+type MediaAssetCreateData = {
+  ownerId: string;
+  type: MediaType;
+  storageKey: string;
+  thumbKey?: string | null;
+  mime: string;
+  sizeBytes: number;
+  width?: number | null;
+  height?: number | null;
+  durationMs?: number | null;
+};
+
+/** Exactly the surface LotsRepository composes (LOT-001 findPublic + lookups). */ type LotEnumFilter<
+  T extends string,
+> = T | { in: T[] };
 type LotTextFilter = { contains: string; mode: 'insensitive' };
 type LotWhere = {
   id?: string;
@@ -168,6 +189,7 @@ export class FakePrisma {
   private readonly profiles = new Map<string, Profile>();
   private readonly profileInterests = new Map<string, ProfileInterest>();
   private readonly lots = new Map<string, Lot>();
+  private readonly mediaAssets = new Map<string, MediaAsset>();
 
   readonly user = {
     findMany: async ({
@@ -741,6 +763,32 @@ export class FakePrisma {
     },
   };
 
+  /** Exactly the surface MediaRepository uses (MEDIA-001). */
+  readonly mediaAsset = {
+    findUnique: async ({ where }: { where: MediaAssetWhere }): Promise<MediaAsset | null> => {
+      let found: MediaAsset | undefined;
+      if (where.id !== undefined) {
+        found = this.mediaAssets.get(where.id);
+      } else if (where.storageKey !== undefined) {
+        found = [...this.mediaAssets.values()].find((row) => row.storageKey === where.storageKey);
+      }
+      return found ? cloneMediaAsset(found) : null;
+    },
+    create: async ({ data }: { data: MediaAssetCreateData }): Promise<MediaAsset> => {
+      const row = buildMediaAssetRow(data);
+      this.mediaAssets.set(row.id, row);
+      return cloneMediaAsset(row);
+    },
+    delete: async ({ where }: { where: { id: string } }): Promise<MediaAsset> => {
+      const row = this.mediaAssets.get(where.id);
+      if (!row) {
+        throw new Error(`FakePrisma: mediaAsset ${where.id} not found`);
+      }
+      this.mediaAssets.delete(where.id);
+      return cloneMediaAsset(row);
+    },
+  };
+
   async $transaction<T>(fn: (tx: this) => Promise<T>): Promise<T> {
     return fn(this);
   }
@@ -908,6 +956,28 @@ export class FakePrisma {
     this.lots.set(row.id, row);
     return cloneLot(row);
   }
+
+  /** Test helper: seeded media assets (MEDIA-001 serving suites — pair with a
+   * real file written through the app's StorageService driver). */
+  seedMediaAsset(
+    asset: Omit<MediaAssetCreateData, 'storageKey'> & {
+      storageKey?: string;
+      createdAt?: Date;
+    },
+  ): MediaAsset {
+    const { createdAt, ...data } = asset;
+    const row = buildMediaAssetRow({
+      ...data,
+      storageKey:
+        data.storageKey ??
+        `2026/01/${randomUUID().replace(/-/g, '').slice(0, 24).toLowerCase()}.jpg`,
+    });
+    if (createdAt !== undefined) {
+      row.createdAt = createdAt;
+    }
+    this.mediaAssets.set(row.id, row);
+    return cloneMediaAsset(row);
+  }
 }
 
 function matchesWhere(where: UserWhere | undefined): (user: User) => boolean {
@@ -1060,6 +1130,33 @@ function cloneLot(row: Lot): Lot {
     soldAt: row.soldAt === null ? null : new Date(row.soldAt),
     featuredAt: row.featuredAt === null ? null : new Date(row.featuredAt),
     deletedAt: row.deletedAt === null ? null : new Date(row.deletedAt),
+    createdAt: new Date(row.createdAt),
+    updatedAt: new Date(row.updatedAt),
+  };
+}
+
+/** Full MediaAsset row from the create payload, applying DB defaults (MEDIA-001). */
+function buildMediaAssetRow(data: MediaAssetCreateData): MediaAsset {
+  const now = nowIso();
+  return {
+    id: randomUUID(),
+    ownerId: data.ownerId,
+    type: data.type,
+    storageKey: data.storageKey,
+    thumbKey: data.thumbKey ?? null,
+    mime: data.mime,
+    sizeBytes: data.sizeBytes,
+    width: data.width ?? null,
+    height: data.height ?? null,
+    durationMs: data.durationMs ?? null,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function cloneMediaAsset(row: MediaAsset): MediaAsset {
+  return {
+    ...row,
     createdAt: new Date(row.createdAt),
     updatedAt: new Date(row.updatedAt),
   };

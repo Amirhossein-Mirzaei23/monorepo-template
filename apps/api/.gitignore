@@ -1,0 +1,2 @@
+# Local media storage (STORAGE_DIR, MEDIA-001) — uploaded bytes never get committed.
+storage/
