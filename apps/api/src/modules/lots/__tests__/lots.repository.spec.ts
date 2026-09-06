@@ -1,0 +1,348 @@
+import {
+  LotCondition,
+  LiquidationReason,
+  LotStatus,
+  LotUnit,
+  PricingType,
+  type Lot,
+} from '@prisma/client';
+import type { PrismaService } from '../../../prisma/prisma.service';
+import { FakePrisma } from '../../../test/fakes/fake-prisma';
+import { generateLotCode } from '../lots.constants';
+import { LotsRepository } from '../lots.repository';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const BASE_TIME = new Date('2026-09-01T10:00:00.000Z');
+
+/** Any field the fake's seeder accepts, all optional — tests override per case. */
+type SeedLotOverrides = Partial<Parameters<FakePrisma['seedLot']>[0]>;
+
+describe('LotsRepository', () => {
+  let fake: FakePrisma;
+  let repository: LotsRepository;
+
+  /** Seed a sane ACTIVE lot; overrides control everything per test. */
+  const seedLot = (overrides: SeedLotOverrides = {}): Lot =>
+    fake.seedLot({
+      sellerId: 'seller-1',
+      categoryId: 'cat-1',
+      title: 'کفش ورزشی عمده',
+      quantity: 50,
+      availableQuantity: 50,
+      minOrderQuantity: 5,
+      pricingType: PricingType.FIXED,
+      totalPrice: 50_000_000,
+      unitPrice: 1_000_000,
+      condition: LotCondition.GRADE_A,
+      liquidationReason: LiquidationReason.OVERSTOCK,
+      province: 'tehran',
+      city: 'tehran',
+      status: LotStatus.ACTIVE,
+      expiresAt: new Date(BASE_TIME.getTime() + 7 * DAY_MS),
+      ...overrides,
+    });
+
+  beforeAll(() => {
+    // Deterministic "now" anchor for the createdAt/ending-soon sorts.
+    jest.useFakeTimers({ now: BASE_TIME });
+  });
+
+  afterAll(() => {
+    jest.useRealTimers();
+  });
+
+  beforeEach(() => {
+    fake = new FakePrisma();
+    repository = new LotsRepository(fake as unknown as PrismaService);
+  });
+
+  describe('findPublic', () => {
+    it('returns only ACTIVE lots (drafts, paused, expired-status, removed are hidden)', async () => {
+      seedLot({ title: 'active' });
+      seedLot({ title: 'draft', status: LotStatus.DRAFT });
+      seedLot({ title: 'pending', status: LotStatus.PENDING_REVIEW });
+      seedLot({ title: 'paused', status: LotStatus.PAUSED });
+      seedLot({ title: 'expired-status', status: LotStatus.EXPIRED });
+      seedLot({ title: 'removed', status: LotStatus.REMOVED, deletedAt: new Date() });
+      seedLot({ title: 'sold', status: LotStatus.SOLD });
+
+      const result = await repository.findPublic();
+
+      expect(result.items.map((lot) => lot.title)).toEqual(['active']);
+      expect(result.total).toBe(1);
+    });
+
+    it('hides ACTIVE lots past expiresAt (safety filter before the LOT-006 sweep)', async () => {
+      seedLot({ title: 'fresh' });
+      seedLot({
+        title: 'stale',
+        expiresAt: new Date(BASE_TIME.getTime() - DAY_MS),
+      });
+
+      const result = await repository.findPublic();
+
+      expect(result.items.map((lot) => lot.title)).toEqual(['fresh']);
+    });
+
+    it('filters by categoryId and subcategoryId', async () => {
+      seedLot({ title: 'target', subcategoryId: 'sub-1' });
+      seedLot({ title: 'other-category', categoryId: 'cat-2' });
+      seedLot({ title: 'other-sub', categoryId: 'cat-3', subcategoryId: 'sub-2' });
+
+      const byCategory = await repository.findPublic({ filters: { categoryId: 'cat-1' } });
+      const bySub = await repository.findPublic({ filters: { subcategoryId: 'sub-1' } });
+
+      expect(byCategory.items.map((lot) => lot.title)).toEqual(['target']);
+      expect(bySub.items.map((lot) => lot.title)).toEqual(['target']);
+    });
+
+    it('filters by city and province', async () => {
+      seedLot({ title: 'tehran-tehran' });
+      seedLot({ title: 'karaj', city: 'karaj' });
+      seedLot({ title: 'esfahan', province: 'esfahan', city: 'esfahan' });
+
+      const byCity = await repository.findPublic({ filters: { city: 'tehran' } });
+      const byProvince = await repository.findPublic({ filters: { province: 'esfahan' } });
+
+      expect(byCity.items.map((lot) => lot.title)).toEqual(['tehran-tehran']);
+      expect(byProvince.items.map((lot) => lot.title)).toEqual(['esfahan']);
+    });
+
+    it('filters by pricingType and condition set (OR semantics)', async () => {
+      seedLot({ title: 'fixed-a', condition: LotCondition.GRADE_A });
+      seedLot({
+        title: 'negotiable-b',
+        pricingType: PricingType.NEGOTIABLE,
+        condition: LotCondition.GRADE_B,
+      });
+      seedLot({ title: 'mixed', condition: LotCondition.MIXED });
+
+      const byPricing = await repository.findPublic({
+        filters: { pricingType: PricingType.NEGOTIABLE },
+      });
+      const byCondition = await repository.findPublic({
+        filters: { condition: [LotCondition.GRADE_A, LotCondition.GRADE_B] },
+      });
+
+      expect(byPricing.items.map((lot) => lot.title)).toEqual(['negotiable-b']);
+      expect(byCondition.items.map((lot) => lot.title)).toEqual(['fixed-a', 'negotiable-b']);
+    });
+
+    it('filters by inclusive unitPrice bounds', async () => {
+      seedLot({ title: 'cheap', unitPrice: 100_000 });
+      seedLot({ title: 'mid', unitPrice: 500_000 });
+      seedLot({ title: 'pricey', unitPrice: 2_000_000 });
+
+      const minOnly = await repository.findPublic({ filters: { unitPriceMin: 500_000 } });
+      const maxOnly = await repository.findPublic({ filters: { unitPriceMax: 500_000 } });
+      const both = await repository.findPublic({
+        filters: { unitPriceMin: 100_000, unitPriceMax: 1_000_000 },
+      });
+
+      expect(minOnly.items.map((lot) => lot.title)).toEqual(['mid', 'pricey']);
+      expect(maxOnly.items.map((lot) => lot.title)).toEqual(['cheap', 'mid']);
+      expect(both.items.map((lot) => lot.title)).toEqual(['cheap', 'mid']);
+    });
+
+    it('searches case-insensitively across title and description', async () => {
+      seedLot({ title: 'iPhone 13 pallet', description: 'sealed boxes' });
+      seedLot({ title: 'کفش عمده', description: 'کارتن آیفون اصل' });
+      seedLot({ title: 'unrelated', description: 'nothing here' });
+
+      const byTitle = await repository.findPublic({ filters: { query: 'iphone' } });
+      const byDescription = await repository.findPublic({ filters: { query: 'آیفون' } });
+      const noHit = await repository.findPublic({ filters: { query: 'samsung' } });
+
+      expect(byTitle.items).toHaveLength(1);
+      expect(byDescription.items).toHaveLength(1);
+      expect(noHit.items).toHaveLength(0);
+    });
+
+    it('composes filters with the search query', async () => {
+      seedLot({ title: 'iphone tehran', city: 'tehran' });
+      seedLot({ title: 'iphone karaj', city: 'karaj' });
+
+      const result = await repository.findPublic({
+        filters: { query: 'iphone', city: 'karaj' },
+      });
+
+      expect(result.items.map((lot) => lot.title)).toEqual(['iphone karaj']);
+    });
+
+    it('sorts by newest (createdAt desc) by default', async () => {
+      seedLot({ title: 'oldest', createdAt: new Date(BASE_TIME.getTime() - 2 * DAY_MS) });
+      seedLot({ title: 'newest', createdAt: new Date(BASE_TIME.getTime() + DAY_MS) });
+      seedLot({ title: 'middle' });
+
+      const result = await repository.findPublic();
+
+      expect(result.items.map((lot) => lot.title)).toEqual(['newest', 'middle', 'oldest']);
+    });
+
+    it('sorts by price-asc and price-desc on unitPrice', async () => {
+      seedLot({ title: 'mid', unitPrice: 500_000 });
+      seedLot({ title: 'cheap', unitPrice: 100_000 });
+      seedLot({ title: 'pricey', unitPrice: 900_000 });
+
+      const asc = await repository.findPublic({ sort: 'price-asc' });
+      const desc = await repository.findPublic({ sort: 'price-desc' });
+
+      expect(asc.items.map((lot) => lot.title)).toEqual(['cheap', 'mid', 'pricey']);
+      expect(desc.items.map((lot) => lot.title)).toEqual(['pricey', 'mid', 'cheap']);
+    });
+
+    it('sorts by ending-soon (expiresAt asc)', async () => {
+      seedLot({ title: 'late', expiresAt: new Date(BASE_TIME.getTime() + 30 * DAY_MS) });
+      seedLot({ title: 'soon', expiresAt: new Date(BASE_TIME.getTime() + DAY_MS) });
+      seedLot({ title: 'middle', expiresAt: new Date(BASE_TIME.getTime() + 7 * DAY_MS) });
+
+      const result = await repository.findPublic({ sort: 'ending-soon' });
+
+      expect(result.items.map((lot) => lot.title)).toEqual(['soon', 'middle', 'late']);
+    });
+
+    it('returns the Paginated envelope with page slicing', async () => {
+      for (let i = 0; i < 5; i += 1) {
+        seedLot({ title: `lot-${i}`, createdAt: new Date(BASE_TIME.getTime() + i * 1000) });
+      }
+
+      const page1 = await repository.findPublic({ page: 1, limit: 2 });
+      const page3 = await repository.findPublic({ page: 3, limit: 2 });
+      const past = await repository.findPublic({ page: 4, limit: 2 });
+
+      expect(page1.total).toBe(5);
+      expect(page1.page).toBe(1);
+      expect(page1.limit).toBe(2);
+      expect(page1.items.map((lot) => lot.title)).toEqual(['lot-4', 'lot-3']);
+      expect(page3.items.map((lot) => lot.title)).toEqual(['lot-0']);
+      expect(past.items).toEqual([]);
+    });
+  });
+
+  describe('findBySellerAndId', () => {
+    it('returns the lot for its owner', async () => {
+      const lot = seedLot();
+
+      const found = await repository.findBySellerAndId('seller-1', lot.id);
+
+      expect(found?.id).toBe(lot.id);
+    });
+
+    it("returns null for another seller's lot (ownership stays a service check away)", async () => {
+      const lot = seedLot();
+
+      const found = await repository.findBySellerAndId('seller-2', lot.id);
+
+      expect(found).toBeNull();
+    });
+  });
+
+  describe('findById', () => {
+    it('finds by id and returns null for unknown ids', async () => {
+      const lot = seedLot();
+
+      expect((await repository.findById(lot.id))?.id).toBe(lot.id);
+      expect(await repository.findById('missing')).toBeNull();
+    });
+  });
+
+  describe('create', () => {
+    it('persists the lot with DB defaults applied (DRAFT, zero counters)', async () => {
+      const created = await repository.create({
+        code: 'Ab3dEf9Z',
+        sellerId: 'seller-1',
+        categoryId: 'cat-1',
+        title: 'لوت جدید',
+        description: 'توضیحات',
+        quantity: 10,
+        availableQuantity: 10,
+        minOrderQuantity: 1,
+        pricingType: PricingType.FIXED,
+        totalPrice: 1_000_000,
+        unitPrice: 100_000,
+        condition: LotCondition.NEW,
+        liquidationReason: LiquidationReason.EXCESS_PRODUCTION,
+        province: 'tehran',
+        city: 'tehran',
+        expiresAt: new Date(BASE_TIME.getTime() + 30 * DAY_MS),
+      });
+
+      const stored = await fake.lot.findUnique({ where: { id: created.id } });
+      expect(stored).toMatchObject({
+        code: 'Ab3dEf9Z',
+        status: LotStatus.DRAFT,
+        unit: LotUnit.PIECE,
+        viewCount: 0,
+        saveCount: 0,
+        exactAddress: null,
+        rejectionReason: null,
+        deletedAt: null,
+      });
+    });
+  });
+
+  describe('update', () => {
+    it('mutates only the provided fields and keeps the row addressable', async () => {
+      const lot = seedLot();
+
+      const updated = await repository.update(lot.id, {
+        title: 'عنوان تازه',
+        status: LotStatus.ACTIVE,
+      });
+
+      expect(updated.title).toBe('عنوان تازه');
+      expect(updated.status).toBe(LotStatus.ACTIVE);
+      expect(updated.unitPrice).toBe(1_000_000);
+    });
+  });
+
+  describe('incrementCounters', () => {
+    it('increments viewCount alone via updateMany', async () => {
+      const lot = seedLot({ viewCount: 3 });
+
+      const count = await repository.incrementCounters(lot.id, { viewCount: 2 });
+
+      expect(count).toBe(1);
+      const stored = await fake.lot.findUnique({ where: { id: lot.id } });
+      expect(stored).toMatchObject({ viewCount: 5, saveCount: 0 });
+    });
+
+    it('increments saveCount alone', async () => {
+      const lot = seedLot({ saveCount: 7 });
+
+      await repository.incrementCounters(lot.id, { saveCount: 1 });
+
+      const stored = await fake.lot.findUnique({ where: { id: lot.id } });
+      expect(stored).toMatchObject({ viewCount: 0, saveCount: 8 });
+    });
+
+    it('increments both counters in one atomic call', async () => {
+      const lot = seedLot();
+
+      await repository.incrementCounters(lot.id, { viewCount: 1, saveCount: 4 });
+
+      const stored = await fake.lot.findUnique({ where: { id: lot.id } });
+      expect(stored).toMatchObject({ viewCount: 1, saveCount: 4 });
+    });
+
+    it('reports 0 matched rows for an unknown id and changes nothing', async () => {
+      const count = await repository.incrementCounters('missing', { viewCount: 5 });
+
+      expect(count).toBe(0);
+      expect(await fake.lot.count()).toBe(0);
+    });
+  });
+});
+
+describe('generateLotCode', () => {
+  it('produces 8-char base62 codes', () => {
+    for (let i = 0; i < 200; i += 1) {
+      expect(generateLotCode()).toMatch(/^[0-9A-Za-z]{8}$/);
+    }
+  });
+
+  it('does not repeat codes across draws', () => {
+    const codes = new Set(Array.from({ length: 1000 }, () => generateLotCode()));
+    expect(codes.size).toBe(1000);
+  });
+});

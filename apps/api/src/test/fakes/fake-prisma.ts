@@ -1,8 +1,14 @@
 import {
   type Category,
+  type LiquidationReason,
+  type Lot,
+  LotCondition,
+  LotStatus,
+  LotUnit,
   type OtpCode,
   OtpPurpose,
   type Prisma,
+  type PricingType,
   type Profile,
   type ProfileInterest,
   type User,
@@ -64,6 +70,88 @@ type OtpWhere = {
 };
 type OtpOrderBy = Record<string, 'asc' | 'desc'>;
 
+/** Exactly the surface LotsRepository composes (LOT-001 findPublic + lookups). */
+type LotEnumFilter<T extends string> = T | { in: T[] };
+type LotTextFilter = { contains: string; mode: 'insensitive' };
+type LotWhere = {
+  id?: string;
+  code?: string;
+  sellerId?: string;
+  categoryId?: string;
+  subcategoryId?: string;
+  city?: string;
+  province?: string;
+  pricingType?: PricingType;
+  condition?: LotEnumFilter<LotCondition>;
+  status?: LotEnumFilter<LotStatus>;
+  unitPrice?: { gte?: number; lte?: number };
+  expiresAt?: { gt: Date };
+  deletedAt?: null;
+  OR?: Array<{ title?: LotTextFilter; description?: LotTextFilter }>;
+};
+type LotOrderBy = Record<string, 'asc' | 'desc'>;
+/** Writable scalar subset for the update path (counters also take {increment}). */
+type LotUpdateData = Partial<{
+  code: string;
+  categoryId: string;
+  subcategoryId: string | null;
+  title: string;
+  description: string;
+  quantity: number;
+  unit: LotUnit;
+  availableQuantity: number;
+  minOrderQuantity: number;
+  pricingType: PricingType;
+  totalPrice: number;
+  unitPrice: number;
+  condition: LotCondition;
+  liquidationReason: LiquidationReason;
+  province: string;
+  city: string;
+  locationHint: string | null;
+  exactAddress: string | null;
+  status: LotStatus;
+  rejectionReason: string | null;
+  viewCount: number | { increment: number };
+  saveCount: number | { increment: number };
+  expiresAt: Date;
+  publishedAt: Date | null;
+  soldAt: Date | null;
+  featuredAt: Date | null;
+  deletedAt: Date | null;
+}>;
+/** Create payload: required business scalars, defaults applied for the rest. */
+type LotCreateData = {
+  code: string;
+  sellerId: string;
+  categoryId: string;
+  subcategoryId?: string | null;
+  title: string;
+  description: string;
+  quantity: number;
+  unit?: LotUnit;
+  availableQuantity: number;
+  minOrderQuantity: number;
+  pricingType: PricingType;
+  totalPrice: number;
+  unitPrice: number;
+  condition: LotCondition;
+  liquidationReason: LiquidationReason;
+  province: string;
+  city: string;
+  locationHint?: string | null;
+  exactAddress?: string | null;
+  status?: LotStatus;
+  rejectionReason?: string | null;
+  viewCount?: number;
+  saveCount?: number;
+  expiresAt: Date;
+  publishedAt?: Date | null;
+  soldAt?: Date | null;
+  featuredAt?: Date | null;
+  deletedAt?: Date | null;
+};
+
 const nowIso = () => new Date();
 
 /**
@@ -79,6 +167,7 @@ export class FakePrisma {
   private readonly categories = new Map<string, Category>();
   private readonly profiles = new Map<string, Profile>();
   private readonly profileInterests = new Map<string, ProfileInterest>();
+  private readonly lots = new Map<string, Lot>();
 
   readonly user = {
     findMany: async ({
@@ -537,6 +626,102 @@ export class FakePrisma {
     },
   };
 
+  /** Exactly the surface LotsRepository uses (LOT-001). */
+  readonly lot = {
+    findMany: async ({
+      where,
+      orderBy,
+      skip = 0,
+      take,
+    }: {
+      where?: LotWhere;
+      orderBy?: LotOrderBy;
+      skip?: number;
+      take?: number;
+    }): Promise<Lot[]> => {
+      const rows = [...this.lots.values()].filter(matchesLotWhere(where));
+      return sortRows(rows, orderBy)
+        .slice(skip, take !== undefined ? skip + take : undefined)
+        .map(cloneLot);
+    },
+    count: async ({ where }: { where?: LotWhere } = {}): Promise<number> =>
+      [...this.lots.values()].filter(matchesLotWhere(where)).length,
+    findUnique: async ({
+      where,
+    }: {
+      where: { id?: string; code?: string };
+    }): Promise<Lot | null> => {
+      let found: Lot | undefined;
+      if (where.id !== undefined) {
+        found = this.lots.get(where.id);
+      } else if (where.code !== undefined) {
+        found = [...this.lots.values()].find((row) => row.code === where.code);
+      }
+      return found ? cloneLot(found) : null;
+    },
+    findFirst: async ({ where }: { where?: LotWhere }): Promise<Lot | null> => {
+      const found = [...this.lots.values()].find(matchesLotWhere(where));
+      return found ? cloneLot(found) : null;
+    },
+    create: async ({ data }: { data: LotCreateData }): Promise<Lot> => {
+      const row = buildLotRow(data);
+      this.lots.set(row.id, row);
+      return cloneLot(row);
+    },
+    /** Partial update — undefined keys stay untouched, {increment} mutates counters. */
+    update: async ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: LotUpdateData;
+    }): Promise<Lot> => {
+      const row = this.lots.get(where.id);
+      if (!row) {
+        throw new Error(`FakePrisma: lot ${where.id} not found`);
+      }
+      const next: Lot = { ...row };
+      for (const [key, value] of Object.entries(data) as Array<[keyof LotUpdateData, unknown]>) {
+        if (value === undefined) {
+          continue;
+        }
+        if (
+          (key === 'viewCount' || key === 'saveCount') &&
+          typeof value === 'object' &&
+          value !== null &&
+          'increment' in value
+        ) {
+          next[key] = row[key] + (value as { increment: number }).increment;
+        } else {
+          (next as Record<string, unknown>)[key] = value;
+        }
+      }
+      next.updatedAt = nowIso();
+      this.lots.set(row.id, next);
+      return cloneLot(next);
+    },
+    /** Atomic counter bumps (plan §12) — returns { count } like Prisma. */
+    updateMany: async ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: { viewCount?: { increment: number }; saveCount?: { increment: number } };
+    }): Promise<{ count: number }> => {
+      const row = this.lots.get(where.id);
+      if (!row) {
+        return { count: 0 };
+      }
+      if (data.viewCount !== undefined) {
+        row.viewCount += data.viewCount.increment;
+      }
+      if (data.saveCount !== undefined) {
+        row.saveCount += data.saveCount.increment;
+      }
+      return { count: 1 };
+    },
+  };
+
   async $transaction<T>(fn: (tx: this) => Promise<T>): Promise<T> {
     return fn(this);
   }
@@ -683,6 +868,27 @@ export class FakePrisma {
       });
     return { ...cloneProfile(row), interests };
   }
+
+  /** Test helper: seeded lots with controlled status/expiry/counters (LOT-001 suites). */
+  seedLot(
+    lot: Omit<LotCreateData, 'code' | 'description'> & {
+      code?: string;
+      description?: string;
+      createdAt?: Date;
+    },
+  ): Lot {
+    const { createdAt, ...data } = lot;
+    const row = buildLotRow({
+      ...data,
+      code: data.code ?? randomUUID().replace(/-/g, '').slice(0, 8),
+      description: data.description ?? 'seeded lot description',
+    });
+    if (createdAt !== undefined) {
+      row.createdAt = createdAt;
+    }
+    this.lots.set(row.id, row);
+    return cloneLot(row);
+  }
 }
 
 function matchesWhere(where: UserWhere | undefined): (user: User) => boolean {
@@ -725,7 +931,7 @@ function matchesCategoryWhere(where: CategoryWhere | undefined): (row: Category)
 }
 
 /** Multi-key stable sort (orderBy is a single object or an array of them). */
-function sortRows<T extends Category | User>(
+function sortRows<T extends Category | User | Lot>(
   rows: T[],
   orderBy: Record<string, 'asc' | 'desc'> | Record<string, 'asc' | 'desc'>[] | undefined,
 ): T[] {
@@ -745,6 +951,97 @@ function sortRows<T extends Category | User>(
 
 function cloneCategory(row: Category): Category {
   return { ...row, createdAt: new Date(row.createdAt), updatedAt: new Date(row.updatedAt) };
+}
+
+/** Full Lot row from the create payload, applying DB defaults (LOT-001). */
+function buildLotRow(data: LotCreateData): Lot {
+  const now = nowIso();
+  return {
+    id: randomUUID(),
+    code: data.code,
+    sellerId: data.sellerId,
+    categoryId: data.categoryId,
+    subcategoryId: data.subcategoryId ?? null,
+    title: data.title,
+    description: data.description,
+    quantity: data.quantity,
+    unit: data.unit ?? LotUnit.PIECE,
+    availableQuantity: data.availableQuantity,
+    minOrderQuantity: data.minOrderQuantity,
+    pricingType: data.pricingType,
+    totalPrice: data.totalPrice,
+    unitPrice: data.unitPrice,
+    condition: data.condition,
+    liquidationReason: data.liquidationReason,
+    province: data.province,
+    city: data.city,
+    locationHint: data.locationHint ?? null,
+    exactAddress: data.exactAddress ?? null,
+    status: data.status ?? LotStatus.DRAFT,
+    rejectionReason: data.rejectionReason ?? null,
+    viewCount: data.viewCount ?? 0,
+    saveCount: data.saveCount ?? 0,
+    expiresAt: data.expiresAt,
+    publishedAt: data.publishedAt ?? null,
+    soldAt: data.soldAt ?? null,
+    featuredAt: data.featuredAt ?? null,
+    deletedAt: data.deletedAt ?? null,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function matchesLotWhere(where: LotWhere | undefined): (row: Lot) => boolean {
+  return (row) =>
+    (where?.id === undefined || row.id === where.id) &&
+    (where?.code === undefined || row.code === where.code) &&
+    (where?.sellerId === undefined || row.sellerId === where.sellerId) &&
+    (where?.categoryId === undefined || row.categoryId === where.categoryId) &&
+    (where?.subcategoryId === undefined || row.subcategoryId === where.subcategoryId) &&
+    (where?.city === undefined || row.city === where.city) &&
+    (where?.province === undefined || row.province === where.province) &&
+    (where?.pricingType === undefined || row.pricingType === where.pricingType) &&
+    (where?.condition === undefined || matchesLotEnumFilter(row.condition, where.condition)) &&
+    (where?.status === undefined || matchesLotEnumFilter(row.status, where.status)) &&
+    (where?.unitPrice === undefined ||
+      ((where.unitPrice.gte === undefined || row.unitPrice >= where.unitPrice.gte) &&
+        (where.unitPrice.lte === undefined || row.unitPrice <= where.unitPrice.lte))) &&
+    (where?.expiresAt === undefined || row.expiresAt > where.expiresAt.gt) &&
+    (where?.deletedAt === undefined || row.deletedAt === null) &&
+    (where?.OR === undefined || where.OR.some((entry) => matchesLotSearchEntry(row, entry)));
+}
+
+function matchesLotEnumFilter<T extends string>(value: T, filter: LotEnumFilter<T>): boolean {
+  return typeof filter === 'string' ? value === filter : filter.in.includes(value);
+}
+
+/** OR-branch matcher for the search filter (case-insensitive contains). */
+function matchesLotSearchEntry(
+  row: Lot,
+  entry: { title?: LotTextFilter; description?: LotTextFilter },
+): boolean {
+  // Only the fields the branch actually carries participate — an absent field
+  // must not make the branch match vacuously.
+  if (entry.title !== undefined) {
+    return row.title.toLowerCase().includes(entry.title.contains.toLowerCase());
+  }
+  if (entry.description !== undefined) {
+    return row.description.toLowerCase().includes(entry.description.contains.toLowerCase());
+  }
+  return false;
+}
+
+function cloneLot(row: Lot): Lot {
+  return {
+    ...row,
+    expiresAt: new Date(row.expiresAt),
+    publishedAt: row.publishedAt === null ? null : new Date(row.publishedAt),
+    soldAt: row.soldAt === null ? null : new Date(row.soldAt),
+    featuredAt: row.featuredAt === null ? null : new Date(row.featuredAt),
+    deletedAt: row.deletedAt === null ? null : new Date(row.deletedAt),
+    createdAt: new Date(row.createdAt),
+    updatedAt: new Date(row.updatedAt),
+  };
 }
 
 function cloneProfile(row: Profile): Profile {

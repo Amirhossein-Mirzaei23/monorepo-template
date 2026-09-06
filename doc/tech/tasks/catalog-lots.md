@@ -66,7 +66,7 @@ Covered by CAT-001 (`GET /categories`). Kept as ID for dependency references onl
 - **Testing:** controller e2e incl. rbac (403 for USER).
 - **DoD:** suites green.
 
-### LOT-001 — Lot domain model + repository
+### LOT-001 ✅ — Lot domain model + repository
 
 **P0 · Phase 2 · Lots · L** — Deps: AUTH-001, CAT-001
 

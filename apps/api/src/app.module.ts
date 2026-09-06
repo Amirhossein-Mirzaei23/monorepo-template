@@ -15,6 +15,7 @@ import { HealthModule } from './health/health.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CategoriesModule } from './modules/categories/categories.module';
+import { LotsModule } from './modules/lots/lots.module';
 import { OtpModule } from './modules/otp/otp.module';
 import { ProfilesModule } from './modules/profiles/profiles.module';
 import { UsersModule } from './modules/users/users.module';
@@ -75,6 +76,7 @@ import { PrismaModule } from './prisma/prisma.module';
     OtpModule,
     CategoriesModule,
     ProfilesModule,
+    LotsModule,
   ],
   providers: [
     // Guard order: rate limit → authenticate → authorize
