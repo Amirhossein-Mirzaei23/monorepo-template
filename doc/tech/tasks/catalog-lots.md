@@ -123,7 +123,7 @@ Covered by CAT-001 (`GET /categories`). Kept as ID for dependency references onl
 - **Testing:** state-machine unit tests (table-driven, every pair); e2e happy paths.
 - **DoD:** suites green.
 
-### LOT-004 — Create/edit lot UI (mobile-first wizard)
+### LOT-004 ✅ — Create/edit lot UI (mobile-first wizard)
 
 **P0 · Phase 2 · Lots · L** — Deps: LOT-002, CAT-003, MEDIA-004 (media step), PLAT-001
 

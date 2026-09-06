@@ -37,6 +37,8 @@ export type UpdateLotDto = components['schemas']['UpdateLotDto'];
 export type LotPublicResponseDto = components['schemas']['LotPublicResponseDto'];
 /** Owner shape — the only one carrying exactAddress/rejectionReason (plan R7). */
 export type LotOwnerResponseDto = components['schemas']['LotOwnerResponseDto'];
+/** PUT /lots/:id/media body — the complete ordered gallery (MEDIA-005). */
+export type PutLotMediaDto = components['schemas']['PutLotMediaDto'];
 export type LotStatus = LotPublicResponseDto['status'];
 export type LotUnit = LotPublicResponseDto['unit'];
 export type LotCondition = LotPublicResponseDto['condition'];
@@ -74,6 +76,11 @@ export const profileResponseSchema = apiSchemas.ProfileResponseDto.extend({
 });
 export const updateProfileSchema = apiSchemas.UpdateProfileDto;
 export const categoryTreeNodeSchema = apiSchemas.CategoryTreeNodeDto;
+// --- lots (LOT-002) ---
+/** Owner response shape — every lot write/read the web makes returns it. */
+export const lotOwnerResponseSchema = apiSchemas.LotOwnerResponseDto;
+export const lotMediaResponseSchema = apiSchemas.LotMediaResponseDto;
+export const putLotMediaSchema = apiSchemas.PutLotMediaDto;
 
 // --- shared helpers ---
 

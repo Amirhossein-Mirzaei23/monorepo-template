@@ -60,7 +60,7 @@ Complexity: XS 1 · S 22 · M 71 · L 12 · XL 1.
 | LOT-001   | ✅ Lot domain model + repository         | P0  | 2   | L   |     | TRS-005  | Lot moderation queue API            | P0  | 7   | M   |
 | LOT-002   | ✅ Lot create/update API                 | P0  | 2   | M   |     | TRS-006  | Moderation wiring (seller view)     | P0  | 7   | S   |
 | LOT-003   | ✅ Lot lifecycle actions API             | P0  | 2   | M   |     | TRS-007  | Inspection workflow                 | P1  | 9   | M   |
-| LOT-004   | Create/edit lot UI (wizard)              | P0  | 2   | L   |     | ADM-001  | Admin shell + overview              | P0  | 7   | M   |
+| LOT-004   | ✅ Create/edit lot UI (wizard)           | P0  | 2   | L   |     | ADM-001  | Admin shell + overview              | P0  | 7   | M   |
 | LOT-005   | My Lots management UI                    | P0  | 2   | M   |     | ADM-002  | Admin users management              | P0  | 7   | M   |
 | LOT-006   | ✅ Lot expiration job                    | P0  | 2   | S   |     | ADM-003  | Admin lots moderation UI            | P0  | 7   | L   |
 | MEDIA-001 | ✅ StorageService + MediaAsset + serving | P0  | 3   | M   |     | ADM-004  | Admin reports queue                 | P0  | 7   | M   |
