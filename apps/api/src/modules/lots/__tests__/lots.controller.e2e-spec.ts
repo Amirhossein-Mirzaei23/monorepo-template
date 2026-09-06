@@ -3,15 +3,23 @@ import { LiquidationReason, LotCondition, LotStatus, PricingType } from '@prisma
 import request from 'supertest';
 import type { FakePrisma } from '../../../test/fakes/fake-prisma';
 import { createTestApp } from '../../../test/utils/create-test-app';
+import { LOT_ACTIONS, type LotAction } from '../lots.constants';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Near-past-the-hill expiry for refresh assertions (submit). */
+const soonExpiry = (): Date => new Date(Date.now() + 2 * DAY_MS);
 
 /**
- * LOT-002 controller e2e: POST /lots + PATCH /lots/:id behind the global JWT
- * guard, exercised against the real guard chain (auth via the dev-mode OTP
- * flow, like the profiles suites). Covers: 401 anonymous, 403 non-seller
- * (SELLER_REQUIRED), 403 non-owner, 409 ILLEGAL_STATUS_EDIT, 400 validation
- * (DTO + service rules), the draft→edit→submit flow, the ACTIVE price-only
- * edit rule with unitPrice re-derivation, and the owner-shape allowlist
- * (response CONTAINS exactAddress/rejectionReason; exact key set).
+ * Lots controller e2e: LOT-002 (POST /lots + PATCH /lots/:id) and LOT-003
+ * (POST /lots/:id/submit|pause|resume|mark-sold|duplicate + DELETE /lots/:id)
+ * behind the global JWT guard, exercised against the real guard chain (auth
+ * via the dev-mode OTP flow, like the profiles suites). Covers: 401 anonymous,
+ * 403 non-seller (SELLER_REQUIRED), 403 non-owner, 409 ILLEGAL_STATUS_EDIT /
+ * ILLEGAL_TRANSITION / EXPIRED, 400 validation (DTO + service rules), the
+ * draft→edit→submit flow, the ACTIVE price-only edit rule with unitPrice
+ * re-derivation, the owner-shape allowlist (response CONTAINS exactAddress/
+ * rejectionReason; exact key set), and the full LOT-003 lifecycle incl.
+ * illegal moves rejected and the soft-delete behaviour.
  */
 describe('LotsController (e2e)', () => {
   let app: INestApplication;
@@ -405,6 +413,220 @@ describe('LotsController (e2e)', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({ subcategoryId: otherChild.id }) // child of shoes, lot category is apparel
         .expect(400);
+    });
+  });
+
+  // ==========================================================================
+  // LOT-003 — lifecycle actions (owner-only, table-driven via LOT_TRANSITIONS)
+  // ==========================================================================
+
+  describe('lot lifecycle actions (POST /lots/:id/*, DELETE /lots/:id)', () => {
+    /** Routes the action name to its HTTP call, optionally authenticated. */
+    function actionRequest(token: string | null, action: LotAction, lotId: string) {
+      const server = app.getHttpServer();
+      const req =
+        action === 'delete'
+          ? request(server).delete(`/lots/${lotId}`)
+          : request(server).post(`/lots/${lotId}/${action}`);
+      return token ? req.set('Authorization', `Bearer ${token}`) : req;
+    }
+
+    it.each(LOT_ACTIONS)('%s: requires authentication (401 without a token)', async (action) => {
+      const { userId } = await loginAsSeller();
+      const lot = seedLot(userId, { status: LotStatus.ACTIVE, publishedAt: new Date() });
+      await actionRequest(null, action, lot.id).expect(401);
+    });
+
+    it.each(LOT_ACTIONS)(
+      '%s: rejects buyer-only accounts (403 + SELLER_REQUIRED)',
+      async (action) => {
+        const buyer = await login(nextPhone()); // fresh account, no SELLER hat
+        const { userId } = await loginAsSeller();
+        const lot = seedLot(userId, { status: LotStatus.ACTIVE, publishedAt: new Date() });
+
+        const response = await actionRequest(buyer, action, lot.id).expect(403);
+        expect(response.body.code).toBe('SELLER_REQUIRED');
+      },
+    );
+
+    it.each(LOT_ACTIONS)('%s: 403 for a non-owner seller (not 404)', async (action) => {
+      const { userId } = await loginAsSeller();
+      const lot = seedLot(userId, { status: LotStatus.ACTIVE, publishedAt: new Date() });
+      const other = await loginAsSeller();
+
+      await actionRequest(other.token, action, lot.id).expect(403);
+    });
+
+    it.each(LOT_ACTIONS)('%s: 404 for an unknown lot id', async (action) => {
+      const { token } = await loginAsSeller();
+      await actionRequest(token, action, 'missing-lot-id').expect(404);
+    });
+
+    it('submit: DRAFT → PENDING_REVIEW with a refreshed +30d expiry', async () => {
+      const { token, userId } = await loginAsSeller();
+      const lot = seedLot(userId, { status: LotStatus.DRAFT, expiresAt: soonExpiry() });
+      const before = Date.now();
+
+      const response = await actionRequest(token, 'submit', lot.id).expect(200);
+
+      expect(response.body.status).toBe('PENDING_REVIEW');
+      const span = new Date(response.body.expiresAt).getTime() - before;
+      expect(span).toBeGreaterThanOrEqual(30 * DAY_MS - 1_000);
+      expect(span).toBeLessThanOrEqual(30 * DAY_MS + 5_000);
+    });
+
+    it('submit: REJECTED → PENDING_REVIEW and the verdict is cleared', async () => {
+      const { token, userId } = await loginAsSeller();
+      const lot = seedLot(userId, {
+        status: LotStatus.REJECTED,
+        rejectionReason: 'عکس‌ها کیفیت کافی ندارند',
+      });
+
+      const response = await actionRequest(token, 'submit', lot.id).expect(200);
+
+      expect(response.body.status).toBe('PENDING_REVIEW');
+      expect(response.body.rejectionReason).toBeNull();
+    });
+
+    it('pause → resume round trip: ACTIVE → PAUSED → ACTIVE', async () => {
+      const { token, userId } = await loginAsSeller();
+      const lot = seedLot(userId, { status: LotStatus.ACTIVE, publishedAt: new Date() });
+
+      const paused = await actionRequest(token, 'pause', lot.id).expect(200);
+      expect(paused.body.status).toBe('PAUSED');
+
+      const resumed = await actionRequest(token, 'resume', lot.id).expect(200);
+      expect(resumed.body.status).toBe('ACTIVE');
+      expect(resumed.body.publishedAt).not.toBeNull(); // resume ≠ re-publication
+    });
+
+    it('resume: 409 EXPIRED when the paused lot passed its expiresAt (row untouched)', async () => {
+      const { token, userId } = await loginAsSeller();
+      const lot = seedLot(userId, {
+        status: LotStatus.PAUSED,
+        expiresAt: new Date(Date.now() - DAY_MS),
+      });
+
+      const response = await actionRequest(token, 'resume', lot.id).expect(409);
+      expect(response.body.code).toBe('EXPIRED');
+
+      const reread = await prisma.lot.findUnique({ where: { id: lot.id } });
+      expect(reread?.status).toBe('PAUSED');
+    });
+
+    it('mark-sold: SOLD with soldAt=now and availableQuantity 0 (owner shape)', async () => {
+      const { token, userId } = await loginAsSeller();
+      const lot = seedLot(userId, {
+        status: LotStatus.ACTIVE,
+        publishedAt: new Date(),
+        availableQuantity: 6,
+        exactAddress: 'تهران، خیابان …، پلاک ۱۲',
+      });
+      const before = Date.now();
+
+      const response = await actionRequest(token, 'mark-sold', lot.id).expect(200);
+
+      expect(response.body.status).toBe('SOLD');
+      expect(response.body.availableQuantity).toBe(0);
+      expect(new Date(response.body.soldAt).getTime()).toBeGreaterThanOrEqual(before - 1_000);
+      // Owner shape on action responses too:
+      expect(response.body).toHaveProperty('exactAddress', 'تهران، خیابان …، پلاک ۱۲');
+    });
+
+    it('duplicate: 201 with a NEW DRAFT — fresh code/expiry, zeroed counters, content copied', async () => {
+      const { token, userId } = await loginAsSeller();
+      const lot = seedLot(userId, {
+        status: LotStatus.ACTIVE,
+        publishedAt: new Date(),
+        viewCount: 41,
+        saveCount: 7,
+        exactAddress: 'تهران، خیابان …، پلاک ۱۲',
+      });
+      const before = Date.now();
+
+      const response = await actionRequest(token, 'duplicate', lot.id).expect(201);
+
+      const copy = response.body;
+      expect(copy.id).not.toBe(lot.id);
+      expect(copy.status).toBe('DRAFT');
+      expect(copy.code).toHaveLength(8);
+      expect(copy.code).not.toBe(lot.code);
+      // Content copied verbatim (incl. the private owner field):
+      expect(copy.title).toBe(lot.title);
+      expect(copy.categoryId).toBe(parent.id);
+      expect(copy.subcategoryId).toBe(child.id);
+      expect(copy.totalPrice).toBe(1_000_000);
+      expect(copy.unitPrice).toBe(100_000);
+      expect(copy.exactAddress).toBe('تهران، خیابان …، پلاک ۱۲');
+      // Lifecycle state reset:
+      expect(copy.viewCount).toBe(0);
+      expect(copy.saveCount).toBe(0);
+      expect(copy.soldAt).toBeNull();
+      expect(copy.publishedAt).toBeNull();
+      expect(copy.rejectionReason).toBeNull();
+      const span = new Date(copy.expiresAt).getTime() - before;
+      expect(span).toBeGreaterThanOrEqual(30 * DAY_MS - 1_000);
+      expect(span).toBeLessThanOrEqual(30 * DAY_MS + 5_000);
+      // Source untouched:
+      const source = await prisma.lot.findUnique({ where: { id: lot.id } });
+      expect(source?.status).toBe('ACTIVE');
+      expect(source?.viewCount).toBe(41);
+    });
+
+    it('duplicate: works on a SOLD lot (the re-list path) and on EXPIRED, but not REMOVED', async () => {
+      const { token, userId } = await loginAsSeller();
+      const sold = seedLot(userId, { status: LotStatus.SOLD, soldAt: new Date() });
+      await actionRequest(token, 'duplicate', sold.id).expect(201);
+
+      const expired = seedLot(userId, {
+        status: LotStatus.EXPIRED,
+        expiresAt: new Date(Date.now() - DAY_MS),
+      });
+      await actionRequest(token, 'duplicate', expired.id).expect(201);
+
+      const removed = seedLot(userId, { status: LotStatus.REMOVED, deletedAt: new Date() });
+      const conflict = await actionRequest(token, 'duplicate', removed.id).expect(409);
+      expect(conflict.body.code).toBe('ILLEGAL_TRANSITION');
+    });
+
+    it('delete: 200 with the REMOVED owner body; row soft-deleted, not gone', async () => {
+      const { token, userId } = await loginAsSeller();
+      const lot = seedLot(userId, { status: LotStatus.ACTIVE, publishedAt: new Date() });
+
+      const response = await actionRequest(token, 'delete', lot.id).expect(200);
+
+      expect(response.body.status).toBe('REMOVED');
+
+      const reread = await prisma.lot.findUnique({ where: { id: lot.id } });
+      expect(reread?.status).toBe('REMOVED');
+      expect(reread?.deletedAt).not.toBeNull();
+    });
+
+    it.each<[string, LotAction, LotStatus]>([
+      ['submit an ACTIVE lot', 'submit', LotStatus.ACTIVE],
+      ['submit a PENDING_REVIEW lot', 'submit', LotStatus.PENDING_REVIEW],
+      ['pause a DRAFT', 'pause', LotStatus.DRAFT],
+      ['pause a PAUSED lot (again)', 'pause', LotStatus.PAUSED],
+      ['resume an ACTIVE lot', 'resume', LotStatus.ACTIVE],
+      ['mark-sold a DRAFT', 'mark-sold', LotStatus.DRAFT],
+      ['mark-sold a SOLD lot (again)', 'mark-sold', LotStatus.SOLD],
+      ['delete a SOLD lot', 'delete', LotStatus.SOLD],
+      ['delete a REMOVED lot (again)', 'delete', LotStatus.REMOVED],
+      ['duplicate a REMOVED lot', 'duplicate', LotStatus.REMOVED],
+    ])('rejects %s with 409 ILLEGAL_TRANSITION', async (_label, action, status) => {
+      const { token, userId } = await loginAsSeller();
+      const lot = seedLot(userId, {
+        status,
+        publishedAt: status === LotStatus.ACTIVE || status === LotStatus.PAUSED ? new Date() : null,
+        soldAt: status === LotStatus.SOLD ? new Date() : null,
+        deletedAt: status === LotStatus.REMOVED ? new Date() : null,
+      });
+
+      const response = await actionRequest(token, action, lot.id).expect(409);
+      expect(response.body.code).toBe('ILLEGAL_TRANSITION');
+
+      const reread = await prisma.lot.findUnique({ where: { id: lot.id } });
+      expect(reread?.status).toBe(status);
     });
   });
 });

@@ -19,7 +19,12 @@ import { FakePrisma } from '../../../test/fakes/fake-prisma';
 import { CategoriesRepository } from '../../categories/categories.repository';
 import { UsersRepository } from '../../users/users.repository';
 import type { CreateLotDto } from '../dto/create-lot.dto';
-import { toLotOwnerResponse, toLotPublicResponse } from '../dto/lot-response.dto';
+import {
+  toLotOwnerResponse,
+  toLotPublicResponse,
+  type LotOwnerResponseDto,
+} from '../dto/lot-response.dto';
+import { LOT_ACTIONS, type LotAction } from '../lots.constants';
 import { LotsRepository } from '../lots.repository';
 import { LotsService } from '../lots.service';
 
@@ -546,6 +551,385 @@ describe('LotsService', () => {
       const error = await rejectionOf(service.update(sellerId, lot.id, { totalPrice: 100_000 }));
       expect(error).toBeInstanceOf(ConflictException);
       expect(error.getResponse()).toMatchObject({ code: 'ILLEGAL_STATUS_EDIT' });
+    });
+  });
+
+  // ==========================================================================
+  // LOT-003 — lifecycle actions, driven by the LOT_TRANSITIONS table.
+  // ==========================================================================
+
+  /**
+   * Action dispatcher mirroring the controller routes — the matrix below runs
+   * EVERY (status, action) pair through the real service methods.
+   */
+  async function runAction(
+    actingUserId: string,
+    action: LotAction,
+    lotId: string,
+  ): Promise<LotOwnerResponseDto> {
+    switch (action) {
+      case 'submit':
+        return service.submit(actingUserId, lotId);
+      case 'pause':
+        return service.pause(actingUserId, lotId);
+      case 'resume':
+        return service.resume(actingUserId, lotId);
+      case 'mark-sold':
+        return service.markSold(actingUserId, lotId);
+      case 'duplicate':
+        return service.duplicate(actingUserId, lotId);
+      case 'delete':
+        return service.remove(actingUserId, lotId);
+    }
+  }
+
+  function futureExpiry(days: number): Date {
+    return new Date(Date.now() + days * DAY_MS);
+  }
+
+  /** Per-status fixture fields that make each status look like itself. */
+  const STATUS_FIXTURES: Record<LotStatus, Partial<Parameters<FakePrisma['seedLot']>[0]>> = {
+    DRAFT: { expiresAt: futureExpiry(2) },
+    PENDING_REVIEW: { expiresAt: futureExpiry(2), publishedAt: null },
+    ACTIVE: { expiresAt: futureExpiry(2), publishedAt: new Date() },
+    PAUSED: { expiresAt: futureExpiry(20), publishedAt: new Date() },
+    REJECTED: { expiresAt: futureExpiry(2), rejectionReason: 'عکس‌ها کیفیت کافی ندارند' },
+    EXPIRED: { expiresAt: new Date(Date.now() - DAY_MS) },
+    SOLD: {
+      expiresAt: futureExpiry(2),
+      publishedAt: new Date(Date.now() - DAY_MS),
+      soldAt: new Date(),
+      availableQuantity: 0,
+    },
+    REMOVED: { expiresAt: futureExpiry(2), deletedAt: new Date() },
+  };
+
+  /** Expected matrix outcome, hand-written (never derived from production). */
+  type MatrixOutcome = { kind: 'ok'; status: LotStatus; newLot: boolean } | { kind: 'conflict' };
+
+  const ILLEGAL: MatrixOutcome = { kind: 'conflict' };
+  const NEW_DRAFT: MatrixOutcome = { kind: 'ok', status: LotStatus.DRAFT, newLot: true };
+  const stays = (status: LotStatus): MatrixOutcome => ({ kind: 'ok', status, newLot: false });
+
+  const EXPECTED_OUTCOMES: Record<LotStatus, Record<LotAction, MatrixOutcome>> = {
+    DRAFT: {
+      submit: stays(LotStatus.PENDING_REVIEW),
+      pause: ILLEGAL,
+      resume: ILLEGAL,
+      'mark-sold': ILLEGAL,
+      duplicate: NEW_DRAFT,
+      delete: stays(LotStatus.REMOVED),
+    },
+    PENDING_REVIEW: {
+      submit: ILLEGAL,
+      pause: ILLEGAL,
+      resume: ILLEGAL,
+      'mark-sold': ILLEGAL,
+      duplicate: NEW_DRAFT,
+      delete: stays(LotStatus.REMOVED),
+    },
+    ACTIVE: {
+      submit: ILLEGAL,
+      pause: stays(LotStatus.PAUSED),
+      resume: ILLEGAL,
+      'mark-sold': stays(LotStatus.SOLD),
+      duplicate: NEW_DRAFT,
+      delete: stays(LotStatus.REMOVED),
+    },
+    PAUSED: {
+      submit: ILLEGAL,
+      pause: ILLEGAL,
+      resume: stays(LotStatus.ACTIVE),
+      'mark-sold': stays(LotStatus.SOLD),
+      duplicate: NEW_DRAFT,
+      delete: stays(LotStatus.REMOVED),
+    },
+    REJECTED: {
+      submit: stays(LotStatus.PENDING_REVIEW),
+      pause: ILLEGAL,
+      resume: ILLEGAL,
+      'mark-sold': ILLEGAL,
+      duplicate: NEW_DRAFT,
+      delete: stays(LotStatus.REMOVED),
+    },
+    EXPIRED: {
+      submit: ILLEGAL,
+      pause: ILLEGAL,
+      resume: ILLEGAL,
+      'mark-sold': ILLEGAL,
+      duplicate: NEW_DRAFT,
+      delete: stays(LotStatus.REMOVED),
+    },
+    SOLD: {
+      submit: ILLEGAL,
+      pause: ILLEGAL,
+      resume: ILLEGAL,
+      'mark-sold': ILLEGAL,
+      duplicate: NEW_DRAFT,
+      delete: ILLEGAL,
+    },
+    REMOVED: {
+      submit: ILLEGAL,
+      pause: ILLEGAL,
+      resume: ILLEGAL,
+      'mark-sold': ILLEGAL,
+      duplicate: ILLEGAL,
+      delete: ILLEGAL,
+    },
+  };
+
+  describe('state machine — every (status, action) pair', () => {
+    const pairs = (Object.values(LotStatus) as LotStatus[]).flatMap((status) =>
+      LOT_ACTIONS.map((action) => ({ status, action })),
+    );
+
+    it('covers the full matrix: 8 statuses × 6 actions = 48 pairs', () => {
+      expect(Object.values(LotStatus)).toHaveLength(8);
+      expect(LOT_ACTIONS).toHaveLength(6);
+      expect(pairs).toHaveLength(48);
+    });
+
+    it.each(pairs)('$status + $action', async ({ status, action }) => {
+      const lot = seedLot({ status, ...STATUS_FIXTURES[status] });
+      const expected = EXPECTED_OUTCOMES[status][action];
+
+      if (expected.kind === 'conflict') {
+        const error = await rejectionOf(runAction(sellerId, action, lot.id));
+        expect(error).toBeInstanceOf(ConflictException);
+        expect(error.getResponse()).toMatchObject({ code: 'ILLEGAL_TRANSITION' });
+        // Nothing written — the row is exactly what was seeded.
+        const stored = await fake.lot.findUnique({ where: { id: lot.id } });
+        expect(stored).toEqual(lot);
+        return;
+      }
+
+      const result = await runAction(sellerId, action, lot.id);
+      expect(result.status).toBe(expected.status);
+
+      if (expected.newLot) {
+        // duplicate: a NEW row appears; the source row stays untouched.
+        expect(result.id).not.toBe(lot.id);
+        expect(result.code).not.toBe(lot.code);
+        const source = await fake.lot.findUnique({ where: { id: lot.id } });
+        expect(source).toEqual(lot);
+      } else {
+        expect(result.id).toBe(lot.id);
+      }
+
+      const rowId = expected.newLot ? result.id : lot.id;
+      const stored = await fake.lot.findUnique({ where: { id: rowId } });
+      expect(stored?.status).toBe(expected.status);
+
+      // Legal-move side effects asserted right in the matrix:
+      if (action === 'submit') {
+        expect(stored?.expiresAt.getTime()).toBeGreaterThan(Date.now() + 29 * DAY_MS);
+        expect(stored?.rejectionReason).toBeNull(); // verdict cleared on REJECTED, null elsewhere
+      }
+      if (action === 'mark-sold') {
+        expect(stored?.availableQuantity).toBe(0);
+        expect(stored?.soldAt?.getTime()).toBeGreaterThanOrEqual(Date.now() - 1_000);
+      }
+      if (action === 'delete') {
+        expect(stored?.deletedAt).not.toBeNull();
+      }
+    });
+  });
+
+  describe('lifecycle actions — permissions (every action, every guard)', () => {
+    it.each(LOT_ACTIONS)(
+      'rejects %s for an authenticated user without the SELLER hat (403 SELLER_REQUIRED)',
+      async (action) => {
+        const lot = seedLot({ status: LotStatus.ACTIVE, ...STATUS_FIXTURES[LotStatus.ACTIVE] });
+        const error = await rejectionOf(runAction(buyerId, action, lot.id));
+        expect(error).toBeInstanceOf(ForbiddenException);
+        expect(error.getResponse()).toMatchObject({ code: 'SELLER_REQUIRED' });
+      },
+    );
+
+    it.each(LOT_ACTIONS)('rejects %s for a non-owner seller (403, not 404)', async (action) => {
+      const lot = seedLot({ status: LotStatus.ACTIVE, ...STATUS_FIXTURES[LotStatus.ACTIVE] });
+      const error = await rejectionOf(runAction(otherSellerId, action, lot.id));
+      expect(error).toBeInstanceOf(ForbiddenException);
+    });
+
+    it.each(LOT_ACTIONS)('rejects %s for an unknown lot id (404)', async (action) => {
+      const error = await rejectionOf(runAction(sellerId, action, 'missing-lot-id'));
+      expect(error).toBeInstanceOf(NotFoundException);
+    });
+
+    it.each(LOT_ACTIONS)(
+      'rejects %s when the token user no longer exists (401)',
+      async (action) => {
+        const error = await rejectionOf(runAction('ghost-id', action, 'whatever'));
+        expect(error).toBeInstanceOf(UnauthorizedException);
+      },
+    );
+  });
+
+  describe('submit — shared write path with PATCH submit:true', () => {
+    it('moves a DRAFT to PENDING_REVIEW and refreshes expiresAt (+30d)', async () => {
+      const lot = seedLot({ status: LotStatus.DRAFT, expiresAt: futureExpiry(2) });
+
+      const submitted = await service.submit(sellerId, lot.id);
+
+      expect(submitted.status).toBe(LotStatus.PENDING_REVIEW);
+      expect(submitted.expiresAt.getTime()).toBeGreaterThan(Date.now() + 29 * DAY_MS);
+    });
+
+    it('moves REJECTED to PENDING_REVIEW and clears the verdict', async () => {
+      const lot = seedLot({ status: LotStatus.REJECTED, ...STATUS_FIXTURES[LotStatus.REJECTED] });
+
+      const submitted = await service.submit(sellerId, lot.id);
+
+      expect(submitted.status).toBe(LotStatus.PENDING_REVIEW);
+      expect(submitted.rejectionReason).toBeNull();
+    });
+
+    it('produces the same result as PATCH submit:true (no drift between entry points)', async () => {
+      const viaEndpoint = seedLot({ status: LotStatus.DRAFT, expiresAt: futureExpiry(2) });
+      const viaPatch = seedLot({ status: LotStatus.DRAFT, expiresAt: futureExpiry(2) });
+
+      const submitted = await service.submit(sellerId, viaEndpoint.id);
+      const patched = await service.update(sellerId, viaPatch.id, { submit: true });
+
+      // Same row identity-independent invariants: status + cleared verdict.
+      expect(submitted.status).toBe(patched.status);
+      expect(submitted.rejectionReason).toBe(patched.rejectionReason);
+      expect(Math.abs(submitted.expiresAt.getTime() - patched.expiresAt.getTime())).toBeLessThan(
+        1_000,
+      );
+    });
+  });
+
+  describe('resume — expiry guard', () => {
+    it('blocks resume with 409 EXPIRED when the paused lot passed expiresAt (status unchanged)', async () => {
+      const lot = seedLot({ status: LotStatus.PAUSED, expiresAt: new Date(Date.now() - DAY_MS) });
+
+      const error = await rejectionOf(service.resume(sellerId, lot.id));
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect(error.getResponse()).toMatchObject({ code: 'EXPIRED' });
+      const stored = await fake.lot.findUnique({ where: { id: lot.id } });
+      expect(stored?.status).toBe(LotStatus.PAUSED);
+    });
+
+    it('resumes a paused lot that still has time left', async () => {
+      const lot = seedLot({ status: LotStatus.PAUSED, ...STATUS_FIXTURES[LotStatus.PAUSED] });
+
+      const resumed = await service.resume(sellerId, lot.id);
+
+      expect(resumed.status).toBe(LotStatus.ACTIVE);
+      // Pause/resume never touch the merchandising timestamps.
+      expect(resumed.publishedAt).toEqual(lot.publishedAt);
+    });
+  });
+
+  describe('mark-sold — side effects', () => {
+    it.each([LotStatus.ACTIVE, LotStatus.PAUSED])(
+      'sets soldAt=now and zeroes availableQuantity from %s',
+      async (status) => {
+        const lot = seedLot({
+          status,
+          availableQuantity: 6,
+          ...STATUS_FIXTURES[status],
+          soldAt: null,
+        });
+
+        const sold = await service.markSold(sellerId, lot.id);
+
+        expect(sold.status).toBe(LotStatus.SOLD);
+        expect(sold.availableQuantity).toBe(0);
+        expect(sold.soldAt?.getTime()).toBeGreaterThanOrEqual(Date.now() - 1_000);
+      },
+    );
+  });
+
+  describe('duplicate — deep copy semantics', () => {
+    it('copies owner content 1:1, resets lifecycle state, keeps the source untouched', async () => {
+      const source = seedLot({
+        status: LotStatus.SOLD,
+        soldAt: new Date(Date.now() - DAY_MS),
+        publishedAt: new Date(Date.now() - 3 * DAY_MS),
+        rejectionReason: 'قدیمی',
+        viewCount: 41,
+        saveCount: 7,
+        availableQuantity: 0,
+        locationHint: 'بازار بزرگ تهران',
+        exactAddress: 'تهران، خیابان ۱، پلاک ۲',
+        expiresAt: futureExpiry(1),
+      });
+
+      const copy = await service.duplicate(sellerId, source.id);
+
+      // New identity: new id, fresh 8-char code different from the source.
+      expect(copy.id).not.toBe(source.id);
+      expect(copy.code).toHaveLength(8);
+      expect(copy.code).not.toBe(source.code);
+      expect(copy.status).toBe(LotStatus.DRAFT);
+
+      // Seller-owned content copied verbatim (title kept identical — a «(کپی)»
+      // suffix could push a 120-code-point title over the bound).
+      expect(copy.title).toBe(source.title);
+      expect(copy.description).toBe(source.description);
+      expect(copy.categoryId).toBe(source.categoryId);
+      expect(copy.subcategoryId).toBe(source.subcategoryId);
+      expect(copy.quantity).toBe(source.quantity);
+      expect(copy.minOrderQuantity).toBe(source.minOrderQuantity);
+      expect(copy.availableQuantity).toBe(source.availableQuantity);
+      expect(copy.unit).toBe(source.unit);
+      expect(copy.pricingType).toBe(source.pricingType);
+      expect(copy.totalPrice).toBe(source.totalPrice);
+      expect(copy.unitPrice).toBe(source.unitPrice);
+      expect(copy.condition).toBe(source.condition);
+      expect(copy.liquidationReason).toBe(source.liquidationReason);
+      expect(copy.province).toBe(source.province);
+      expect(copy.city).toBe(source.city);
+      expect(copy.locationHint).toBe(source.locationHint);
+      expect(copy.exactAddress).toBe(source.exactAddress);
+
+      // Lifecycle state reset on the copy.
+      expect(copy.viewCount).toBe(0);
+      expect(copy.saveCount).toBe(0);
+      expect(copy.soldAt).toBeNull();
+      expect(copy.publishedAt).toBeNull();
+      expect(copy.rejectionReason).toBeNull();
+      expect(copy.featuredAt).toBeNull();
+      // deletedAt is not part of the owner response shape (allowlist) — read
+      // the stored row for it.
+      const storedCopy = await fake.lot.findUnique({ where: { id: copy.id } });
+      expect(storedCopy?.deletedAt).toBeNull();
+      const span = copy.expiresAt.getTime() - Date.now();
+      expect(span).toBeGreaterThanOrEqual(30 * DAY_MS - 1_000);
+      expect(span).toBeLessThanOrEqual(30 * DAY_MS + 5_000);
+
+      // The source row is untouched (still SOLD, counters intact).
+      const sourceAfter = await fake.lot.findUnique({ where: { id: source.id } });
+      expect(sourceAfter?.status).toBe(LotStatus.SOLD);
+      expect(sourceAfter?.viewCount).toBe(41);
+      expect(sourceAfter?.saveCount).toBe(7);
+    });
+  });
+
+  describe('delete — soft delete semantics', () => {
+    it('stamps REMOVED + deletedAt, keeps the row addressable by id, hides it from findPublic', async () => {
+      const lot = seedLot({ status: LotStatus.ACTIVE, ...STATUS_FIXTURES[LotStatus.ACTIVE] });
+
+      const removed = await service.remove(sellerId, lot.id);
+
+      expect(removed.status).toBe(LotStatus.REMOVED);
+
+      const stored = await fake.lot.findUnique({ where: { id: lot.id } });
+      expect(stored?.status).toBe(LotStatus.REMOVED);
+      expect(stored?.deletedAt).not.toBeNull();
+
+      // Documented decision: findById still resolves the row (owner dashboards
+      // read their removed lots); listing queries filter it out instead.
+      const found = await repository.findById(lot.id);
+      expect(found?.id).toBe(lot.id);
+
+      const pub = await repository.findPublic();
+      expect(pub.items).toHaveLength(0);
+      expect(pub.total).toBe(0);
     });
   });
 

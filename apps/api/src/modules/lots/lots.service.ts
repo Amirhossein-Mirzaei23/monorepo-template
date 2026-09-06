@@ -21,7 +21,9 @@ import {
   LOT_MIN_TOTAL_PRICE,
   LOT_TITLE_MAX_CODEPOINTS,
   LOT_TITLE_MIN_CODEPOINTS,
+  LOT_TRANSITIONS,
   generateLotCode,
+  type LotAction,
 } from './lots.constants';
 import { toLotOwnerResponse, type LotOwnerResponseDto } from './dto/lot-response.dto';
 import type { CreateLotDto } from './dto/create-lot.dto';
@@ -90,10 +92,17 @@ function isUniqueViolation(error: unknown): boolean {
 }
 
 /**
- * Lot business rules (LOT-002). Ownership is checked here (not the guard) so
- * the SELLER hat is asserted first (403 SELLER_REQUIRED before any probing),
- * then 404 for missing rows, then 403 for foreign lots — the card's order.
- * Create retries `generateLotCode()` on unique-violation (P2002) up to 3 times.
+ * Lot business rules. LOT-002 owns create/edit (status matrix below); LOT-003
+ * adds the owner lifecycle actions driven by the LOT_TRANSITIONS table in
+ * lots.constants.ts. Ownership is checked here (not the guard) so the SELLER
+ * hat is asserted first (403 SELLER_REQUIRED before any probing), then 404
+ * for missing rows, then 403 for foreign lots — the card's order.
+ * Create/duplicate retry `generateLotCode()` on unique-violation (P2002) up
+ * to 3 times.
+ *
+ * NOTE (AuditLog follow-up): lifecycle transitions are not recorded yet — the
+ * AuditLog model does not exist (CAT-004 decision). See the LOT_TRANSITIONS
+ * doc comment in lots.constants.ts.
  */
 @Injectable()
 export class LotsService {
@@ -150,19 +159,7 @@ export class LotsService {
       expiresAt: defaultExpiry(),
     };
 
-    // Code collision path: P2002 → fresh code → retry; 3 strikes = 500.
-    for (let attempt = 1; attempt <= LOT_CODE_MAX_CREATE_ATTEMPTS; attempt++) {
-      try {
-        const created = await this.repository.create({ ...data, code: generateLotCode() });
-        return toLotOwnerResponse(created);
-      } catch (error) {
-        if (!isUniqueViolation(error)) {
-          throw error;
-        }
-      }
-    }
-    this.logger.error(`Lot code allocation failed after ${LOT_CODE_MAX_CREATE_ATTEMPTS} tries`);
-    throw new InternalServerErrorException('Could not allocate a unique lot code');
+    return toLotOwnerResponse(await this.createWithFreshCode(data));
   }
 
   /**
@@ -172,16 +169,7 @@ export class LotsService {
    * all validation happens before the single write).
    */
   async update(sellerId: string, id: string, dto: UpdateLotDto): Promise<LotOwnerResponseDto> {
-    const user = await this.requireUser(sellerId);
-    this.assertSeller(user);
-
-    const lot = await this.repository.findById(id);
-    if (!lot) {
-      throw new NotFoundException('Lot not found');
-    }
-    if (lot.sellerId !== sellerId) {
-      throw new ForbiddenException('You do not own this lot');
-    }
+    const lot = await this.requireOwnedLot(sellerId, id);
 
     if ((NON_EDITABLE_STATUSES as readonly string[]).includes(lot.status)) {
       throw this.illegalStatusEdit(
@@ -290,6 +278,170 @@ export class LotsService {
     };
     const updated = Object.keys(data).length > 0 ? await this.repository.update(lot.id, data) : lot;
     return toLotOwnerResponse(updated);
+  }
+
+  // --- lifecycle actions (LOT-003): table-driven via LOT_TRANSITIONS ---
+
+  /**
+   * DRAFT/REJECTED → PENDING_REVIEW: refreshes expiresAt (+30d) and clears
+   * rejectionReason on REJECTED. Delegates the WRITE to the same code path as
+   * PATCH submit:true (updateDraftLot) so the two entry points cannot drift;
+   * the transition-table check runs first so illegal statuses answer 409
+   * ILLEGAL_TRANSITION (PATCH's own 409 keeps ILLEGAL_STATUS_EDIT).
+   */
+  async submit(sellerId: string, id: string): Promise<LotOwnerResponseDto> {
+    const lot = await this.requireOwnedLot(sellerId, id);
+    this.assertTransition(lot.status, 'submit');
+    return this.updateDraftLot(lot, { submit: true });
+  }
+
+  /** ACTIVE → PAUSED (listing hidden from findPublic; no other field moves). */
+  async pause(sellerId: string, id: string): Promise<LotOwnerResponseDto> {
+    const lot = await this.requireOwnedLot(sellerId, id);
+    this.assertTransition(lot.status, 'pause');
+    return toLotOwnerResponse(await this.repository.update(lot.id, { status: LotStatus.PAUSED }));
+  }
+
+  /**
+   * PAUSED → ACTIVE, respecting expiry: a paused lot whose expiresAt already
+   * passed cannot resume (409 EXPIRED) — findPublic would hide it again and
+   * the LOT-006 sweep would only flip it later; duplicate is the re-list path.
+   */
+  async resume(sellerId: string, id: string): Promise<LotOwnerResponseDto> {
+    const lot = await this.requireOwnedLot(sellerId, id);
+    this.assertTransition(lot.status, 'resume');
+    if (lot.expiresAt.getTime() <= Date.now()) {
+      throw new ConflictException({
+        code: LOT_ERROR_CODES.EXPIRED,
+        message: 'This lot has expired while paused and cannot be resumed — duplicate it instead',
+      });
+    }
+    return toLotOwnerResponse(await this.repository.update(lot.id, { status: LotStatus.ACTIVE }));
+  }
+
+  /** ACTIVE/PAUSED → SOLD: stamps soldAt=now and zeroes availableQuantity. */
+  async markSold(sellerId: string, id: string): Promise<LotOwnerResponseDto> {
+    const lot = await this.requireOwnedLot(sellerId, id);
+    this.assertTransition(lot.status, 'mark-sold');
+    return toLotOwnerResponse(
+      await this.repository.update(lot.id, {
+        status: LotStatus.SOLD,
+        soldAt: new Date(),
+        availableQuantity: 0,
+      }),
+    );
+  }
+
+  /**
+   * Copy any non-REMOVED lot to a NEW DRAFT (documented semantics):
+   * - Seller-owned CONTENT fields are copied verbatim: title (kept identical —
+   *   no «(کپی)» suffix; it must stay ≤ 120 code points and appending could
+   *   overflow, so the copy shares the source title), description, category +
+   *   sub, quantity/minOrder/available as-is, pricing (unitPrice re-derived on
+   *   write), condition/reason, province/city, locationHint, exactAddress
+   *   (private owner field on a row owned by the same seller).
+   * - RESET: status DRAFT, fresh code (P2002 retry), fresh expiresAt +30d,
+   *   counters 0, soldAt/publishedAt/rejectionReason null — and featuredAt
+   *   null (merchandising state is per-row, never inherited).
+   * - MEDIA: lot_media links are NOT copied (MEDIA-005 owns media; a copy
+   *   starts unillustrated like any fresh draft).
+   * - Category rows are not re-validated: ids are copied as-is; the draft is
+   *   fully editable and moderation sees it before publish anyway.
+   */
+  async duplicate(sellerId: string, id: string): Promise<LotOwnerResponseDto> {
+    const lot = await this.requireOwnedLot(sellerId, id);
+    this.assertTransition(lot.status, 'duplicate');
+
+    const data: Omit<Prisma.LotUncheckedCreateInput, 'code'> = {
+      sellerId: lot.sellerId,
+      categoryId: lot.categoryId,
+      subcategoryId: lot.subcategoryId,
+      title: lot.title,
+      description: lot.description,
+      quantity: lot.quantity,
+      unit: lot.unit,
+      availableQuantity: lot.availableQuantity,
+      minOrderQuantity: lot.minOrderQuantity,
+      pricingType: lot.pricingType,
+      totalPrice: lot.totalPrice,
+      unitPrice: deriveUnitPrice(lot.totalPrice, lot.quantity),
+      condition: lot.condition,
+      liquidationReason: lot.liquidationReason,
+      province: lot.province,
+      city: lot.city,
+      locationHint: lot.locationHint,
+      exactAddress: lot.exactAddress,
+      status: LotStatus.DRAFT,
+      expiresAt: defaultExpiry(),
+    };
+    return toLotOwnerResponse(await this.createWithFreshCode(data));
+  }
+
+  /**
+   * Soft delete: any non-SOLD, non-REMOVED status → REMOVED + deletedAt=now.
+   * SOLD is terminal (409 — revenue history must not be scrubbed); an already
+   * REMOVED lot is a 409 too (re-deleting a removed row is a conflict, not an
+   * idempotent refresh of deletedAt). The owner shape still resolves via
+   * findById for the seller afterwards — visibility filtering happens in the
+   * listing queries, not by hiding the row.
+   */
+  async remove(sellerId: string, id: string): Promise<LotOwnerResponseDto> {
+    const lot = await this.requireOwnedLot(sellerId, id);
+    this.assertTransition(lot.status, 'delete');
+    return toLotOwnerResponse(
+      await this.repository.update(lot.id, {
+        status: LotStatus.REMOVED,
+        deletedAt: new Date(),
+      }),
+    );
+  }
+
+  // --- action guards ---
+
+  /**
+   * The shared owner-action precondition chain, in the card's order:
+   * authenticated (401) → SELLER hat (403 SELLER_REQUIRED) → row exists (404)
+   * → owned by the caller (403). Every lifecycle action starts here.
+   */
+  private async requireOwnedLot(sellerId: string, id: string): Promise<Lot> {
+    const user = await this.requireUser(sellerId);
+    this.assertSeller(user);
+
+    const lot = await this.repository.findById(id);
+    if (!lot) {
+      throw new NotFoundException('Lot not found');
+    }
+    if (lot.sellerId !== sellerId) {
+      throw new ForbiddenException('You do not own this lot');
+    }
+    return lot;
+  }
+
+  /** Table lookup — a missing (status, action) entry is an illegal move. */
+  private assertTransition(status: LotStatus, action: LotAction): void {
+    if (LOT_TRANSITIONS[status][action] === undefined) {
+      throw new ConflictException({
+        code: LOT_ERROR_CODES.ILLEGAL_TRANSITION,
+        message: `Action "${action}" is not allowed for a lot in status ${status}`,
+      });
+    }
+  }
+
+  /** Code collision path (create + duplicate): P2002 → fresh code → retry. */
+  private async createWithFreshCode(
+    data: Omit<Prisma.LotUncheckedCreateInput, 'code'>,
+  ): Promise<Lot> {
+    for (let attempt = 1; attempt <= LOT_CODE_MAX_CREATE_ATTEMPTS; attempt++) {
+      try {
+        return await this.repository.create({ ...data, code: generateLotCode() });
+      } catch (error) {
+        if (!isUniqueViolation(error)) {
+          throw error;
+        }
+      }
+    }
+    this.logger.error(`Lot code allocation failed after ${LOT_CODE_MAX_CREATE_ATTEMPTS} tries`);
+    throw new InternalServerErrorException('Could not allocate a unique lot code');
   }
 
   // --- validation helpers (shared by create + both edit paths) ---

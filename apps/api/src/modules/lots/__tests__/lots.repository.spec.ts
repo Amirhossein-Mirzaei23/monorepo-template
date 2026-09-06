@@ -84,6 +84,33 @@ describe('LotsRepository', () => {
       expect(result.items.map((lot) => lot.title)).toEqual(['fresh']);
     });
 
+    it('never surfaces PAUSED lots — a lot paused after publication disappears immediately (LOT-003)', async () => {
+      const paused = seedLot({ title: 'will-be-paused' });
+      seedLot({ title: 'still-active' });
+
+      const before = await repository.findPublic();
+      // Fake timers freeze createdAt, so ordering is insertion order — compare sorted.
+      expect(before.items.map((lot) => lot.title).sort()).toEqual([
+        'still-active',
+        'will-be-paused',
+      ]);
+
+      // The LOT-003 pause action is a bare status flip on the row:
+      await repository.update(paused.id, { status: LotStatus.PAUSED });
+
+      const after = await repository.findPublic();
+      expect(after.items.map((lot) => lot.title)).toEqual(['still-active']);
+
+      // Stays hidden even with plenty of expiry time left — the status
+      // predicate alone (not the expiry filter) excludes PAUSED.
+      await repository.update(paused.id, {
+        expiresAt: new Date(BASE_TIME.getTime() + 30 * DAY_MS),
+      });
+      expect((await repository.findPublic()).items.map((lot) => lot.title)).toEqual([
+        'still-active',
+      ]);
+    });
+
     it('filters by categoryId and subcategoryId', async () => {
       seedLot({ title: 'target', subcategoryId: 'sub-1' });
       seedLot({ title: 'other-category', categoryId: 'cat-2' });

@@ -104,7 +104,7 @@ Covered by CAT-001 (`GET /categories`). Kept as ID for dependency references onl
 - **Testing:** service unit (all validation branches, derivation, transitions); controller e2e.
 - **DoD:** suites green.
 
-### LOT-003 — Lot lifecycle actions API
+### LOT-003 ✅ — Lot lifecycle actions API
 
 **P0 · Phase 2 · Lots · M** — Deps: LOT-002
 
