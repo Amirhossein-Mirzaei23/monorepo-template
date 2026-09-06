@@ -125,4 +125,28 @@ describe('ImageVariantService (MEDIA-002)', () => {
       );
     });
   });
+
+  describe('buildThumb (MEDIA-003 poster thumb)', () => {
+    it('encodes the same 480w WebP as buildVariants’ thumb — and never upscales', async () => {
+      const wide = await pngOf(2000, 1000);
+      const thumb = await service.buildThumb(wide);
+      const meta = await sharp(thumb).metadata();
+      expect(meta.format).toBe('webp');
+      expect(meta.width).toBe(MEDIA_VARIANT_WIDTHS.thumb);
+      expect(meta.height).toBe(240); // 1000 × 480/2000 — aspect preserved
+
+      // A small poster keeps its size (no upscale, same as buildVariants).
+      const small = await service.buildThumb(await pngOf(64, 64));
+      const smallMeta = await sharp(small).metadata();
+      expect(smallMeta.format).toBe('webp');
+      expect(smallMeta.width).toBe(64);
+      expect(smallMeta.height).toBe(64);
+    });
+
+    it('throws on undecodable bytes (mapped to 500 + cleanup by VideoService)', async () => {
+      await expect(service.buildThumb(Buffer.from('not-decodable-bytes'))).rejects.toThrow(
+        /input|decode|premature|unsupported/i,
+      );
+    });
+  });
 });

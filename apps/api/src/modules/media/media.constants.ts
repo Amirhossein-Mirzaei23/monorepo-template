@@ -47,10 +47,18 @@ export const MEDIA_ERROR_CODES = {
   MEDIA_TYPE_MISMATCH: 'MEDIA_TYPE_MISMATCH',
   /** Explicit size check on the buffered upload (MEDIA-002; multer also caps at 413). */
   IMAGE_TOO_LARGE: 'IMAGE_TOO_LARGE',
-  /** Per-user daily upload quota exhausted (MEDIA-002). */
+  /** Per-user daily upload quota exhausted (MEDIA-002/003). */
   QUOTA_EXCEEDED: 'QUOTA_EXCEEDED',
   /** sharp failed to decode/encode — partial storage already rolled back (MEDIA-002). */
   IMAGE_PROCESSING_FAILED: 'IMAGE_PROCESSING_FAILED',
+  /** Buffered video exceeds uploads.maxVideoMb (MEDIA-003; multer also caps at 413). */
+  VIDEO_TOO_LARGE: 'VIDEO_TOO_LARGE',
+  /** Validated duration exceeds uploads.maxVideoSeconds (+1 s tolerance) (MEDIA-003). */
+  DURATION_EXCEEDED: 'DURATION_EXCEEDED',
+  /** No usable duration: mp4 unparseable AND no client durationMs field (MEDIA-003). */
+  DURATION_REQUIRED: 'DURATION_REQUIRED',
+  /** Poster thumb generation/storage failed — partial storage rolled back (MEDIA-003). */
+  VIDEO_PROCESSING_FAILED: 'VIDEO_PROCESSING_FAILED',
 } as const;
 
 /**
@@ -81,6 +89,34 @@ export function deriveVariantKey(originalKey: string, variant: 'cover' | 'thumb'
   const dot = originalKey.lastIndexOf('.');
   const suffix = variant === 'cover' ? 'c' : 't';
   return `${originalKey.slice(0, dot)}${suffix}.webp`;
+}
+
+/**
+ * MEDIA-003 quota weight: a video upload draws from the SAME daily bucket as
+ * MEDIA-002 image uploads (uploads.dailyImageUploads rows/day), but counts
+ * DOUBLE — the video plus its stored poster siblings are far heavier than one
+ * image. A video upload is rejected when `rowsToday + 2 > limit`; the poster
+ * itself adds NO extra row (one MediaAsset per upload — see derivePosterKeys).
+ */
+export const VIDEO_QUOTA_COST = 2;
+
+/**
+ * MEDIA-003 poster keys derived from the VIDEO original key:
+ * `{yyyy}/{mm}/{id}.mp4` → poster ORIGINAL `{id}p.{posterExt}` (the extension
+ * of the uploaded poster image) + poster THUMB `{id}pt.webp` (sharp 480w WebP).
+ * Same "append inside the id segment" trick as deriveVariantKey — every key
+ * stays inside the public pattern, `p`/`pt` can't collide with minted 24-char
+ * ids or with each other — so the video row's `thumbKey` IS the poster thumb
+ * and the poster original is its derivable sibling: no extra columns, no
+ * migration (card: "Database: none"), and NO second MediaAsset row (the
+ * poster never counts separately toward quota).
+ */
+export function derivePosterKeys(
+  videoKey: string,
+  posterExtension: string,
+): { original: string; thumb: string } {
+  const base = videoKey.slice(0, videoKey.lastIndexOf('.'));
+  return { original: `${base}p.${posterExtension}`, thumb: `${base}pt.webp` };
 }
 
 /**

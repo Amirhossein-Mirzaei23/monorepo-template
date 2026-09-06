@@ -311,6 +311,18 @@ export const mediaUploadResponseDtoSchema = z.object({
   height: z.number(),
 });
 
+export const mediaVideoUploadUrlsDtoSchema = z.object({
+  video: z.string(),
+  poster: z.string().optional(),
+  posterThumb: z.string().optional(),
+});
+
+export const mediaVideoUploadResponseDtoSchema = z.object({
+  id: z.string(),
+  urls: mediaVideoUploadUrlsDtoSchema,
+  durationMs: z.number(),
+});
+
 export const apiSchemas = {
   Object: objectSchema,
   UserResponseDto: userResponseDtoSchema,
@@ -339,4 +351,6 @@ export const apiSchemas = {
   UpdateLotDto: updateLotDtoSchema,
   MediaUploadUrlsDto: mediaUploadUrlsDtoSchema,
   MediaUploadResponseDto: mediaUploadResponseDtoSchema,
+  MediaVideoUploadUrlsDto: mediaVideoUploadUrlsDtoSchema,
+  MediaVideoUploadResponseDto: mediaVideoUploadResponseDtoSchema,
 } as const;

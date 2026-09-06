@@ -101,4 +101,15 @@ export class ImageVariantService {
       .webp({ quality: MEDIA_VARIANT_WEBP_QUALITY })
       .toBuffer();
   }
+
+  /**
+   * MEDIA-003 poster thumb: the 480w WebP variant ALONE (no cover — a video
+   * poster needs exactly one small preview; card: "stores poster thumb").
+   * Same pipeline/settings as buildVariants' thumb so the bytes are
+   * indistinguishable from a MEDIA-002 thumb. Throws on undecodable bytes
+   * (VideoService maps every throw to 500 + best-effort cleanup).
+   */
+  async buildThumb(source: Buffer): Promise<Buffer> {
+    return this.encodeWebp(source, MEDIA_VARIANT_WIDTHS.thumb);
+  }
 }

@@ -45,7 +45,7 @@ on the distroless API). Limits (PLAT-003): image ≤ 10 MB × 15/lot, video ≤ 
 - **Testing:** e2e multipart (happy, oversize, wrong-mime, quota); variant service unit.
 - **DoD:** sharp in api deps; suites green.
 
-### MEDIA-003 — Video upload API (client poster, limits)
+### MEDIA-003 ✅ — Video upload API (client poster, limits)
 
 **P0 · Phase 3 · Media · M** — Deps: MEDIA-002
 
@@ -62,6 +62,10 @@ on the distroless API). Limits (PLAT-003): image ≤ 10 MB × 15/lot, video ≤ 
 - **Acceptance:** 61 s mp4 rejected server-side; poster missing → fallback generic video icon URL.
 - **Testing:** e2e with fixture files (valid/oversize/overduration); mvhd parser unit tests.
 - **DoD:** fixtures committed under `apps/api/test/fixtures/`; suites green.
+- **Notes (implementation):** binary fixtures replaced by hand-built mp4/WebM buffers generated
+  in the specs (same no-committed-binaries decision as MEDIA-002's suites). Poster keys derive
+  from the video key — `{id}p.{ext}` original, `{id}pt.webp` thumb (row `thumbKey`); the poster
+  adds no MediaAsset row and each video counts double toward the shared daily quota.
 
 ### MEDIA-004 — Web uploader components
 

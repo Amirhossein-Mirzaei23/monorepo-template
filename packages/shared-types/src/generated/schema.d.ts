@@ -434,6 +434,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/media/video": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload a video (multipart `video`, optional `poster` + `durationMs`): enforces the size/duration limits and stores the poster thumb */
+        post: operations["MediaController_uploadVideo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/media/secure/{year}/{month}/{file}": {
         parameters: {
             query?: never;
@@ -1350,6 +1367,33 @@ export interface components {
              */
             height: number;
         };
+        MediaVideoUploadUrlsDto: {
+            /** @example http://localhost:3001/media/2026/09/abc…123.mp4 */
+            video: string;
+            /**
+             * @description Present only when a poster image was uploaded (original bytes)
+             * @example http://localhost:3001/media/2026/09/abc…123p.jpg
+             */
+            poster?: string;
+            /**
+             * @description Present only when a poster image was uploaded (480w WebP q80 variant)
+             * @example http://localhost:3001/media/2026/09/abc…123pt.webp
+             */
+            posterThumb?: string;
+        };
+        MediaVideoUploadResponseDto: {
+            /**
+             * @description MediaAsset id (type VIDEO)
+             * @example clx…cuid
+             */
+            id: string;
+            urls: components["schemas"]["MediaVideoUploadUrlsDto"];
+            /**
+             * @description Validated duration in ms — server-parsed from the mp4 mvhd box when available, otherwise the client-reported durationMs (WebM / unparseable mp4)
+             * @example 58000
+             */
+            durationMs: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -2060,6 +2104,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MediaUploadResponseDto"];
+                };
+            };
+        };
+    };
+    MediaController_uploadVideo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /**
+                     * Format: binary
+                     * @description Video file: MP4 or WebM ≤ 50 MB and ≤ 60 s (+1 s tolerance). The declared Content-Type is verified against the magic bytes (ftyp / EBML); for MP4 the duration is re-parsed from the mvhd box, overriding the client value.
+                     */
+                    video: string;
+                    /**
+                     * Format: binary
+                     * @description Optional client-captured poster image: JPEG, PNG or WebP ≤ 10 MB; stored as the video row's poster (original + 480w WebP thumb).
+                     */
+                    poster?: string;
+                    /** @description Client-measured duration in ms. Required for WebM (no server-side parse) and as the fallback for unparseable MP4; validated server-side (≤ 61 s) and 422 DURATION_EXCEEDED otherwise. */
+                    durationMs?: number;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaVideoUploadResponseDto"];
                 };
             };
         };

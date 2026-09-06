@@ -1,14 +1,16 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
   Param,
   Post,
   Res,
   UploadedFile,
+  UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -23,9 +25,12 @@ import { pipeline } from 'node:stream';
 import { Public } from '../../common/decorators/public.decorator';
 import { type AuthUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { MediaUploadResponseDto } from './dto/media-upload-response.dto';
+import { MediaVideoUploadResponseDto } from './dto/media-video-upload-response.dto';
+import { VideoUploadDto } from './dto/video-upload.dto';
 import { MEDIA_UPLOAD_THROTTLE } from './media.constants';
 import type { MediaContent, UploadedMediaFile } from './media.service';
 import { MediaService } from './media.service';
+import { VideoService } from './video/video.service';
 
 /**
  * Static mirror of uploads.maxImageMb (same env var, same 10 MB default — see
@@ -38,6 +43,15 @@ import { MediaService } from './media.service';
  */
 const MULTER_FILE_SIZE_LIMIT_BYTES =
   (Number.parseInt(process.env.MAX_IMAGE_MB ?? '10', 10) || 10) * 1024 * 1024;
+
+/**
+ * Same static mirror for the VIDEO route (uploads.maxVideoMb, 50 MB default).
+ * multer's per-part `fileSize` limit applies to EACH file field, so a 10 MB
+ * poster passes the multipart layer under the 50 MB video cap; VideoService
+ * re-checks video (maxVideoMb) and poster (maxImageMb) against typed config.
+ */
+const MULTER_VIDEO_FILE_SIZE_LIMIT_BYTES =
+  (Number.parseInt(process.env.MAX_VIDEO_MB ?? '50', 10) || 50) * 1024 * 1024;
 
 /**
  * Media serving (MEDIA-001) + image upload (MEDIA-002). Storage keys are
@@ -57,11 +71,18 @@ const MULTER_FILE_SIZE_LIMIT_BYTES =
  *   random key is the guard on this card.
  * POST /media — JWT (any account), 30/min throttle, multipart `file`:
  *   verified image → original + cover/thumb WebP variants (MEDIA-002).
+ * POST /media/video — JWT (any account), same throttle, multipart `video` +
+ *   optional `poster` + `durationMs`: verified mp4/WebM ≤ 50 MB and ≤ 60 s
+ *   (+1 s tolerance; server mvhd parse for mp4) → VIDEO row, poster thumb
+ *   through the sharp pipeline (MEDIA-003).
  */
 @ApiTags('media')
 @Controller('media')
 export class MediaController {
-  constructor(private readonly media: MediaService) {}
+  constructor(
+    private readonly media: MediaService,
+    private readonly video: VideoService,
+  ) {}
 
   @Post()
   @Throttle({ default: { limit: MEDIA_UPLOAD_THROTTLE.limit, ttl: MEDIA_UPLOAD_THROTTLE.ttlMs } })
@@ -98,6 +119,77 @@ export class MediaController {
       throw new BadRequestException('Multipart field "file" is required');
     }
     return this.media.uploadImage(user.sub, file);
+  }
+
+  /**
+   * MEDIA-003: two file fields share one multipart request, so the per-part
+   * `fileSize` limit is the VIDEO cap (see MULTER_VIDEO_FILE_SIZE_LIMIT_BYTES
+   * above) and the poster's own 10 MB cap is enforced in VideoService.
+   * `durationMs` is a plain text field (multer puts it on the body) — the
+   * DTO validates it; VideoService decides whether it is required and whether
+   * the server-parsed mp4 duration overrides it.
+   */
+  @Post('video')
+  @Throttle({ default: { limit: MEDIA_UPLOAD_THROTTLE.limit, ttl: MEDIA_UPLOAD_THROTTLE.ttlMs } })
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'video', maxCount: 1 },
+        { name: 'poster', maxCount: 1 },
+      ],
+      { limits: { fileSize: MULTER_VIDEO_FILE_SIZE_LIMIT_BYTES, files: 2 } },
+    ),
+  )
+  @ApiBearerAuth('access-token')
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['video'],
+      properties: {
+        video: {
+          type: 'string',
+          format: 'binary',
+          description:
+            'Video file: MP4 or WebM ≤ 50 MB and ≤ 60 s (+1 s tolerance). The declared ' +
+            'Content-Type is verified against the magic bytes (ftyp / EBML); for MP4 the ' +
+            'duration is re-parsed from the mvhd box, overriding the client value.',
+        },
+        poster: {
+          type: 'string',
+          format: 'binary',
+          description:
+            'Optional client-captured poster image: JPEG, PNG or WebP ≤ 10 MB; stored as ' +
+            "the video row's poster (original + 480w WebP thumb).",
+        },
+        durationMs: {
+          type: 'number',
+          description:
+            'Client-measured duration in ms. Required for WebM (no server-side parse) and ' +
+            'as the fallback for unparseable MP4; validated server-side (≤ 61 s) and 422 ' +
+            'DURATION_EXCEEDED otherwise.',
+        },
+      },
+    },
+  })
+  @ApiOkResponse({ type: MediaVideoUploadResponseDto })
+  @ApiOperation({
+    summary:
+      'Upload a video (multipart `video`, optional `poster` + `durationMs`): enforces the ' +
+      'size/duration limits and stores the poster thumb',
+  })
+  async uploadVideo(
+    @CurrentUser() user: AuthUser,
+    @UploadedFiles()
+    files: { video?: UploadedMediaFile[]; poster?: UploadedMediaFile[] } | undefined,
+    @Body() body: VideoUploadDto,
+  ): Promise<MediaVideoUploadResponseDto> {
+    const video = files?.video?.[0];
+    const poster = files?.poster?.[0];
+    if (!video) {
+      throw new BadRequestException('Multipart field "video" is required');
+    }
+    return this.video.uploadVideo(user.sub, video, body.durationMs, poster);
   }
 
   @Get('secure/:year/:month/:file')
