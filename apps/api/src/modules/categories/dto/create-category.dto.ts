@@ -50,10 +50,16 @@ export class CreateCategoryDto {
   @IsString()
   parentId?: string | null;
 
-  @ApiProperty({ example: 1, minimum: 0, description: 'Position among siblings' })
+  @ApiPropertyOptional({
+    example: 1,
+    minimum: 0,
+    description:
+      'Position among siblings — omit to append after the last existing sibling (max sibling sortOrder + 1, 0 for the first sibling)',
+  })
+  @IsOptional()
   @IsInt()
   @Min(0)
-  sortOrder!: number;
+  sortOrder?: number;
 
   @ApiPropertyOptional({ example: true, default: true })
   @IsOptional()

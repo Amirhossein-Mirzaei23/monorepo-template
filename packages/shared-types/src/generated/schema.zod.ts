@@ -91,6 +91,37 @@ export const categoryTreeNodeDtoSchema: z.ZodType<CategoryTreeNodeDto> = z.objec
   children: z.array(z.lazy(() => categoryTreeNodeDtoSchema)),
 });
 
+export const createCategoryDtoSchema = z.object({
+  nameFa: z.string(),
+  nameEn: z.string().nullable().optional(),
+  slug: z.string(),
+  parentId: z.string().nullable().optional(),
+  sortOrder: z.number().optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const categoryResponseDtoSchema = z.object({
+  id: z.string(),
+  nameFa: z.string(),
+  nameEn: z.string().nullable().optional(),
+  slug: z.string(),
+  parentId: z.string().nullable().optional(),
+  sortOrder: z.number(),
+  isActive: z.boolean(),
+});
+
+export const updateCategoryDtoSchema = z.object({
+  nameFa: z.string().optional(),
+  nameEn: z.string().nullable().optional(),
+  slug: z.string().optional(),
+  parentId: z.string().nullable().optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const reorderCategoryDtoSchema = z.object({
+  siblingId: z.string(),
+});
+
 export const saveOnboardingDtoSchema = z.object({
   isBuyer: z.boolean(),
   isSeller: z.boolean(),
@@ -176,6 +207,10 @@ export const apiSchemas = {
   LoginResponseDto: loginResponseDtoSchema,
   MeResponseDto: meResponseDtoSchema,
   CategoryTreeNodeDto: categoryTreeNodeDtoSchema,
+  CreateCategoryDto: createCategoryDtoSchema,
+  CategoryResponseDto: categoryResponseDtoSchema,
+  UpdateCategoryDto: updateCategoryDtoSchema,
+  ReorderCategoryDto: reorderCategoryDtoSchema,
   SaveOnboardingDto: saveOnboardingDtoSchema,
   ProfileInterestCategoryDto: profileInterestCategoryDtoSchema,
   ProfileMetricsDto: profileMetricsDtoSchema,

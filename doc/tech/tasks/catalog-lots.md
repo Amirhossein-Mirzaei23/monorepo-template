@@ -48,7 +48,7 @@ Covered by CAT-001 (`GET /categories`). Kept as ID for dependency references onl
 - **Testing:** component tests (cascading behavior, keyboard nav).
 - **DoD:** barrel exports; lint/typecheck/test green.
 
-### CAT-004 — Admin categories CRUD API
+### CAT-004 ✅ — Admin categories CRUD API
 
 **P0 · Phase 2 · Catalog · M** — Deps: CAT-001 (uses the existing `@Roles(ADMIN)` guard; admin UI arrives with ADM-007)
 

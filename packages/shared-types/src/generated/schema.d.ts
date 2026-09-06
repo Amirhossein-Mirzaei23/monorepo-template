@@ -211,6 +211,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a category — admin only; sortOrder omitted = append after siblings */
+        post: operations["CategoriesAdminController_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/categories/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update nameFa/nameEn/slug/parentId/isActive — admin only; reorder via /reorder, no delete (deactivate instead) */
+        patch: operations["CategoriesAdminController_update"];
+        trace?: never;
+    };
+    "/admin/categories/{id}/reorder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Swap sortOrder with a sibling category — admin only */
+        patch: operations["CategoriesAdminController_reorder"];
+        trace?: never;
+    };
     "/profiles/onboarding": {
         parameters: {
             query?: never;
@@ -429,6 +480,76 @@ export interface components {
             /** @example apparel */
             slug: string;
             children: components["schemas"]["CategoryTreeNodeDto"][];
+        };
+        CreateCategoryDto: {
+            /** @example پوشاک */
+            nameFa: string;
+            /** @example Apparel */
+            nameEn?: string | null;
+            /** @example apparel */
+            slug: string;
+            /**
+             * @description Parent category id — must reference a top-level category (depth ≤ 2); omit/null = top-level
+             * @example clx…cuid
+             */
+            parentId?: string | null;
+            /**
+             * @description Position among siblings — omit to append after the last existing sibling (max sibling sortOrder + 1, 0 for the first sibling)
+             * @example 1
+             */
+            sortOrder?: number;
+            /**
+             * @default true
+             * @example true
+             */
+            isActive: boolean;
+        };
+        CategoryResponseDto: {
+            /** @example clx…cuid */
+            id: string;
+            /** @example پوشاک */
+            nameFa: string;
+            /** @example Apparel */
+            nameEn?: string | null;
+            /** @example apparel */
+            slug: string;
+            /**
+             * @description null = top-level
+             * @example clx…cuid
+             */
+            parentId?: string | null;
+            /** @example 1 */
+            sortOrder: number;
+            /** @example true */
+            isActive: boolean;
+        };
+        UpdateCategoryDto: {
+            /** @example پوشاک */
+            nameFa?: string;
+            /** @example Apparel */
+            nameEn?: string | null;
+            /**
+             * @description Clashing with another category → 409
+             * @example apparel
+             */
+            slug?: string;
+            /**
+             * @description Re-parent target — must reference a TOP-LEVEL category (moving a parent under a parent → 400); null = move to top level
+             * @example clx…cuid
+             */
+            parentId?: string | null;
+            /**
+             * @description Deactivate = hide from the public tree; lots keep referencing the row (no cascade)
+             * @example false
+             */
+            isActive?: boolean;
+        };
+        ReorderCategoryDto: {
+            /**
+             * @description Sibling category id to swap sortOrder with — must be an actual sibling
+             * @example clx…cuid
+             */
+            siblingId: string;
         };
         SaveOnboardingDto: {
             /**
@@ -948,6 +1069,135 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CategoryTreeNodeDto"][];
                 };
+            };
+        };
+    };
+    CategoriesAdminController_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCategoryDto"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CategoryResponseDto"];
+                };
+            };
+            /** @description Parent not top-level (depth ≤ 2 guard) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description parentId does not exist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Slug already in use */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    CategoriesAdminController_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateCategoryDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CategoryResponseDto"];
+                };
+            };
+            /** @description Parent-under-parent or has-children depth violation */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown category or parentId */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Slug already in use */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    CategoriesAdminController_reorder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReorderCategoryDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CategoryResponseDto"];
+                };
+            };
+            /** @description Sibling is not an actual sibling (same parentId incl. both-null) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown category or sibling id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

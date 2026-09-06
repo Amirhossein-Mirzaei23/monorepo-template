@@ -13,6 +13,16 @@ export const CATEGORY_TREE_ORDER: readonly Prisma.CategoryOrderByWithRelationInp
 
 export type Tx = Prisma.TransactionClient | undefined;
 
+/** Writable subset for PATCH — omitted (undefined) fields stay untouched. */
+export type CategoryUpdateData = {
+  nameFa?: string;
+  nameEn?: string | null;
+  slug?: string;
+  parentId?: string | null;
+  sortOrder?: number;
+  isActive?: boolean;
+};
+
 /**
  * Data access only. Every method accepts an optional transaction client so
  * the repository stays unit-of-work agnostic — services own transaction
@@ -76,5 +86,19 @@ export class CategoriesRepository {
     tx: Tx = undefined,
   ): Promise<Category> {
     return this.client(tx).category.create({ data });
+  }
+
+  async update(id: string, data: CategoryUpdateData, tx: Tx = undefined): Promise<Category> {
+    return this.client(tx).category.update({ where: { id }, data });
+  }
+
+  /**
+   * Rows sharing a parent: `findByParent(parent.parentId)` = siblings
+   * (default `sortOrder` placement, CAT-004), `findByParent(category.id)` =
+   * children (has-children re-parent guard, CAT-004). Includes inactive rows —
+   * ordering and guard rules are lifecycle-agnostic.
+   */
+  async findByParent(parentId: string | null, tx: Tx = undefined): Promise<Category[]> {
+    return this.client(tx).category.findMany({ where: { parentId } });
   }
 }

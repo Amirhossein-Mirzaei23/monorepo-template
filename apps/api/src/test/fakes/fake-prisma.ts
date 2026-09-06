@@ -390,6 +390,38 @@ export class FakePrisma {
       this.categories.set(row.id, row);
       return cloneCategory(row);
     },
+    /** Partial update (CAT-004 admin writes) — undefined keys stay untouched. */
+    update: async ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: {
+        nameFa?: string;
+        nameEn?: string | null;
+        slug?: string;
+        parentId?: string | null;
+        sortOrder?: number;
+        isActive?: boolean;
+      };
+    }): Promise<Category> => {
+      const row = this.categories.get(where.id);
+      if (!row) {
+        throw new Error(`FakePrisma: category ${where.id} not found`);
+      }
+      const next: Category = {
+        ...row,
+        ...(data.nameFa !== undefined ? { nameFa: data.nameFa } : {}),
+        ...(data.nameEn !== undefined ? { nameEn: data.nameEn } : {}),
+        ...(data.slug !== undefined ? { slug: data.slug } : {}),
+        ...(data.parentId !== undefined ? { parentId: data.parentId } : {}),
+        ...(data.sortOrder !== undefined ? { sortOrder: data.sortOrder } : {}),
+        ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+        updatedAt: nowIso(),
+      };
+      this.categories.set(row.id, next);
+      return cloneCategory(next);
+    },
   };
 
   /** Exactly the surface ProfilesRepository uses (ONB-001). */
