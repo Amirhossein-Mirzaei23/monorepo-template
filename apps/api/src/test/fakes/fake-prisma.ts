@@ -3,6 +3,7 @@ import {
   type LiquidationReason,
   type Lot,
   LotCondition,
+  type LotMedia,
   LotStatus,
   LotUnit,
   type MediaAsset,
@@ -92,9 +93,8 @@ type MediaAssetCreateData = {
   durationMs?: number | null;
 };
 
-/** Exactly the surface LotsRepository composes (LOT-001 findPublic + lookups). */ type LotEnumFilter<
-  T extends string,
-> = T | { in: T[] };
+/** Exactly the surface LotsRepository composes (LOT-001 findPublic + lookups). */
+type LotEnumFilter<T extends string> = T | { in: T[] };
 type LotTextFilter = { contains: string; mode: 'insensitive' };
 type LotWhere = {
   id?: string;
@@ -177,6 +177,18 @@ type LotCreateData = {
 
 const nowIso = () => new Date();
 
+/** LotMedia row joined with its asset — what the repository's include returns. */
+type LotMediaRow = LotMedia & { mediaAsset: MediaAsset };
+/** A Lot row as the repository's LOT_MEDIA_INCLUDE reads produce it. */
+type LotRowWithMedia = Lot & { media: LotMediaRow[] };
+/** Exactly the surface LotsRepository's gallery methods compose (MEDIA-005). */
+type LotMediaWhere = { lotId?: string; mediaAssetId?: { notIn: string[] } };
+type LotMediaUpsertInput = {
+  where: { lotId_mediaAssetId: { lotId: string; mediaAssetId: string } };
+  create: { lotId: string; mediaAssetId: string; sortOrder: number; isCover: boolean };
+  update: { sortOrder: number; isCover: boolean };
+};
+
 /**
  * Deterministic in-memory Prisma stand-in covering exactly the surface this app
  * uses (user + refreshToken + otpCode + category + profile + profileInterest
@@ -191,6 +203,7 @@ export class FakePrisma {
   private readonly profiles = new Map<string, Profile>();
   private readonly profileInterests = new Map<string, ProfileInterest>();
   private readonly lots = new Map<string, Lot>();
+  private readonly lotMediaRows = new Map<string, LotMedia>();
   private readonly mediaAssets = new Map<string, MediaAsset>();
 
   readonly user = {
@@ -650,7 +663,9 @@ export class FakePrisma {
     },
   };
 
-  /** Exactly the surface LotsRepository uses (LOT-001). */
+  /** Exactly the surface LotsRepository uses (LOT-001). Lots always read back
+   * with their gallery links joined (the production LOT_MEDIA_INCLUDE — MEDIA-005
+   * responses carry media[] from every owner read/write). */
   readonly lot = {
     findMany: async ({
       where,
@@ -662,11 +677,11 @@ export class FakePrisma {
       orderBy?: LotOrderBy;
       skip?: number;
       take?: number;
-    }): Promise<Lot[]> => {
+    }): Promise<LotRowWithMedia[]> => {
       const rows = [...this.lots.values()].filter(matchesLotWhere(where));
       return sortRows(rows, orderBy)
         .slice(skip, take !== undefined ? skip + take : undefined)
-        .map(cloneLot);
+        .map((row) => this.withMedia(row));
     },
     count: async ({ where }: { where?: LotWhere } = {}): Promise<number> =>
       [...this.lots.values()].filter(matchesLotWhere(where)).length,
@@ -674,23 +689,23 @@ export class FakePrisma {
       where,
     }: {
       where: { id?: string; code?: string };
-    }): Promise<Lot | null> => {
+    }): Promise<LotRowWithMedia | null> => {
       let found: Lot | undefined;
       if (where.id !== undefined) {
         found = this.lots.get(where.id);
       } else if (where.code !== undefined) {
         found = [...this.lots.values()].find((row) => row.code === where.code);
       }
-      return found ? cloneLot(found) : null;
+      return found ? this.withMedia(found) : null;
     },
-    findFirst: async ({ where }: { where?: LotWhere }): Promise<Lot | null> => {
+    findFirst: async ({ where }: { where?: LotWhere }): Promise<LotRowWithMedia | null> => {
       const found = [...this.lots.values()].find(matchesLotWhere(where));
-      return found ? cloneLot(found) : null;
+      return found ? this.withMedia(found) : null;
     },
-    create: async ({ data }: { data: LotCreateData }): Promise<Lot> => {
+    create: async ({ data }: { data: LotCreateData }): Promise<LotRowWithMedia> => {
       const row = buildLotRow(data);
       this.lots.set(row.id, row);
-      return cloneLot(row);
+      return this.withMedia(row);
     },
     /** Partial update — undefined keys stay untouched, {increment} mutates counters. */
     update: async ({
@@ -699,7 +714,7 @@ export class FakePrisma {
     }: {
       where: { id: string };
       data: LotUpdateData;
-    }): Promise<Lot> => {
+    }): Promise<LotRowWithMedia> => {
       const row = this.lots.get(where.id);
       if (!row) {
         throw new Error(`FakePrisma: lot ${where.id} not found`);
@@ -722,7 +737,7 @@ export class FakePrisma {
       }
       next.updatedAt = nowIso();
       this.lots.set(row.id, next);
-      return cloneLot(next);
+      return this.withMedia(next);
     },
     /**
      * Batch update over the two shapes the app uses: atomic counter bumps
@@ -765,7 +780,65 @@ export class FakePrisma {
     },
   };
 
-  /** Exactly the surface MediaRepository uses (MEDIA-001 + MEDIA-002 quota). */
+  /** Exactly the surface LotsRepository's gallery methods use (MEDIA-005). */
+  readonly lotMedia = {
+    findMany: async ({
+      where,
+      orderBy,
+    }: {
+      where?: LotMediaWhere;
+      orderBy?: Record<string, 'asc' | 'desc'>;
+    }): Promise<LotMediaRow[]> => {
+      let rows = [...this.lotMediaRows.values()].filter(matchesLotMediaWhere(where));
+      if (orderBy?.sortOrder === 'desc') {
+        rows = rows.sort((a, b) => b.sortOrder - a.sortOrder);
+      } else if (orderBy?.sortOrder === 'asc') {
+        rows = rows.sort((a, b) => a.sortOrder - b.sortOrder);
+      }
+      return rows.map((row) => this.withAsset(row));
+    },
+    deleteMany: async ({ where }: { where: LotMediaWhere }): Promise<{ count: number }> => {
+      let count = 0;
+      for (const [id, row] of this.lotMediaRows) {
+        if (matchesLotMediaWhere(where)(row)) {
+          this.lotMediaRows.delete(id);
+          count += 1;
+        }
+      }
+      return { count };
+    },
+    upsert: async ({ where, create, update }: LotMediaUpsertInput): Promise<LotMediaRow> => {
+      const existing = [...this.lotMediaRows.values()].find(
+        (row) =>
+          row.lotId === where.lotId_mediaAssetId.lotId &&
+          row.mediaAssetId === where.lotId_mediaAssetId.mediaAssetId,
+      );
+      if (!existing) {
+        const row: LotMedia = {
+          id: randomUUID(),
+          lotId: create.lotId,
+          mediaAssetId: create.mediaAssetId,
+          sortOrder: create.sortOrder,
+          isCover: create.isCover,
+          createdAt: nowIso(),
+          updatedAt: nowIso(),
+        };
+        this.lotMediaRows.set(row.id, row);
+        return this.withAsset(row);
+      }
+      const next: LotMedia = {
+        ...existing,
+        sortOrder: update.sortOrder,
+        isCover: update.isCover,
+        updatedAt: nowIso(),
+      };
+      this.lotMediaRows.set(existing.id, next);
+      return this.withAsset(next);
+    },
+  };
+
+  /** Exactly the surface MediaRepository uses (MEDIA-001 + MEDIA-002 quota +
+   * MEDIA-005 batch id lookup). */
   readonly mediaAsset = {
     findUnique: async ({ where }: { where: MediaAssetWhere }): Promise<MediaAsset | null> => {
       let found: MediaAsset | undefined;
@@ -776,6 +849,12 @@ export class FakePrisma {
       }
       return found ? cloneMediaAsset(found) : null;
     },
+    findMany: async ({ where }: { where?: { id?: { in: string[] } } } = {}): Promise<
+      MediaAsset[]
+    > =>
+      [...this.mediaAssets.values()]
+        .filter((row) => where?.id === undefined || where.id.in.includes(row.id))
+        .map(cloneMediaAsset),
     count: async ({ where }: { where?: MediaAssetWhere } = {}): Promise<number> =>
       [...this.mediaAssets.values()].filter(matchesMediaAssetWhere(where)).length,
     create: async ({ data }: { data: MediaAssetCreateData }): Promise<MediaAsset> => {
@@ -947,7 +1026,7 @@ export class FakePrisma {
       description?: string;
       createdAt?: Date;
     },
-  ): Lot {
+  ): LotRowWithMedia {
     const { createdAt, ...data } = lot;
     const row = buildLotRow({
       ...data,
@@ -958,7 +1037,7 @@ export class FakePrisma {
       row.createdAt = createdAt;
     }
     this.lots.set(row.id, row);
-    return cloneLot(row);
+    return this.withMedia(row);
   }
 
   /** Test helper: seeded media assets (MEDIA-001 serving suites — pair with a
@@ -981,6 +1060,47 @@ export class FakePrisma {
     }
     this.mediaAssets.set(row.id, row);
     return cloneMediaAsset(row);
+  }
+
+  /** Test helper: seeded gallery links (MEDIA-005 suites — pair with seedLot +
+   * seedMediaAsset rows). */
+  seedLotMedia(link: {
+    lotId: string;
+    mediaAssetId: string;
+    sortOrder: number;
+    isCover?: boolean;
+  }): LotMedia {
+    const row: LotMedia = {
+      id: randomUUID(),
+      lotId: link.lotId,
+      mediaAssetId: link.mediaAssetId,
+      sortOrder: link.sortOrder,
+      isCover: link.isCover ?? false,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+    this.lotMediaRows.set(row.id, row);
+    return cloneLotMedia(row);
+  }
+
+  /** Lot row with its gallery joined (sorted by sortOrder), mirroring the
+   * production LOT_MEDIA_INCLUDE. Throws on a link whose asset row is missing —
+   * seeded fixtures are expected to be consistent. */
+  private withMedia(row: Lot): LotRowWithMedia {
+    const media = [...this.lotMediaRows.values()]
+      .filter((link) => link.lotId === row.id)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((link) => this.withAsset(link));
+    return { ...cloneLot(row), media };
+  }
+
+  /** LotMedia row with its asset joined (the gallery include's element shape). */
+  private withAsset(row: LotMedia): LotMediaRow {
+    const asset = this.mediaAssets.get(row.mediaAssetId);
+    if (!asset) {
+      throw new Error(`FakePrisma: lotMedia ${row.id} references a missing mediaAsset`);
+    }
+    return { ...cloneLotMedia(row), mediaAsset: cloneMediaAsset(asset) };
   }
 }
 
@@ -1175,6 +1295,21 @@ function matchesMediaAssetWhere(where: MediaAssetWhere | undefined): (row: Media
     (where?.createdAt === undefined ||
       where.createdAt.gte === undefined ||
       row.createdAt >= where.createdAt.gte);
+}
+
+/** MEDIA-005 gallery matcher: lot scoping + the deleteMany `notIn` asset set. */
+function matchesLotMediaWhere(where: LotMediaWhere | undefined): (row: LotMedia) => boolean {
+  return (row) =>
+    (where?.lotId === undefined || row.lotId === where.lotId) &&
+    (where?.mediaAssetId === undefined || !where.mediaAssetId.notIn.includes(row.mediaAssetId));
+}
+
+function cloneLotMedia(row: LotMedia): LotMedia {
+  return {
+    ...row,
+    createdAt: new Date(row.createdAt),
+    updatedAt: new Date(row.updatedAt),
+  };
 }
 
 function cloneProfile(row: Profile): Profile {

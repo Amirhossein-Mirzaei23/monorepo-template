@@ -67,7 +67,7 @@ Complexity: XS 1 · S 22 · M 71 · L 12 · XL 1.
 | MEDIA-002 | ✅ Image upload API (sharp variants)     | P0  | 3   | M   |     | ADM-005  | Admin deals view                    | P0  | 7   | M   |
 | MEDIA-003 | ✅ Video upload API (client poster)      | P0  | 3   | M   |     | ADM-006  | Admin verification review           | P0  | 7   | M   |
 | MEDIA-004 | ✅ Web uploader components               | P0  | 3   | L   |     | ADM-007  | Admin categories management         | P0  | 7   | M   |
-| MEDIA-005 | Lot media attach/organize                | P0  | 3   | S   |     | ADM-008  | Admin dashboard completeness        | P0  | 7   | S   |
+| MEDIA-005 | ✅ Lot media attach/organize             | P0  | 3   | S   |     | ADM-008  | Admin dashboard completeness        | P0  | 7   | S   |
 | MEDIA-006 | S3-compatible storage driver             | P1  | 9   | M   |     | REV-001  | Reviews API (deal-gated)            | P1  | 9   | M   |
 | MKT-001   | Public lot listing API                   | P0  | 4   | M   |     | REV-002  | Reviews UI                          | P1  | 9   | M   |
 | MKT-002   | Filters API                              | P0  | 4   | M   |     | DSH-001  | App shell + bottom tabs             | P0  | 8   | M   |

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   HttpException,
@@ -6,19 +7,25 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   AccountRole,
   LiquidationReason,
   LotCondition,
   LotStatus,
   LotUnit,
+  MediaType,
   PricingType,
+  type MediaAsset,
 } from '@prisma/client';
+import type { AppConfig } from '../../../config/configuration';
 import type { PrismaService } from '../../../prisma/prisma.service';
 import { FakePrisma } from '../../../test/fakes/fake-prisma';
 import { CategoriesRepository } from '../../categories/categories.repository';
+import { MediaRepository } from '../../media/media.repository';
 import { UsersRepository } from '../../users/users.repository';
 import type { CreateLotDto } from '../dto/create-lot.dto';
+import type { PutLotMediaDto } from '../dto/lot-media.dto';
 import {
   toLotOwnerResponse,
   toLotPublicResponse,
@@ -29,6 +36,9 @@ import { LotsRepository } from '../lots.repository';
 import { LotsService } from '../lots.service';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Base URL the stubbed config serves as PUBLIC_MEDIA_BASE_URL (MEDIA-005). */
+const MEDIA_BASE_URL = 'http://media.test';
 
 /** Grabs the rejection instead of try/catch noise in every test. */
 async function rejectionOf(promise: Promise<unknown>): Promise<HttpException> {
@@ -57,7 +67,24 @@ describe('LotsService', () => {
     repository = new LotsRepository(fake as unknown as PrismaService);
     const users = new UsersRepository(fake as unknown as PrismaService);
     const categories = new CategoriesRepository(fake as unknown as PrismaService);
-    service = new LotsService(repository, users, categories);
+    const media = new MediaRepository(fake as unknown as PrismaService);
+    // Minimal `app` namespace stub — putMedia reads the gallery caps and the
+    // public media base URL from it.
+    const appConfig = {
+      storage: { publicMediaBaseUrl: MEDIA_BASE_URL },
+      uploads: { maxLotImages: 15, maxLotVideos: 3 },
+    } as unknown as AppConfig;
+    const config = {
+      get: (key: string) => (key === 'app' ? appConfig : undefined),
+    } as unknown as ConfigService;
+    service = new LotsService(
+      repository,
+      users,
+      categories,
+      media,
+      fake as unknown as PrismaService,
+      config,
+    );
 
     sellerId = fake.seedUser({
       phone: '09111111111',
@@ -968,6 +995,7 @@ describe('LotsService', () => {
         'id',
         'liquidationReason',
         'locationHint',
+        'media',
         'minOrderQuantity',
         'pricingType',
         'province',
@@ -986,6 +1014,357 @@ describe('LotsService', () => {
         'viewCount',
       ]);
       expect(ownerKeys).toEqual([...publicKeys, 'exactAddress', 'rejectionReason'].sort());
+    });
+
+    it('media is PUBLIC content: both shapes carry it; public still never has exactAddress', async () => {
+      const lot = seedLot({ exactAddress: 'تهران، کوچه ۲' });
+      const asset = fake.seedMediaAsset({
+        ownerId: sellerId,
+        type: MediaType.IMAGE,
+        mime: 'image/png',
+        sizeBytes: 100,
+        thumbKey: '2026/09/assetthumbt.webp',
+      });
+      fake.seedLotMedia({ lotId: lot.id, mediaAssetId: asset.id, sortOrder: 0, isCover: true });
+
+      const withMedia = await fake.lot.findUnique({ where: { id: lot.id } });
+      if (!withMedia) {
+        throw new Error('seeded lot missing');
+      }
+
+      const pub = toLotPublicResponse(withMedia, MEDIA_BASE_URL);
+      expect(pub.media).toHaveLength(1);
+      expect(pub.media[0]).toMatchObject({
+        mediaAssetId: asset.id,
+        kind: 'IMAGE',
+        url: `${MEDIA_BASE_URL}/${asset.storageKey}`,
+        thumbUrl: `${MEDIA_BASE_URL}/2026/09/assetthumbt.webp`,
+        sortOrder: 0,
+        isCover: true,
+      });
+      expect(pub).not.toHaveProperty('exactAddress');
+      expect(pub).not.toHaveProperty('rejectionReason');
+
+      const owner = toLotOwnerResponse(withMedia, MEDIA_BASE_URL);
+      expect(owner.media).toEqual(pub.media);
+      expect(owner.exactAddress).toBe('تهران، کوچه ۲');
+    });
+  });
+
+  // ==========================================================================
+  // MEDIA-005 — PUT /lots/:id/media (gallery replace)
+  // ==========================================================================
+
+  describe('putMedia — permissions & status matrix', () => {
+    const seedAsset = (overrides: Partial<Parameters<FakePrisma['seedMediaAsset']>[0]> = {}) =>
+      fake.seedMediaAsset({
+        ownerId: sellerId,
+        type: MediaType.IMAGE,
+        mime: 'image/png',
+        sizeBytes: 100,
+        ...overrides,
+      });
+    const itemsOf = (assets: MediaAsset[]) => assets.map((asset) => ({ mediaAssetId: asset.id }));
+
+    it('403 + SELLER_REQUIRED for an account without the seller hat', async () => {
+      const lot = seedLot();
+      const asset = seedAsset();
+      const error = await rejectionOf(
+        service.putMedia(buyerId, lot.id, { items: itemsOf([asset]) }),
+      );
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect(error.getResponse()).toMatchObject({ code: 'SELLER_REQUIRED' });
+    });
+
+    it('401 when the token user no longer exists; 404 for an unknown lot', async () => {
+      const asset = seedAsset();
+      await expect(
+        service.putMedia('ghost-id', 'x', { items: itemsOf([asset]) }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      await expect(
+        service.putMedia(sellerId, 'missing-lot', { items: itemsOf([asset]) }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('403 for a non-owner seller', async () => {
+      const lot = seedLot();
+      const asset = seedAsset();
+      await expect(
+        service.putMedia(otherSellerId, lot.id, { items: itemsOf([asset]) }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it.each<[string, LotStatus]>([
+      ['PENDING_REVIEW — frozen under moderation', LotStatus.PENDING_REVIEW],
+      ['ACTIVE — content locked while listed', LotStatus.ACTIVE],
+      ['PAUSED — content locked while listed', LotStatus.PAUSED],
+      ['EXPIRED — duplicate to re-list', LotStatus.EXPIRED],
+      ['SOLD — history stays as-sold', LotStatus.SOLD],
+      ['REMOVED — soft-deleted', LotStatus.REMOVED],
+    ])('409 ILLEGAL_STATUS_EDIT on %s', async (_label, status) => {
+      const lot = seedLot({ status });
+      const asset = seedAsset();
+      const error = await rejectionOf(
+        service.putMedia(sellerId, lot.id, { items: itemsOf([asset]) }),
+      );
+      expect(error).toBeInstanceOf(ConflictException);
+      expect(error.getResponse()).toMatchObject({ code: 'ILLEGAL_STATUS_EDIT' });
+    });
+
+    it('allows DRAFT and REJECTED', async () => {
+      const asset = seedAsset();
+      await expect(
+        service.putMedia(sellerId, seedLot({ status: LotStatus.DRAFT }).id, {
+          items: itemsOf([asset]),
+        }),
+      ).resolves.toHaveProperty('status', LotStatus.DRAFT);
+      await expect(
+        service.putMedia(sellerId, seedLot({ status: LotStatus.REJECTED }).id, {
+          items: itemsOf([asset]),
+        }),
+      ).resolves.toHaveProperty('status', LotStatus.REJECTED);
+    });
+  });
+
+  describe('putMedia — asset validation', () => {
+    const itemsOf = (assets: MediaAsset[]) => assets.map((asset) => ({ mediaAssetId: asset.id }));
+
+    it('403 MEDIA_NOT_OWNED for an asset owned by someone else (card rule)', async () => {
+      const lot = seedLot();
+      const foreign = fake.seedMediaAsset({
+        ownerId: otherSellerId,
+        type: MediaType.IMAGE,
+        mime: 'image/png',
+        sizeBytes: 100,
+      });
+      const error = await rejectionOf(
+        service.putMedia(sellerId, lot.id, { items: itemsOf([foreign]) }),
+      );
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect(error.getResponse()).toMatchObject({ code: 'MEDIA_NOT_OWNED' });
+      expect(await fake.lotMedia.findMany({ where: { lotId: lot.id } })).toHaveLength(0);
+    });
+
+    it('403 MEDIA_NOT_OWNED for an unknown asset id (uniform — no existence oracle)', async () => {
+      const lot = seedLot();
+      const error = await rejectionOf(
+        service.putMedia(sellerId, lot.id, { items: [{ mediaAssetId: 'missing-asset' }] }),
+      );
+      expect(error.getResponse()).toMatchObject({ code: 'MEDIA_NOT_OWNED' });
+    });
+
+    it('400 MEDIA_DUPLICATED when one asset appears twice in the payload', async () => {
+      const lot = seedLot();
+      const asset = fake.seedMediaAsset({
+        ownerId: sellerId,
+        type: MediaType.IMAGE,
+        mime: 'image/png',
+        sizeBytes: 100,
+      });
+      const error = await rejectionOf(
+        service.putMedia(sellerId, lot.id, {
+          items: [{ mediaAssetId: asset.id }, { mediaAssetId: asset.id }],
+        }),
+      );
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect(error.getResponse()).toMatchObject({ code: 'MEDIA_DUPLICATED' });
+    });
+  });
+
+  describe('putMedia — per-kind caps', () => {
+    const seedImage = () =>
+      fake.seedMediaAsset({
+        ownerId: sellerId,
+        type: MediaType.IMAGE,
+        mime: 'image/png',
+        sizeBytes: 100,
+      });
+    const seedVideo = () =>
+      fake.seedMediaAsset({
+        ownerId: sellerId,
+        type: MediaType.VIDEO,
+        mime: 'video/mp4',
+        sizeBytes: 100,
+      });
+    const itemsOf = (assets: MediaAsset[]) => assets.map((asset) => ({ mediaAssetId: asset.id }));
+
+    it('409 MEDIA_CAP_EXCEEDED with counts on a 16th image', async () => {
+      const lot = seedLot();
+      const error = await rejectionOf(
+        service.putMedia(sellerId, lot.id, {
+          items: itemsOf(Array.from({ length: 16 }, seedImage)),
+        }),
+      );
+      expect(error).toBeInstanceOf(ConflictException);
+      expect(error.getResponse()).toMatchObject({ code: 'MEDIA_CAP_EXCEEDED' });
+      expect((error.getResponse() as { message: string }).message).toContain('16');
+      expect((error.getResponse() as { message: string }).message).toContain('15');
+    });
+
+    it('409 MEDIA_CAP_EXCEEDED on a 4th video', async () => {
+      const lot = seedLot();
+      const error = await rejectionOf(
+        service.putMedia(sellerId, lot.id, {
+          items: [...itemsOf([seedImage()]), ...itemsOf(Array.from({ length: 4 }, seedVideo))],
+        }),
+      );
+      expect(error.getResponse()).toMatchObject({ code: 'MEDIA_CAP_EXCEEDED' });
+      expect((error.getResponse() as { message: string }).message).toContain('4');
+      expect((error.getResponse() as { message: string }).message).toContain('3');
+    });
+
+    it('accepts the maximum: 15 images AND 3 videos in one gallery', async () => {
+      const lot = seedLot();
+      const response = await service.putMedia(sellerId, lot.id, {
+        items: [
+          ...itemsOf(Array.from({ length: 15 }, seedImage)),
+          ...itemsOf(Array.from({ length: 3 }, seedVideo)),
+        ],
+      });
+      expect(response.media).toHaveLength(18);
+      expect(response.media.filter((item) => item.kind === 'VIDEO')).toHaveLength(3);
+      expect(response.media.filter((item) => item.isCover)).toHaveLength(1);
+    });
+  });
+
+  describe('putMedia — cover & replace semantics', () => {
+    const seedImage = () =>
+      fake.seedMediaAsset({
+        ownerId: sellerId,
+        type: MediaType.IMAGE,
+        mime: 'image/png',
+        sizeBytes: 100,
+        thumbKey: '2026/09/thumbt.webp',
+      });
+
+    const put = (lotId: string, dto: PutLotMediaDto) => service.putMedia(sellerId, lotId, dto);
+
+    it('sets the cover by coverIndex (default 0) and orders the list by sortOrder', async () => {
+      const lot = seedLot();
+      const [a, b] = [seedImage(), seedImage()];
+
+      const byDefault = await put(lot.id, {
+        items: [{ mediaAssetId: a.id }, { mediaAssetId: b.id }],
+      });
+      expect(byDefault.media.map((item) => item.mediaAssetId)).toEqual([a.id, b.id]);
+      expect(byDefault.media.map((item) => item.isCover)).toEqual([true, false]);
+
+      const byIndex = await put(lot.id, {
+        items: [{ mediaAssetId: a.id }, { mediaAssetId: b.id }],
+        coverIndex: 1,
+      });
+      expect(byIndex.media.map((item) => item.isCover)).toEqual([false, true]);
+    });
+
+    it('400 COVER_INDEX_OUT_OF_BOUNDS beyond the list or on an empty gallery', async () => {
+      const lot = seedLot();
+      const a = seedImage();
+      await expect(
+        put(lot.id, { items: [{ mediaAssetId: a.id }], coverIndex: 1 }),
+      ).rejects.toMatchObject({ response: { code: 'COVER_INDEX_OUT_OF_BOUNDS' } });
+      await expect(put(lot.id, { items: [], coverIndex: 0 })).rejects.toMatchObject({
+        response: { code: 'COVER_INDEX_OUT_OF_BOUNDS' },
+      });
+    });
+
+    it('replaces transactionally: kept rows survive (same link id), removed links are gone', async () => {
+      const lot = seedLot();
+      const [a, b, c] = [seedImage(), seedImage(), seedImage()];
+
+      const first = await put(lot.id, {
+        items: [{ mediaAssetId: a.id }, { mediaAssetId: b.id }, { mediaAssetId: c.id }],
+        coverIndex: 2,
+      });
+      const cBefore = first.media.find((item) => item.mediaAssetId === c.id);
+      expect(cBefore).toBeDefined();
+
+      const second = await put(lot.id, {
+        items: [{ mediaAssetId: c.id }, { mediaAssetId: a.id }],
+      });
+      // Order + cover follow the NEW payload…
+      expect(second.media.map((item) => item.mediaAssetId)).toEqual([c.id, a.id]);
+      expect(second.media.map((item) => item.isCover)).toEqual([true, false]);
+      // …the KEPT link kept its row identity (updated in place, not recreated)…
+      const cAfter = second.media.find((item) => item.mediaAssetId === c.id);
+      expect(cAfter?.id).toBe(cBefore?.id);
+      // …and the REMOVED link (b) is deleted from the table.
+      const rows = await fake.lotMedia.findMany({ where: { lotId: lot.id } });
+      expect(rows).toHaveLength(2);
+      expect(rows.map((row) => row.mediaAssetId).sort()).toEqual([a.id, c.id].sort());
+    });
+
+    it('an empty payload clears the gallery', async () => {
+      const lot = seedLot();
+      const a = seedImage();
+      await put(lot.id, { items: [{ mediaAssetId: a.id }] });
+      const cleared = await put(lot.id, { items: [] });
+      expect(cleared.media).toEqual([]);
+      expect(await fake.lotMedia.findMany({ where: { lotId: lot.id } })).toHaveLength(0);
+    });
+
+    it('exactly one cover exists after every replace', async () => {
+      const lot = seedLot();
+      const assets = [seedImage(), seedImage(), seedImage()];
+      await put(lot.id, { items: assets.map((asset) => ({ mediaAssetId: asset.id })) });
+      expect(
+        (await fake.lotMedia.findMany({ where: { lotId: lot.id } })).filter((row) => row.isCover),
+      ).toHaveLength(1);
+      await put(lot.id, {
+        items: assets.map((asset) => ({ mediaAssetId: asset.id })),
+        coverIndex: 2,
+      });
+      const rows = await fake.lotMedia.findMany({ where: { lotId: lot.id } });
+      const third = assets[2];
+      expect(third).toBeDefined();
+      expect(rows.filter((row) => row.isCover).map((row) => row.mediaAssetId)).toEqual(
+        third ? [third.id] : [],
+      );
+    });
+
+    it('maps urls from the stored keys; video without a poster has thumbUrl null', async () => {
+      const lot = seedLot();
+      const image = seedImage();
+      const posterlessVideo = fake.seedMediaAsset({
+        ownerId: sellerId,
+        type: MediaType.VIDEO,
+        mime: 'video/mp4',
+        sizeBytes: 100,
+        thumbKey: null,
+      });
+      const withPoster = fake.seedMediaAsset({
+        ownerId: sellerId,
+        type: MediaType.VIDEO,
+        mime: 'video/mp4',
+        sizeBytes: 100,
+        thumbKey: '2026/09/posterpt.webp',
+      });
+
+      const response = await put(lot.id, {
+        items: [
+          { mediaAssetId: image.id },
+          { mediaAssetId: posterlessVideo.id },
+          { mediaAssetId: withPoster.id },
+        ],
+        coverIndex: 1,
+      });
+
+      expect(response.media[0]).toMatchObject({
+        kind: 'IMAGE',
+        url: `${MEDIA_BASE_URL}/${image.storageKey}`,
+        thumbUrl: `${MEDIA_BASE_URL}/2026/09/thumbt.webp`,
+        sortOrder: 0,
+        isCover: false,
+      });
+      expect(response.media[1]).toMatchObject({
+        kind: 'VIDEO',
+        url: `${MEDIA_BASE_URL}/${posterlessVideo.storageKey}`,
+        thumbUrl: null,
+        isCover: true,
+      });
+      expect(response.media[2]).toMatchObject({
+        kind: 'VIDEO',
+        thumbUrl: `${MEDIA_BASE_URL}/2026/09/posterpt.webp`,
+      });
     });
   });
 });

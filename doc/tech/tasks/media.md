@@ -85,7 +85,7 @@ on the distroless API). Limits (PLAT-003): image ≤ 10 MB × 15/lot, video ≤ 
 - **Testing:** component tests with mocked XHR; compress/poster unit tests.
 - **DoD:** exported via feature barrel; used by LOT-004/CHT-007/PROF-004.
 
-### MEDIA-005 — Lot media attach/organize API
+### MEDIA-005 ✅ — Lot media attach/organize API
 
 **P0 · Phase 3 · Media · S** — Deps: MEDIA-002, LOT-001
 

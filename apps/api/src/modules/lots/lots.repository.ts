@@ -40,6 +40,29 @@ const SORT_ORDER_BY: Record<LotPublicSort, Prisma.LotOrderByWithRelationInput> =
 type Tx = Prisma.TransactionClient | undefined;
 
 /**
+ * Gallery include for owner-facing single-row reads/writes (MEDIA-005): every
+ * lot response carries the ordered `media[]` list, so the create/update/find
+ * paths the service maps from always join the links + their assets in. The
+ * public LISTING (findPublic) stays join-free until MKT needs cover thumbnails
+ * there — a follow-up for the marketplace cards, not this one.
+ */
+export const LOT_MEDIA_INCLUDE = {
+  media: { orderBy: { sortOrder: 'asc' as const }, include: { mediaAsset: true } },
+} satisfies Prisma.LotInclude;
+
+export type LotWithMedia = Prisma.LotGetPayload<{ include: typeof LOT_MEDIA_INCLUDE }>;
+
+/** One LotMedia row with its joined asset (the gallery include's element type). */
+export type LotMediaRow = Prisma.LotMediaGetPayload<{ include: { mediaAsset: true } }>;
+
+/** Payload for one gallery link write (MEDIA-005 replace transaction). */
+export interface LotMediaUpsertData {
+  mediaAssetId: string;
+  sortOrder: number;
+  isCover: boolean;
+}
+
+/**
  * Data access only. Every method accepts an optional transaction client so the
  * repository stays unit-of-work agnostic — services own transaction boundaries
  * (doc/CONVENTIONS.md → Transactions). Repositories never call $transaction.
@@ -117,12 +140,12 @@ export class LotsRepository {
     return this.client(tx).lot.findFirst({ where: { id, sellerId } });
   }
 
-  async findById(id: string, tx: Tx = undefined): Promise<Lot | null> {
-    return this.client(tx).lot.findUnique({ where: { id } });
+  async findById(id: string, tx: Tx = undefined): Promise<LotWithMedia | null> {
+    return this.client(tx).lot.findUnique({ where: { id }, include: LOT_MEDIA_INCLUDE });
   }
 
-  async create(data: Prisma.LotUncheckedCreateInput, tx: Tx = undefined): Promise<Lot> {
-    return this.client(tx).lot.create({ data });
+  async create(data: Prisma.LotUncheckedCreateInput, tx: Tx = undefined): Promise<LotWithMedia> {
+    return this.client(tx).lot.create({ data, include: LOT_MEDIA_INCLUDE });
   }
 
   /**
@@ -130,8 +153,55 @@ export class LotsRepository {
    * (`categoryId`, `subcategoryId: null`) — relation-object syntax is never
    * needed because the service validates rows, not links.
    */
-  async update(id: string, data: Prisma.LotUncheckedUpdateInput, tx: Tx = undefined): Promise<Lot> {
-    return this.client(tx).lot.update({ where: { id }, data });
+  async update(
+    id: string,
+    data: Prisma.LotUncheckedUpdateInput,
+    tx: Tx = undefined,
+  ): Promise<LotWithMedia> {
+    return this.client(tx).lot.update({ where: { id }, data, include: LOT_MEDIA_INCLUDE });
+  }
+
+  // --- gallery links (MEDIA-005): data access for the service-owned replace tx ---
+
+  async findMediaByLotId(lotId: string, tx: Tx = undefined): Promise<LotMediaRow[]> {
+    return this.client(tx).lotMedia.findMany({
+      where: { lotId },
+      orderBy: { sortOrder: 'asc' },
+      include: { mediaAsset: true },
+    });
+  }
+
+  /**
+   * Replace step 1: drop every link NOT in the incoming payload's asset set.
+   * `assetIds` empty (clear gallery) deletes all links for the lot.
+   */
+  async deleteMediaNotIn(
+    lotId: string,
+    assetIds: readonly string[],
+    tx: Tx = undefined,
+  ): Promise<number> {
+    const result = await this.client(tx).lotMedia.deleteMany({
+      where: { lotId, mediaAssetId: { notIn: [...assetIds] } },
+    });
+    return result.count;
+  }
+
+  /**
+   * Replace step 2: keep-or-create per payload item. Kept rows are updated in
+   * place (row id + createdAt preserved — "replace" never churns unchanged
+   * links); the compound unique (lotId, mediaAssetId) is the upsert key.
+   */
+  async upsertMedia(lotId: string, item: LotMediaUpsertData, tx: Tx = undefined): Promise<void> {
+    await this.client(tx).lotMedia.upsert({
+      where: { lotId_mediaAssetId: { lotId, mediaAssetId: item.mediaAssetId } },
+      create: {
+        lotId,
+        mediaAssetId: item.mediaAssetId,
+        sortOrder: item.sortOrder,
+        isCover: item.isCover,
+      },
+      update: { sortOrder: item.sortOrder, isCover: item.isCover },
+    });
   }
 
   /**

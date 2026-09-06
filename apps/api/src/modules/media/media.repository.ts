@@ -44,6 +44,19 @@ export class MediaRepository {
   }
 
   /**
+   * MEDIA-005 gallery validation read: resolve a whole payload of asset ids at
+   * once. Missing ids simply don't come back — the caller (LotsService) treats
+   * "not found" and "not yours" uniformly (403 MEDIA_NOT_OWNED, no existence
+   * oracle for unguessable asset ids).
+   */
+  async findManyByIds(ids: readonly string[], tx: Tx = undefined): Promise<MediaAsset[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    return this.client(tx).mediaAsset.findMany({ where: { id: { in: [...ids] } } });
+  }
+
+  /**
    * MEDIA-002 quota read: rows the owner already created since `since`
    * (start of the current UTC day). The (ownerId, createdAt) index from
    * MEDIA-001 covers exactly this scan. Count-then-create is intentionally

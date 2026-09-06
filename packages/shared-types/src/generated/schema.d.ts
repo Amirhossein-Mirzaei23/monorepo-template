@@ -417,6 +417,23 @@ export interface paths {
         patch: operations["LotsController_update"];
         trace?: never;
     };
+    "/lots/{id}/media": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace an owned DRAFT/REJECTED lot’s ordered gallery (items + coverIndex) — per-kind caps enforced, 409 while listed/under moderation */
+        put: operations["LotsController_putMedia"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/media": {
         parameters: {
             query?: never;
@@ -943,6 +960,44 @@ export interface components {
              */
             interests?: string[];
         };
+        LotMediaResponseDto: {
+            /**
+             * @description LotMedia (link) id — NOT the asset id
+             * @example clx…cuid
+             */
+            id: string;
+            /**
+             * @description MediaAsset id
+             * @example clx…cuid
+             */
+            mediaAssetId: string;
+            /**
+             * @description Derived from the asset row
+             * @example IMAGE
+             * @enum {string}
+             */
+            kind: "IMAGE" | "VIDEO";
+            /**
+             * @description Original bytes — absolute PUBLIC_MEDIA_BASE_URL + storageKey
+             * @example http://localhost:3001/media/2026/09/abc…123.jpg
+             */
+            url: string;
+            /**
+             * @description IMAGE: the 480w WebP thumb (when the variant pipeline ran); VIDEO: the client poster thumb (thumbKey) or null
+             * @example http://localhost:3001/media/2026/09/abc…123t.webp
+             */
+            thumbUrl?: string | null;
+            /**
+             * @description 0-based display position (list is sorted by this)
+             * @example 0
+             */
+            sortOrder: number;
+            /**
+             * @description Exactly one entry per lot is the cover
+             * @example true
+             */
+            isCover: boolean;
+        };
         LotPublicResponseDto: {
             /**
              * @description Internal id — stays internal to the API
@@ -1062,6 +1117,8 @@ export interface components {
              * @example 2026-09-05T00:00:00.000Z
              */
             updatedAt: string;
+            /** @description Ordered gallery (MEDIA-005) */
+            media: components["schemas"]["LotMediaResponseDto"][];
         };
         CreateLotDto: {
             /**
@@ -1255,6 +1312,8 @@ export interface components {
              * @example 2026-09-05T00:00:00.000Z
              */
             updatedAt: string;
+            /** @description Ordered gallery (MEDIA-005) */
+            media: components["schemas"]["LotMediaResponseDto"][];
             /**
              * @description PRIVATE — owner view only; never in public payloads (plan R7)
              * @example تهران، خیابان …، پلاک ۱۲
@@ -1334,6 +1393,23 @@ export interface components {
              * @example true
              */
             submit?: boolean;
+        };
+        PutLotMediaItemDto: {
+            /**
+             * @description MediaAsset id from POST /media — must EXIST and belong to the caller
+             * @example clx…cuid
+             */
+            mediaAssetId: string;
+        };
+        PutLotMediaDto: {
+            /** @description The complete ordered gallery — items missing from the payload are unlinked; [] clears all media */
+            items: components["schemas"]["PutLotMediaItemDto"][];
+            /**
+             * @description Array position of the cover item (default 0); must be within bounds — else 400. Exactly one cover is a server invariant
+             * @default 0
+             * @example 0
+             */
+            coverIndex: number;
         };
         MediaUploadUrlsDto: {
             /** @example http://localhost:3001/media/2026/09/abc…123.jpg */
@@ -2066,6 +2142,31 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["UpdateLotDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LotOwnerResponseDto"];
+                };
+            };
+        };
+    };
+    LotsController_putMedia: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutLotMediaDto"];
             };
         };
         responses: {

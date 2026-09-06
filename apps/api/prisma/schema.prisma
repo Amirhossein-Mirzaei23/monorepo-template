@@ -313,6 +313,10 @@ model Lot {
   /// migration; declared here with matching names so migrate diff sees no drift.
   @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "Lot_title_trgm_idx")
   @@index([description(ops: raw("gin_trgm_ops"))], type: Gin, map: "Lot_description_trgm_idx")
+
+  /// Ordered gallery (MEDIA-005) — the join table IS the gallery: order and
+  /// cover live here, not on the asset or the client.
+  media LotMedia[]
 }
 
 /// An uploaded binary and its storage metadata (MEDIA-001, plan §3). The bytes
@@ -346,4 +350,41 @@ model MediaAsset {
   /// (ownerId, createdAt) per plan §3 — quota counting (MEDIA-002) is
   /// "rows for owner in window", which this composite also covers.
   @@index([ownerId, createdAt])
+
+  /// Lots currently displaying this asset (MEDIA-005) — assets are shared
+  /// content (a future message/avatar may reference them too), so linking,
+  /// not owning, is the relationship.
+  lotMedia LotMedia[]
+}
+
+/// Ordered lot↔media link (MEDIA-005, plan §3). A real join table (not an
+/// implicit m–n) because sortOrder/isCover are DATA, not client state.
+/// Galleries are replaced transactionally by LotsService.putMedia: kept rows
+/// are updated in place (id/createdAt preserved), removed links deleted.
+model LotMedia {
+  id           String   @id @default(cuid())
+  lotId        String
+  /// onDelete: Cascade — a HARD-deleted lot takes its links with it. Lots are
+  /// soft-deleted in practice (REMOVED + deletedAt, LOT-003), so this only
+  /// fires on explicit row cleanup; picked over Restrict for cleanliness so
+  /// no orphaned link can outlive its lot row.
+  lot          Lot      @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  mediaAssetId String
+  /// onDelete: Restrict — an asset displayed by any gallery must not be
+  /// hard-deleted behind it; unlinking happens only through the lot's own
+  /// PUT /lots/:id/media replace. Physical file cleanup of unlinked assets is
+  /// a deferred P1 job (MEDIA-005 card — "orphan cleanup").
+  mediaAsset   MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict)
+  /// 0-based display position within the lot gallery (gaps allowed; reads are
+  /// always orderBy sortOrder asc — served by the (lotId, sortOrder) index).
+  sortOrder    Int
+  /// Cover flag — EXACTLY ONE per lot is a service invariant (coverIndex on
+  /// the replace payload), not a DB constraint.
+  isCover      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  /// One link per (lot, asset) pair; (lotId, sortOrder) serves ordered reads.
+  @@unique([lotId, mediaAssetId])
+  @@index([lotId, sortOrder])
 }

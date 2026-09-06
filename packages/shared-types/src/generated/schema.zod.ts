@@ -194,6 +194,16 @@ export const updateProfileDtoSchema = z.object({
   interests: z.array(z.string()).optional(),
 });
 
+export const lotMediaResponseDtoSchema = z.object({
+  id: z.string(),
+  mediaAssetId: z.string(),
+  kind: z.enum(['IMAGE', 'VIDEO']),
+  url: z.string(),
+  thumbUrl: z.string().nullable().optional(),
+  sortOrder: z.number(),
+  isCover: z.boolean(),
+});
+
 export const lotPublicResponseDtoSchema = z.object({
   id: z.string(),
   code: z.string(),
@@ -223,6 +233,7 @@ export const lotPublicResponseDtoSchema = z.object({
   featuredAt: z.iso.datetime().nullable().optional(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
+  media: z.array(lotMediaResponseDtoSchema),
 });
 
 export const createLotDtoSchema = z.object({
@@ -274,6 +285,7 @@ export const lotOwnerResponseDtoSchema = z.object({
   featuredAt: z.iso.datetime().nullable().optional(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
+  media: z.array(lotMediaResponseDtoSchema),
   exactAddress: z.string().nullable().optional(),
   rejectionReason: z.string().nullable().optional(),
 });
@@ -296,6 +308,15 @@ export const updateLotDtoSchema = z.object({
   locationHint: z.string().nullable().optional(),
   exactAddress: z.string().nullable().optional(),
   submit: z.boolean().optional(),
+});
+
+export const putLotMediaItemDtoSchema = z.object({
+  mediaAssetId: z.string(),
+});
+
+export const putLotMediaDtoSchema = z.object({
+  items: z.array(putLotMediaItemDtoSchema),
+  coverIndex: z.number().optional(),
 });
 
 export const mediaUploadUrlsDtoSchema = z.object({
@@ -345,10 +366,13 @@ export const apiSchemas = {
   ProfileMetricsDto: profileMetricsDtoSchema,
   ProfileResponseDto: profileResponseDtoSchema,
   UpdateProfileDto: updateProfileDtoSchema,
+  LotMediaResponseDto: lotMediaResponseDtoSchema,
   LotPublicResponseDto: lotPublicResponseDtoSchema,
   CreateLotDto: createLotDtoSchema,
   LotOwnerResponseDto: lotOwnerResponseDtoSchema,
   UpdateLotDto: updateLotDtoSchema,
+  PutLotMediaItemDto: putLotMediaItemDtoSchema,
+  PutLotMediaDto: putLotMediaDtoSchema,
   MediaUploadUrlsDto: mediaUploadUrlsDtoSchema,
   MediaUploadResponseDto: mediaUploadResponseDtoSchema,
   MediaVideoUploadUrlsDto: mediaVideoUploadUrlsDtoSchema,

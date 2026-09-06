@@ -123,6 +123,19 @@ export const LOT_ERROR_CODES = {
    * findPublic's expiresAt > now safety filter would hide it immediately,
    * so the row must not come back ACTIVE — duplicate it to re-list. */
   EXPIRED: 'EXPIRED',
+  /** PUT /lots/:id/media references a MediaAsset that does not exist OR is
+   * owned by someone else (MEDIA-005) — uniform 403, no existence oracle for
+   * unguessable asset ids. */
+  MEDIA_NOT_OWNED: 'MEDIA_NOT_OWNED',
+  /** Gallery exceeds a per-kind cap: uploads.maxLotImages (15) images or
+   * uploads.maxLotVideos (3) videos (MEDIA-005; message carries the counts). */
+  MEDIA_CAP_EXCEEDED: 'MEDIA_CAP_EXCEEDED',
+  /** The same mediaAssetId appears twice in one PUT payload (MEDIA-005) —
+   * would violate the (lotId, mediaAssetId) unique. */
+  MEDIA_DUPLICATED: 'MEDIA_DUPLICATED',
+  /** coverIndex outside 0..items.length-1, or provided for an empty gallery
+   * (MEDIA-005; a cover on zero items is meaningless). */
+  COVER_INDEX_OUT_OF_BOUNDS: 'COVER_INDEX_OUT_OF_BOUNDS',
 } as const;
 
 /**

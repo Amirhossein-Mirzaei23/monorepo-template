@@ -7,6 +7,7 @@ import {
   PricingType,
   type Lot,
 } from '@prisma/client';
+import { LotMediaResponseDto, toLotMediaResponse, type LotMediaWithAsset } from './lot-media.dto';
 
 /**
  * Lot response shapes (LOT-002) — TWO allowlisted mappers from the repository
@@ -19,10 +20,20 @@ import {
  *   view. THIS task's endpoints are owner-scoped and return this shape; the
  *   public mapper ships now so MKT cards consume the same contract.
  *
+ * MEDIA-005: both shapes carry `media[]` — the ordered gallery. Media is
+ * PUBLIC content (it is exactly what buyers see), so it is identical in both
+ * shapes; only the link rows join in, never anything private. The repository
+ * includes `media` (LotMedia + MediaAsset, ordered by sortOrder) on owner
+ * single-row reads/writes; the mapper tolerates rows without it (`[]`).
+ *
  * Enum-valued fields are the raw Prisma values — Persian labels live in
  * `lots.constants.ts` and are resolved web-side (never hardcoded in components).
  * province/city are geo slugs (iran-geo list), resolved client-side like profiles.
  */
+
+/** Repository row with the gallery include (structurally — fakes qualify too). */
+export type LotWithMedia = Lot & { media?: LotMediaWithAsset[] };
+
 export class LotPublicResponseDto {
   @ApiProperty({ example: 'clx…cuid', description: 'Internal id — stays internal to the API' })
   id!: string;
@@ -133,6 +144,9 @@ export class LotPublicResponseDto {
 
   @ApiProperty({ example: '2026-09-05T00:00:00.000Z' })
   updatedAt!: Date;
+
+  @ApiProperty({ type: [LotMediaResponseDto], description: 'Ordered gallery (MEDIA-005)' })
+  media!: LotMediaResponseDto[];
 }
 
 /**
@@ -163,9 +177,15 @@ export class LotOwnerResponseDto extends LotPublicResponseDto {
  * Allowlist mapper — copies ONLY the listed public fields. A new Lot column
  * must be added here explicitly to surface in any response (nothing leaks by
  * default, which is what the e2e allowlist test locks in).
+ * `mediaBaseUrl` is the PUBLIC_MEDIA_BASE_URL resolved by the caller (service
+ * boundary); the default '' keeps the mapper pure for direct mapper tests and
+ * only matters when the row actually carries gallery rows.
  * Accepts both the repository row and structurally identical fakes.
  */
-export function toLotPublicResponse(lot: Lot): LotPublicResponseDto {
+export function toLotPublicResponse(
+  lot: LotWithMedia,
+  mediaBaseUrl: string = '',
+): LotPublicResponseDto {
   return {
     id: lot.id,
     code: lot.code,
@@ -195,13 +215,19 @@ export function toLotPublicResponse(lot: Lot): LotPublicResponseDto {
     featuredAt: lot.featuredAt,
     createdAt: lot.createdAt,
     updatedAt: lot.updatedAt,
+    // Public content in both shapes — ordered by the repository include;
+    // `[]` for rows read without the gallery.
+    media: toLotMediaResponse(lot.media ?? [], mediaBaseUrl),
   };
 }
 
 /** Owner mapper: public allowlist + the two private fields (and nothing else). */
-export function toLotOwnerResponse(lot: Lot): LotOwnerResponseDto {
+export function toLotOwnerResponse(
+  lot: LotWithMedia,
+  mediaBaseUrl: string = '',
+): LotOwnerResponseDto {
   return {
-    ...toLotPublicResponse(lot),
+    ...toLotPublicResponse(lot, mediaBaseUrl),
     exactAddress: lot.exactAddress,
     rejectionReason: lot.rejectionReason,
   };

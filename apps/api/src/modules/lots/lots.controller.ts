@@ -1,4 +1,14 @@
-import { Body, Controller, Delete, HttpCode, HttpStatus, Param, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Put,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
@@ -10,6 +20,7 @@ import {
 import { type AuthUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CreateLotDto } from './dto/create-lot.dto';
 import { LotOwnerResponseDto, LotPublicResponseDto } from './dto/lot-response.dto';
+import { PutLotMediaDto } from './dto/lot-media.dto';
 import { UpdateLotDto } from './dto/update-lot.dto';
 import { LotsService } from './lots.service';
 
@@ -135,5 +146,20 @@ export class LotsController {
     @Body() dto: UpdateLotDto,
   ): Promise<LotOwnerResponseDto> {
     return this.lots.update(user.sub, id, dto);
+  }
+
+  @Put(':id/media')
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: LotOwnerResponseDto })
+  @ApiOperation({
+    summary:
+      'Replace an owned DRAFT/REJECTED lot’s ordered gallery (items + coverIndex) — per-kind caps enforced, 409 while listed/under moderation',
+  })
+  async putMedia(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: PutLotMediaDto,
+  ): Promise<LotOwnerResponseDto> {
+    return this.lots.putMedia(user.sub, id, dto);
   }
 }

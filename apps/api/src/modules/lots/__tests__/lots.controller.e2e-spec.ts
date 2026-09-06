@@ -1,5 +1,9 @@
 import type { INestApplication } from '@nestjs/common';
-import { LiquidationReason, LotCondition, LotStatus, PricingType } from '@prisma/client';
+import { LiquidationReason, LotCondition, LotStatus, MediaType, PricingType } from '@prisma/client';
+import sharp from 'sharp';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import request from 'supertest';
 import type { FakePrisma } from '../../../test/fakes/fake-prisma';
 import { createTestApp } from '../../../test/utils/create-test-app';
@@ -24,6 +28,7 @@ const soonExpiry = (): Date => new Date(Date.now() + 2 * DAY_MS);
 describe('LotsController (e2e)', () => {
   let app: INestApplication;
   let prisma: FakePrisma;
+  let storageRoot: string;
   /** Hands out unique client IPs so per-IP @Throttle buckets stay isolated per test. */
   let ipCounter = 0;
   const nextIp = (): string => `10.2.${Math.floor(++ipCounter / 250)}.${(ipCounter % 250) + 1}`;
@@ -106,6 +111,10 @@ describe('LotsController (e2e)', () => {
     });
 
   beforeAll(async () => {
+    // MEDIA-005 suites upload through the real POST /media pipeline — bytes go
+    // to a throwaway local-disk root (set BEFORE boot, like the media specs).
+    storageRoot = await mkdtemp(join(tmpdir(), 'lots-media-e2e-'));
+    process.env.STORAGE_DIR = storageRoot;
     const testApp = await createTestApp();
     app = testApp.app;
     prisma = testApp.prisma;
@@ -126,6 +135,8 @@ describe('LotsController (e2e)', () => {
 
   afterAll(async () => {
     await app.close();
+    await rm(storageRoot, { recursive: true, force: true });
+    delete process.env.STORAGE_DIR;
   });
 
   describe('POST /lots', () => {
@@ -201,6 +212,7 @@ describe('LotsController (e2e)', () => {
         'id',
         'liquidationReason',
         'locationHint',
+        'media',
         'minOrderQuantity',
         'pricingType',
         'province',
@@ -627,6 +639,185 @@ describe('LotsController (e2e)', () => {
 
       const reread = await prisma.lot.findUnique({ where: { id: lot.id } });
       expect(reread?.status).toBe(status);
+    });
+  });
+
+  // ==========================================================================
+  // MEDIA-005 — PUT /lots/:id/media (ordered gallery replace with cover)
+  // ==========================================================================
+
+  describe('PUT /lots/:id/media', () => {
+    /** 600×400 real PNG generated in-process — no binary fixtures committed. */
+    const png = sharp({
+      create: { width: 600, height: 400, channels: 3, background: { r: 30, g: 144, b: 255 } },
+    })
+      .png()
+      .toBuffer();
+
+    const uploadImage = async (token: string): Promise<string> => {
+      const response = await request(app.getHttpServer())
+        .post('/media')
+        .set('Authorization', `Bearer ${token}`)
+        .set('X-Forwarded-For', nextIp())
+        .attach('file', await png, { filename: 'photo.png', contentType: 'image/png' })
+        .expect(201);
+      return response.body.id as string;
+    };
+
+    const putMedia = (token: string | null, lotId: string, body: Record<string, unknown>) => {
+      const req = request(app.getHttpServer()).put(`/lots/${lotId}/media`).send(body);
+      return (token ? req.set('Authorization', `Bearer ${token}`) : req).set(
+        'X-Forwarded-For',
+        nextIp(),
+      );
+    };
+
+    it('401 for anonymous callers', async () => {
+      const { userId } = await loginAsSeller();
+      const lot = seedLot(userId);
+      await putMedia(null, lot.id, { items: [] }).expect(401);
+    });
+
+    it('403 SELLER_REQUIRED for buyer-only accounts', async () => {
+      const buyer = await login(nextPhone());
+      const { userId } = await loginAsSeller();
+      const lot = seedLot(userId);
+      const response = await putMedia(buyer, lot.id, { items: [] }).expect(403);
+      expect(response.body.code).toBe('SELLER_REQUIRED');
+    });
+
+    it('sets an ordered gallery on a DRAFT lot with 2 uploaded images: media[] ordered, cover by coverIndex, absolute urls + thumbs', async () => {
+      const { token, userId } = await loginAsSeller();
+      const lot = seedLot(userId, { exactAddress: 'تهران، خیابان …، پلاک ۱۲' });
+      const first = await uploadImage(token);
+      const second = await uploadImage(token);
+
+      const response = await putMedia(token, lot.id, {
+        items: [{ mediaAssetId: second }, { mediaAssetId: first }],
+        coverIndex: 1,
+      }).expect(200);
+
+      // Owner shape: the private field AND the gallery, ordered by sortOrder.
+      expect(response.body.exactAddress).toBe('تهران، خیابان …، پلاک ۱۲');
+      expect(response.body.media).toHaveLength(2);
+      const [firstItem, secondItem] = response.body.media;
+      expect(firstItem).toMatchObject({
+        mediaAssetId: second,
+        kind: 'IMAGE',
+        sortOrder: 0,
+        isCover: false,
+      });
+      expect(firstItem.url).toMatch(
+        /^http:\/\/localhost:3001\/media\/\d{4}\/\d{2}\/[a-z0-9]+\.png$/,
+      );
+      expect(firstItem.thumbUrl).toMatch(
+        /^http:\/\/localhost:3001\/media\/\d{4}\/\d{2}\/[a-z0-9]+t\.webp$/,
+      );
+      expect(secondItem).toMatchObject({
+        mediaAssetId: first,
+        kind: 'IMAGE',
+        sortOrder: 1,
+        isCover: true,
+      });
+    });
+
+    it('replaces the gallery: the removed image disappears, the kept one flips cover', async () => {
+      const { token, userId } = await loginAsSeller();
+      const lot = seedLot(userId);
+      const first = await uploadImage(token);
+      const second = await uploadImage(token);
+
+      await putMedia(token, lot.id, {
+        items: [{ mediaAssetId: first }, { mediaAssetId: second }],
+      }).expect(200);
+
+      const replaced = await putMedia(token, lot.id, {
+        items: [{ mediaAssetId: second }],
+        coverIndex: 0,
+      }).expect(200);
+      expect(replaced.body.media).toHaveLength(1);
+      expect(replaced.body.media[0]).toMatchObject({
+        mediaAssetId: second,
+        sortOrder: 0,
+        isCover: true,
+      });
+
+      const links = await prisma.lotMedia.findMany({ where: { lotId: lot.id } });
+      expect(links).toHaveLength(1);
+      expect(links[0]?.mediaAssetId).toBe(second);
+    });
+
+    it('409 MEDIA_CAP_EXCEEDED (with counts) on a 16th image — assets seeded directly; the upload pipeline is covered by the MEDIA suites', async () => {
+      const { token, userId } = await loginAsSeller();
+      const lot = seedLot(userId);
+      const assetIds = Array.from(
+        { length: 16 },
+        () =>
+          prisma.seedMediaAsset({
+            ownerId: userId,
+            type: MediaType.IMAGE,
+            mime: 'image/png',
+            sizeBytes: 100,
+          }).id,
+      );
+      const response = await putMedia(token, lot.id, {
+        items: assetIds.map((mediaAssetId) => ({ mediaAssetId })),
+      }).expect(409);
+      expect(response.body.code).toBe('MEDIA_CAP_EXCEEDED');
+      expect(response.body.message).toContain('16');
+      expect(response.body.message).toContain('15');
+    });
+
+    it('409 MEDIA_CAP_EXCEEDED on a 4th video', async () => {
+      const { token, userId } = await loginAsSeller();
+      const lot = seedLot(userId);
+      const assetIds = Array.from(
+        { length: 4 },
+        () =>
+          prisma.seedMediaAsset({
+            ownerId: userId,
+            type: MediaType.VIDEO,
+            mime: 'video/mp4',
+            sizeBytes: 100,
+          }).id,
+      );
+      const response = await putMedia(token, lot.id, {
+        items: assetIds.map((mediaAssetId) => ({ mediaAssetId })),
+      }).expect(409);
+      expect(response.body.code).toBe('MEDIA_CAP_EXCEEDED');
+    });
+
+    it('403 MEDIA_NOT_OWNED for an asset uploaded by another seller', async () => {
+      const { token, userId } = await loginAsSeller();
+      const other = await loginAsSeller();
+      const lot = seedLot(userId);
+      const foreignId = await uploadImage(other.token);
+      const response = await putMedia(token, lot.id, {
+        items: [{ mediaAssetId: foreignId }],
+      }).expect(403);
+      expect(response.body.code).toBe('MEDIA_NOT_OWNED');
+    });
+
+    it('409 ILLEGAL_STATUS_EDIT for a listed lot — media is a content change', async () => {
+      const { token, userId } = await loginAsSeller();
+      const lot = seedLot(userId, { status: LotStatus.ACTIVE, publishedAt: new Date() });
+      const assetId = await uploadImage(token);
+      const response = await putMedia(token, lot.id, {
+        items: [{ mediaAssetId: assetId }],
+      }).expect(409);
+      expect(response.body.code).toBe('ILLEGAL_STATUS_EDIT');
+
+      const reread = await prisma.lotMedia.findMany({ where: { lotId: lot.id } });
+      expect(reread).toHaveLength(0);
+    });
+
+    it('404 for an unknown lot; 403 for a foreign lot', async () => {
+      const { token } = await loginAsSeller();
+      await putMedia(token, 'missing-lot', { items: [] }).expect(404);
+
+      const { userId } = await loginAsSeller();
+      const lot = seedLot(userId);
+      await putMedia(token, lot.id, { items: [] }).expect(403);
     });
   });
 });

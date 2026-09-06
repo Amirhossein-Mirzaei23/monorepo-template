@@ -8,11 +8,23 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { AccountRole, LotStatus, type Lot, type Prisma, type User } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
+import {
+  AccountRole,
+  LotStatus,
+  MediaType,
+  type Lot,
+  type MediaAsset,
+  type Prisma,
+  type User,
+} from '@prisma/client';
+import { requireAppConfig } from '../../config/configuration';
 import { findIranCity } from '../../common/constants/iran-geo';
 import { CategoriesRepository } from '../categories/categories.repository';
+import { MediaRepository } from '../media/media.repository';
+import { PrismaService } from '../../prisma/prisma.service';
 import { UsersRepository } from '../users/users.repository';
-import { LotsRepository } from './lots.repository';
+import { LotsRepository, type LotWithMedia } from './lots.repository';
 import {
   LOT_CODE_MAX_CREATE_ATTEMPTS,
   LOT_DEFAULT_EXPIRY_DAYS,
@@ -26,6 +38,7 @@ import {
   type LotAction,
 } from './lots.constants';
 import { toLotOwnerResponse, type LotOwnerResponseDto } from './dto/lot-response.dto';
+import type { PutLotMediaDto } from './dto/lot-media.dto';
 import type { CreateLotDto } from './dto/create-lot.dto';
 import type { UpdateLotDto } from './dto/update-lot.dto';
 
@@ -65,6 +78,24 @@ const NON_EDITABLE_STATUSES: readonly LotStatus[] = [
   LotStatus.EXPIRED,
   LotStatus.REMOVED,
 ];
+
+/**
+ * MEDIA-005 media edit rules — media is a CONTENT change (the gallery is
+ * exactly what buyers see and what moderation reviews), so PUT /lots/:id/media
+ * follows LOT-002's content-edit lock, stricter than the price/quantity
+ * carve-out for listed lots:
+ *
+ * | status         | PUT /lots/:id/media | why                                            |
+ * |----------------|---------------------|------------------------------------------------|
+ * | DRAFT          | allowed             | normal composing                               |
+ * | REJECTED       | allowed             | fix photos → resubmit                          |
+ * | PENDING_REVIEW | 409                 | frozen under moderation (media IS the exhibit) |
+ * | ACTIVE / PAUSED| 409                 | content is locked while listed (LOT-002)       |
+ * | EXPIRED        | 409                 | duplicate to re-list instead                   |
+ * | SOLD           | 409                 | transaction history stays as-sold              |
+ * | REMOVED        | 409                 | soft-deleted                                   |
+ */
+const MEDIA_EDITABLE_STATUSES: readonly LotStatus[] = [LotStatus.DRAFT, LotStatus.REJECTED];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -112,7 +143,18 @@ export class LotsService {
     private readonly repository: LotsRepository,
     private readonly users: UsersRepository,
     private readonly categories: CategoriesRepository,
+    private readonly media: MediaRepository,
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
   ) {}
+
+  /**
+   * Owner mapper with gallery URLs resolved against PUBLIC_MEDIA_BASE_URL —
+   * every owner endpoint returns the lot WITH its ordered media[] (MEDIA-005).
+   */
+  private toResponse(lot: LotWithMedia): LotOwnerResponseDto {
+    return toLotOwnerResponse(lot, requireAppConfig(this.config).storage.publicMediaBaseUrl);
+  }
 
   /**
    * Create a lot as the authenticated seller. `submit=false` (default) saves a
@@ -159,7 +201,7 @@ export class LotsService {
       expiresAt: defaultExpiry(),
     };
 
-    return toLotOwnerResponse(await this.createWithFreshCode(data));
+    return this.toResponse(await this.createWithFreshCode(data));
   }
 
   /**
@@ -185,7 +227,10 @@ export class LotsService {
 
   // --- ACTIVE / PAUSED path: the restricted price/quantity subset ---
 
-  private async updateListedLot(lot: Lot, dto: UpdateLotDto): Promise<LotOwnerResponseDto> {
+  private async updateListedLot(
+    lot: LotWithMedia,
+    dto: UpdateLotDto,
+  ): Promise<LotOwnerResponseDto> {
     const attempted = LISTED_CONTENT_LOCKED_KEYS.some((key) => dto[key] !== undefined);
     if (attempted) {
       throw this.illegalStatusEdit(
@@ -213,12 +258,12 @@ export class LotsService {
 
     // NTF-001 hook point: notify savers when the listed price actually changes.
     this.onLotPriceChanged(lot, updated);
-    return toLotOwnerResponse(updated);
+    return this.toResponse(updated);
   }
 
   // --- DRAFT / REJECTED path: full content edit (+ resubmit) ---
 
-  private async updateDraftLot(lot: Lot, dto: UpdateLotDto): Promise<LotOwnerResponseDto> {
+  private async updateDraftLot(lot: LotWithMedia, dto: UpdateLotDto): Promise<LotOwnerResponseDto> {
     const submit = dto.submit === true;
 
     if (dto.title !== undefined) {
@@ -277,7 +322,7 @@ export class LotsService {
         : {}),
     };
     const updated = Object.keys(data).length > 0 ? await this.repository.update(lot.id, data) : lot;
-    return toLotOwnerResponse(updated);
+    return this.toResponse(updated);
   }
 
   // --- lifecycle actions (LOT-003): table-driven via LOT_TRANSITIONS ---
@@ -299,7 +344,7 @@ export class LotsService {
   async pause(sellerId: string, id: string): Promise<LotOwnerResponseDto> {
     const lot = await this.requireOwnedLot(sellerId, id);
     this.assertTransition(lot.status, 'pause');
-    return toLotOwnerResponse(await this.repository.update(lot.id, { status: LotStatus.PAUSED }));
+    return this.toResponse(await this.repository.update(lot.id, { status: LotStatus.PAUSED }));
   }
 
   /**
@@ -316,14 +361,14 @@ export class LotsService {
         message: 'This lot has expired while paused and cannot be resumed — duplicate it instead',
       });
     }
-    return toLotOwnerResponse(await this.repository.update(lot.id, { status: LotStatus.ACTIVE }));
+    return this.toResponse(await this.repository.update(lot.id, { status: LotStatus.ACTIVE }));
   }
 
   /** ACTIVE/PAUSED → SOLD: stamps soldAt=now and zeroes availableQuantity. */
   async markSold(sellerId: string, id: string): Promise<LotOwnerResponseDto> {
     const lot = await this.requireOwnedLot(sellerId, id);
     this.assertTransition(lot.status, 'mark-sold');
-    return toLotOwnerResponse(
+    return this.toResponse(
       await this.repository.update(lot.id, {
         status: LotStatus.SOLD,
         soldAt: new Date(),
@@ -374,7 +419,7 @@ export class LotsService {
       status: LotStatus.DRAFT,
       expiresAt: defaultExpiry(),
     };
-    return toLotOwnerResponse(await this.createWithFreshCode(data));
+    return this.toResponse(await this.createWithFreshCode(data));
   }
 
   /**
@@ -388,12 +433,129 @@ export class LotsService {
   async remove(sellerId: string, id: string): Promise<LotOwnerResponseDto> {
     const lot = await this.requireOwnedLot(sellerId, id);
     this.assertTransition(lot.status, 'delete');
-    return toLotOwnerResponse(
+    return this.toResponse(
       await this.repository.update(lot.id, {
         status: LotStatus.REMOVED,
         deletedAt: new Date(),
       }),
     );
+  }
+
+  // --- gallery replace (MEDIA-005) ---
+
+  /**
+   * Replace the lot's whole gallery (PUT semantics — the payload IS the
+   * gallery). Contract decisions, documented:
+   *
+   * - ERROR CODES: a payload mediaAssetId that does not exist OR belongs to
+   *   another user is a uniform 403 MEDIA_NOT_OWNED — asset ids are unguessable
+   *   random strings, so there is no probing concern to answer with 404, and a
+   *   single batch error beats "which of the 18 items?" ambiguity.
+   * - CAPS: per KIND, derived from the MediaAsset.type column (the client
+   *   never declares kind): ≤ uploads.maxLotImages (15) images and ≤
+   *   uploads.maxLotVideos (3) videos — exceedance is 409 MEDIA_CAP_EXCEEDED
+   *   with the counts in the message (the card's contract).
+   * - COVER: `coverIndex` (default 0) marks the single cover; it must be
+   *   within bounds (400 COVER_INDEX_OUT_OF_BOUNDS otherwise, including a
+   *   coverIndex on an empty gallery). Exactly one cover is a server
+   *   invariant — every written row gets an explicit isCover.
+   * - REPLACE SEMANTICS: one transaction — links missing from the payload are
+   *   deleted, kept links are updated IN PLACE (row id/createdAt preserved),
+   *   new links created. Orphan file cleanup for removed links is deferred to
+   *   a P1 job (card) — the MediaAsset rows and their bytes are untouched.
+   * - STATUS: media is a content change → allowed on DRAFT/REJECTED only,
+   *   409 ILLEGAL_STATUS_EDIT otherwise (matrix on MEDIA_EDITABLE_STATUSES).
+   */
+  async putMedia(sellerId: string, id: string, dto: PutLotMediaDto): Promise<LotOwnerResponseDto> {
+    const lot = await this.requireOwnedLot(sellerId, id);
+    this.assertMediaEditable(lot.status);
+
+    const assetIds = dto.items.map((item) => item.mediaAssetId);
+    this.assertNoDuplicateAssets(assetIds);
+
+    // Existence + ownership in one read; kind comes from the asset row.
+    const assets = await this.media.findManyByIds(assetIds);
+    const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
+    for (const assetId of assetIds) {
+      const asset = assetsById.get(assetId);
+      if (!asset || asset.ownerId !== sellerId) {
+        throw new ForbiddenException({
+          code: LOT_ERROR_CODES.MEDIA_NOT_OWNED,
+          message: 'The media list references an asset that does not exist or is not yours',
+        });
+      }
+    }
+    this.assertMediaKindCaps(assetsById);
+
+    const coverIndex = dto.coverIndex ?? 0;
+    if ((dto.coverIndex !== undefined || dto.items.length > 0) && coverIndex >= dto.items.length) {
+      throw new BadRequestException({
+        code: LOT_ERROR_CODES.COVER_INDEX_OUT_OF_BOUNDS,
+        message: `coverIndex ${coverIndex} is out of bounds for a gallery of ${dto.items.length}`,
+      });
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await this.repository.deleteMediaNotIn(lot.id, assetIds, tx);
+      for (const [sortOrder, mediaAssetId] of assetIds.entries()) {
+        await this.repository.upsertMedia(
+          lot.id,
+          { mediaAssetId, sortOrder, isCover: sortOrder === coverIndex },
+          tx,
+        );
+      }
+      // Fresh read INSIDE the tx — the gallery include feeds the response.
+      return this.repository.findById(lot.id, tx);
+    });
+    if (!updated) {
+      // Unreachable: the lot row was locked in by requireOwnedLot above.
+      throw new NotFoundException('Lot not found');
+    }
+    return this.toResponse(updated);
+  }
+
+  /** See MEDIA_EDITABLE_STATUSES — media follows the content-edit lock. */
+  private assertMediaEditable(status: LotStatus): void {
+    if (!MEDIA_EDITABLE_STATUSES.includes(status)) {
+      throw this.illegalStatusEdit(
+        'Media can only be changed while the lot is in DRAFT or REJECTED status',
+      );
+    }
+  }
+
+  private assertNoDuplicateAssets(assetIds: readonly string[]): void {
+    if (new Set(assetIds).size !== assetIds.length) {
+      throw new BadRequestException({
+        code: LOT_ERROR_CODES.MEDIA_DUPLICATED,
+        message: 'The same mediaAssetId appears more than once in items',
+      });
+    }
+  }
+
+  /** Per-kind caps (kind = MediaAsset.type), counts included in the message. */
+  private assertMediaKindCaps(assetsById: Map<string, MediaAsset>): void {
+    const config = requireAppConfig(this.config);
+    let images = 0;
+    let videos = 0;
+    for (const asset of assetsById.values()) {
+      if (asset.type === MediaType.IMAGE) {
+        images += 1;
+      } else {
+        videos += 1;
+      }
+    }
+    if (images > config.uploads.maxLotImages) {
+      throw new ConflictException({
+        code: LOT_ERROR_CODES.MEDIA_CAP_EXCEEDED,
+        message: `Too many images: ${images} uploaded, ${config.uploads.maxLotImages} allowed per lot`,
+      });
+    }
+    if (videos > config.uploads.maxLotVideos) {
+      throw new ConflictException({
+        code: LOT_ERROR_CODES.MEDIA_CAP_EXCEEDED,
+        message: `Too many videos: ${videos} uploaded, ${config.uploads.maxLotVideos} allowed per lot`,
+      });
+    }
   }
 
   // --- action guards ---
@@ -403,7 +565,7 @@ export class LotsService {
    * authenticated (401) → SELLER hat (403 SELLER_REQUIRED) → row exists (404)
    * → owned by the caller (403). Every lifecycle action starts here.
    */
-  private async requireOwnedLot(sellerId: string, id: string): Promise<Lot> {
+  private async requireOwnedLot(sellerId: string, id: string): Promise<LotWithMedia> {
     const user = await this.requireUser(sellerId);
     this.assertSeller(user);
 
@@ -430,7 +592,7 @@ export class LotsService {
   /** Code collision path (create + duplicate): P2002 → fresh code → retry. */
   private async createWithFreshCode(
     data: Omit<Prisma.LotUncheckedCreateInput, 'code'>,
-  ): Promise<Lot> {
+  ): Promise<LotWithMedia> {
     for (let attempt = 1; attempt <= LOT_CODE_MAX_CREATE_ATTEMPTS; attempt++) {
       try {
         return await this.repository.create({ ...data, code: generateLotCode() });
