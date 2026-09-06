@@ -11,6 +11,7 @@ Layered modular NestJS app. See `../../doc/ARCHITECTURE.md`.
 - `src/prisma/` — PrismaService (lazy connect)
 - `src/modules/<domain>/` — controller → service → repository; reference: `src/modules/users`
 - `src/modules/auth/` — JWT access + refresh rotation (httpOnly cookie), RBAC decorators/guards
+- `src/modules/jobs/` — scheduled jobs (`@nestjs/schedule`, registered via `ScheduleModule.forRoot()` in `app.module.ts`)
 - `prisma/` — schema + seed (`npm run db:seed`)
 
 ## Scripts
@@ -22,6 +23,14 @@ Layered modular NestJS app. See `../../doc/ARCHITECTURE.md`.
 | `npm run db:seed`                          | seed admin + sample buyer/seller (idempotent) |
 | `npm run gen:openapi`                      | dump swagger JSON for `packages/shared-types` |
 | `npm test` / `test:cov`                    | Jest (unit + e2e, no DB needed — FakePrisma)  |
+
+## Jobs
+
+Scheduled work lives in `src/modules/jobs/` — one provider per job, cron
+scheduling from `@nestjs/schedule`. The hourly `LotExpiryService` sweep flips
+ACTIVE lots past `expiresAt` to EXPIRED with a single idempotent batched
+`updateMany` and logs the flipped count; a failed run is logged and retried on
+the next tick (the where-predicate makes every run converge).
 
 Swagger UI: http://localhost:3001/docs — the schema is the contract source of truth.
 

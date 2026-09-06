@@ -160,7 +160,7 @@ Covered by CAT-001 (`GET /categories`). Kept as ID for dependency references onl
 - **Testing:** component tests incl. action-permission matrix by status.
 - **DoD:** suites green.
 
-### LOT-006 — Lot expiration job
+### LOT-006 ✅ — Lot expiration job
 
 **P0 · Phase 2 · Lots · S** — Deps: LOT-001 (creates the shared `jobs` module)
 

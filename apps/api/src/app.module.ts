@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
@@ -15,6 +16,7 @@ import { HealthModule } from './health/health.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CategoriesModule } from './modules/categories/categories.module';
+import { JobsModule } from './modules/jobs/jobs.module';
 import { LotsModule } from './modules/lots/lots.module';
 import { OtpModule } from './modules/otp/otp.module';
 import { ProfilesModule } from './modules/profiles/profiles.module';
@@ -68,6 +70,8 @@ import { PrismaModule } from './prisma/prisma.module';
       },
     }),
     PrismaModule,
+    // Cron registry for modules/jobs (LOT-006 hourly lot expiry sweep).
+    ScheduleModule.forRoot(),
     MetricsModule,
     HealthModule,
     UsersModule,
@@ -77,6 +81,7 @@ import { PrismaModule } from './prisma/prisma.module';
     CategoriesModule,
     ProfilesModule,
     LotsModule,
+    JobsModule,
   ],
   providers: [
     // Guard order: rate limit → authenticate → authorize

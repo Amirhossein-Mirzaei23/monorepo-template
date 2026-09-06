@@ -135,6 +135,26 @@ export class LotsRepository {
   }
 
   /**
+   * LOT-006 hourly sweep: flips every ACTIVE lot whose `expiresAt` passed to
+   * EXPIRED in one batched updateMany (idempotent — an already-EXPIRED row no
+   * longer matches the status predicate). `deletedAt: null` keeps soft-deleted
+   * (REMOVED) rows out even though their status already excludes them — same
+   * belt-and-braces as findPublic. Served by the (status, expiresAt) index
+   * from LOT-001. Returns the number of flipped rows for the job to log.
+   */
+  async expireDue(tx: Tx = undefined, now: Date = new Date()): Promise<number> {
+    const result = await this.client(tx).lot.updateMany({
+      where: {
+        status: LotStatus.ACTIVE,
+        expiresAt: { lt: now },
+        deletedAt: null,
+      },
+      data: { status: LotStatus.EXPIRED },
+    });
+    return result.count;
+  }
+
+  /**
    * Atomic counter bumps (plan §12: updateMany, never read-modify-write).
    * Only the provided counters move; returns the number of matched rows
    * (0 for an unknown id).

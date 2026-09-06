@@ -85,7 +85,7 @@ type LotWhere = {
   condition?: LotEnumFilter<LotCondition>;
   status?: LotEnumFilter<LotStatus>;
   unitPrice?: { gte?: number; lte?: number };
-  expiresAt?: { gt: Date };
+  expiresAt?: { gt?: Date; lt?: Date };
   deletedAt?: null;
   OR?: Array<{ title?: LotTextFilter; description?: LotTextFilter }>;
 };
@@ -700,25 +700,44 @@ export class FakePrisma {
       this.lots.set(row.id, next);
       return cloneLot(next);
     },
-    /** Atomic counter bumps (plan §12) — returns { count } like Prisma. */
+    /**
+     * Batch update over the two shapes the app uses: atomic counter bumps
+     * (incrementCounters, where = {id}) and the LOT-006 expiry sweep
+     * (where = status ACTIVE + expiresAt lt + deletedAt null → status
+     * EXPIRED). Semantics mirror Prisma: unmatched rows contribute 0 to the
+     * count, matched rows are mutated in place and bump updatedAt.
+     */
     updateMany: async ({
       where,
       data,
     }: {
-      where: { id: string };
-      data: { viewCount?: { increment: number }; saveCount?: { increment: number } };
+      where?: LotWhere;
+      data: LotUpdateData;
     }): Promise<{ count: number }> => {
-      const row = this.lots.get(where.id);
-      if (!row) {
-        return { count: 0 };
+      let count = 0;
+      for (const [, row] of this.lots) {
+        if (!matchesLotWhere(where)(row)) {
+          continue;
+        }
+        for (const [key, value] of Object.entries(data) as Array<[keyof LotUpdateData, unknown]>) {
+          if (value === undefined) {
+            continue;
+          }
+          if (
+            (key === 'viewCount' || key === 'saveCount') &&
+            typeof value === 'object' &&
+            value !== null &&
+            'increment' in value
+          ) {
+            row[key] = row[key] + (value as { increment: number }).increment;
+          } else {
+            (row as Record<string, unknown>)[key] = value;
+          }
+        }
+        row.updatedAt = nowIso();
+        count += 1;
       }
-      if (data.viewCount !== undefined) {
-        row.viewCount += data.viewCount.increment;
-      }
-      if (data.saveCount !== undefined) {
-        row.saveCount += data.saveCount.increment;
-      }
-      return { count: 1 };
+      return { count };
     },
   };
 
@@ -1006,7 +1025,9 @@ function matchesLotWhere(where: LotWhere | undefined): (row: Lot) => boolean {
     (where?.unitPrice === undefined ||
       ((where.unitPrice.gte === undefined || row.unitPrice >= where.unitPrice.gte) &&
         (where.unitPrice.lte === undefined || row.unitPrice <= where.unitPrice.lte))) &&
-    (where?.expiresAt === undefined || row.expiresAt > where.expiresAt.gt) &&
+    (where?.expiresAt === undefined ||
+      ((where.expiresAt.gt === undefined || row.expiresAt > where.expiresAt.gt) &&
+        (where.expiresAt.lt === undefined || row.expiresAt < where.expiresAt.lt))) &&
     (where?.deletedAt === undefined || row.deletedAt === null) &&
     (where?.OR === undefined || where.OR.some((entry) => matchesLotSearchEntry(row, entry)));
 }
