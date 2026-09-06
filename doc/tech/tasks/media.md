@@ -67,7 +67,7 @@ on the distroless API). Limits (PLAT-003): image ≤ 10 MB × 15/lot, video ≤ 
   from the video key — `{id}p.{ext}` original, `{id}pt.webp` thumb (row `thumbKey`); the poster
   adds no MediaAsset row and each video counts double toward the shared daily quota.
 
-### MEDIA-004 — Web uploader components
+### MEDIA-004 ✅ — Web uploader components
 
 **P0 · Phase 3 · Media · L** — Deps: MEDIA-002, MEDIA-003, PLAT-001
 

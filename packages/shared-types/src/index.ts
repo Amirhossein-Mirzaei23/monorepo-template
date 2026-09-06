@@ -26,6 +26,11 @@ export type UpdateProfileDto = components['schemas']['UpdateProfileDto'];
 /** Read-only trust metrics block on ProfileResponseDto (placeholders until P1). */
 export type ProfileMetricsDto = ProfileResponseDto['metrics'];
 export type CategoryTreeNodeDto = components['schemas']['CategoryTreeNodeDto'];
+// --- media (MEDIA-002/003) ---
+export type MediaUploadUrlsDto = components['schemas']['MediaUploadUrlsDto'];
+export type MediaUploadResponseDto = components['schemas']['MediaUploadResponseDto'];
+export type MediaVideoUploadUrlsDto = components['schemas']['MediaVideoUploadUrlsDto'];
+export type MediaVideoUploadResponseDto = components['schemas']['MediaVideoUploadResponseDto'];
 // --- lots (LOT-002) ---
 export type CreateLotDto = components['schemas']['CreateLotDto'];
 export type UpdateLotDto = components['schemas']['UpdateLotDto'];
