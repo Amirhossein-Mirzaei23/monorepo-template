@@ -6,7 +6,60 @@ import { SELLER_BUSINESS_TYPES } from './save-onboarding.dto';
 export type ProfileInterestWithCategory = ProfileInterest & { category: Category };
 
 /**
- * Own-profile response for GET /profiles/me and PUT /profiles/onboarding
+ * Read-only trust metrics block (PROF-001). Placeholders until the P1 jobs
+ * land (PROF-005 rollup + review aggregates): counts report honest zeros,
+ * averages/rates report null (rendered «—») because no data exists to average.
+ */
+export class ProfileMetricsDto {
+  @ApiProperty({
+    example: 0,
+    description: 'Successfully completed deals — 0 until deals exist (P1)',
+  })
+  successfulTransactions!: number;
+
+  @ApiPropertyOptional({
+    example: null,
+    nullable: true,
+    type: Number,
+    description: 'Average rating (1–5) — null until reviews are published (P1)',
+  })
+  averageRating!: number | null;
+
+  @ApiProperty({ example: 0, description: 'Number of published ratings — 0 until P1' })
+  ratingCount!: number;
+
+  @ApiPropertyOptional({
+    example: null,
+    nullable: true,
+    type: Number,
+    description: 'Median first-response time in minutes — null until the PROF-005 rollup',
+  })
+  responseRateMinutes!: number | null;
+
+  @ApiPropertyOptional({
+    example: null,
+    nullable: true,
+    type: Number,
+    description: 'Cancellation rate in percent — null until the PROF-005 rollup',
+  })
+  cancellationRate!: number | null;
+
+  @ApiProperty({ example: 0, description: 'Currently active listings — 0 until lots exist' })
+  activeListings!: number;
+}
+
+/** Placeholder values until the metrics jobs land (see ProfileMetricsDto). */
+export const PROFILE_METRICS_PLACEHOLDER: ProfileMetricsDto = {
+  successfulTransactions: 0,
+  averageRating: null,
+  ratingCount: 0,
+  responseRateMinutes: null,
+  cancellationRate: null,
+  activeListings: 0,
+};
+
+/**
+ * Own-profile response for GET/PATCH /profiles/me and PUT /profiles/onboarding
  * (ONB-001). province/city are geo slugs — the web resolves Persian labels from
  * its copy of the static list. verificationBadges is a placeholder until the
  * trust phase (TRS-001) attaches real badge rows.
@@ -83,6 +136,12 @@ export class ProfileResponseDto {
   verificationBadges!: string[];
 
   @ApiProperty({
+    type: ProfileMetricsDto,
+    description: 'Read-only trust metrics — placeholder zeros/nulls until the P1 jobs',
+  })
+  metrics!: ProfileMetricsDto;
+
+  @ApiProperty({
     example: true,
     description: 'User.onboardingCompletedAt is set — mirrors the /auth/me flag',
   })
@@ -122,6 +181,8 @@ export function toProfileResponse(
     })),
     // TRS-001 placeholder — badges are admin-granted verifications, none exist yet.
     verificationBadges: [],
+    // PROF-001 placeholder — real values arrive with the P1 metrics jobs.
+    metrics: PROFILE_METRICS_PLACEHOLDER,
     onboardingCompleted: user.onboardingCompletedAt != null,
     createdAt: profile.createdAt,
     updatedAt: profile.updatedAt,

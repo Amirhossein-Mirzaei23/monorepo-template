@@ -49,6 +49,16 @@ const profileResponse = {
   sellerDescription: null,
   interests: [{ id: 'cat-apparel-men', nameFa: 'مردانه', slug: 'apparel-men' }],
   verificationBadges: [],
+  // PROF-001 added the trust-metrics block to ProfileResponseDto (zeros/null
+  // placeholders until the P1 rollup jobs land).
+  metrics: {
+    successfulTransactions: 0,
+    averageRating: null,
+    ratingCount: 0,
+    responseRateMinutes: null,
+    cancellationRate: null,
+    activeListings: 0,
+  },
   onboardingCompleted: true,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',

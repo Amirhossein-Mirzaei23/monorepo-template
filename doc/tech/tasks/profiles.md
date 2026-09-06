@@ -43,7 +43,7 @@ No business/legal documents in MVP. Public seller profile is a P0 trust surface.
 - **Testing:** component tests per step + full flow test with mocked api.
 - **DoD:** lint/typecheck/test green.
 
-### PROF-001 — My profile view/edit
+### PROF-001 ✅ — My profile view/edit
 
 **P0 · Phase 1 · Profiles · M** — Deps: ONB-001
 

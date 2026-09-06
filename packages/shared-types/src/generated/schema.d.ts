@@ -235,14 +235,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Own profile with interests and trust placeholders (404 before onboarding) */
+        /** Own profile with interests, trust placeholders and metrics (404 before onboarding) */
         get: operations["ProfilesController_me"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Partially update the own profile — absent fields untouched; roles add-only (never removed) */
+        patch: operations["ProfilesController_updateMe"];
         trace?: never;
     };
 }
@@ -492,6 +493,38 @@ export interface components {
             /** @example apparel */
             slug: string;
         };
+        ProfileMetricsDto: {
+            /**
+             * @description Successfully completed deals — 0 until deals exist (P1)
+             * @example 0
+             */
+            successfulTransactions: number;
+            /**
+             * @description Average rating (1–5) — null until reviews are published (P1)
+             * @example null
+             */
+            averageRating?: number | null;
+            /**
+             * @description Number of published ratings — 0 until P1
+             * @example 0
+             */
+            ratingCount: number;
+            /**
+             * @description Median first-response time in minutes — null until the PROF-005 rollup
+             * @example null
+             */
+            responseRateMinutes?: number | null;
+            /**
+             * @description Cancellation rate in percent — null until the PROF-005 rollup
+             * @example null
+             */
+            cancellationRate?: number | null;
+            /**
+             * @description Currently active listings — 0 until lots exist
+             * @example 0
+             */
+            activeListings: number;
+        };
         ProfileResponseDto: {
             /** @example clx…cuid */
             id: string;
@@ -527,6 +560,8 @@ export interface components {
              * @example []
              */
             verificationBadges: string[];
+            /** @description Read-only trust metrics — placeholder zeros/nulls until the P1 jobs */
+            metrics: components["schemas"]["ProfileMetricsDto"];
             /**
              * @description User.onboardingCompletedAt is set — mirrors the /auth/me flag
              * @example true
@@ -542,6 +577,62 @@ export interface components {
              * @example 2026-01-01T00:00:00.000Z
              */
             updatedAt: string;
+        };
+        UpdateProfileDto: {
+            /**
+             * @description Grant the buyer hat (add-only; false never removes it)
+             * @example true
+             */
+            isBuyer?: boolean | null;
+            /**
+             * @description Grant the seller hat (add-only; false never removes it)
+             * @example true
+             */
+            isSeller?: boolean | null;
+            /** @example مینا رضایی */
+            displayName?: string | null;
+            /**
+             * @description Required on the resulting profile while the seller hat is held
+             * @example تولیدی پوشاک مینا
+             */
+            businessName?: string | null;
+            /**
+             * @description Province slug — must be sent together with city (both-or-neither)
+             * @example isfahan
+             */
+            province?: string | null;
+            /**
+             * @description City slug; the resulting (province, city) pair is geo-validated
+             * @example kashan
+             */
+            city?: string | null;
+            /** @example خرید عمده پوشاک برای فروشگاه */
+            bio?: string | null;
+            /**
+             * @description Instagram handle (username only, no URL); null clears it
+             * @example mina.apparel
+             */
+            instagram?: string | null;
+            /**
+             * Format: url
+             * @description Website URL; null clears it
+             * @example https://mina-apparel.ir
+             */
+            website?: string | null;
+            /** @example 6 */
+            sellerYearsActive?: number | null;
+            /** @enum {string|null} */
+            sellerBusinessType?: "MANUFACTURER" | "WORKSHOP" | "WHOLESALER" | "RETAILER" | "TRADING" | "SERVICE" | "OTHER" | null;
+            /** @example تولیدکننده پوشاک زنانه با ۶ سال سابقه صادرات */
+            sellerDescription?: string | null;
+            /**
+             * @description Replaces the whole interest set when present (null clears all)
+             * @example [
+             *       "clx…cuid",
+             *       "clx…cuid"
+             *     ]
+             */
+            interests?: string[];
         };
     };
     responses: never;
@@ -891,6 +982,29 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileResponseDto"];
+                };
+            };
+        };
+    };
+    ProfilesController_updateMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProfileDto"];
+            };
+        };
         responses: {
             200: {
                 headers: {

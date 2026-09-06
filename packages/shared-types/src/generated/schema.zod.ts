@@ -113,6 +113,15 @@ export const profileInterestCategoryDtoSchema = z.object({
   slug: z.string(),
 });
 
+export const profileMetricsDtoSchema = z.object({
+  successfulTransactions: z.number(),
+  averageRating: z.number().nullable().optional(),
+  ratingCount: z.number(),
+  responseRateMinutes: z.number().nullable().optional(),
+  cancellationRate: z.number().nullable().optional(),
+  activeListings: z.number(),
+});
+
 export const profileResponseDtoSchema = z.object({
   id: z.string(),
   userId: z.string(),
@@ -130,9 +139,28 @@ export const profileResponseDtoSchema = z.object({
   sellerDescription: z.string().nullable().optional(),
   interests: z.array(profileInterestCategoryDtoSchema),
   verificationBadges: z.array(z.string()),
+  metrics:   z.object({
+
+    }),
   onboardingCompleted: z.boolean(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
+});
+
+export const updateProfileDtoSchema = z.object({
+  isBuyer: z.boolean().nullable().optional(),
+  isSeller: z.boolean().nullable().optional(),
+  displayName: z.string().nullable().optional(),
+  businessName: z.string().nullable().optional(),
+  province: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  bio: z.string().nullable().optional(),
+  instagram: z.string().nullable().optional(),
+  website: z.string().nullable().optional(),
+  sellerYearsActive: z.number().nullable().optional(),
+  sellerBusinessType: z.enum(['MANUFACTURER', 'WORKSHOP', 'WHOLESALER', 'RETAILER', 'TRADING', 'SERVICE', 'OTHER']).nullable().optional(),
+  sellerDescription: z.string().nullable().optional(),
+  interests: z.array(z.string()).optional(),
 });
 
 export const apiSchemas = {
@@ -150,5 +178,7 @@ export const apiSchemas = {
   CategoryTreeNodeDto: categoryTreeNodeDtoSchema,
   SaveOnboardingDto: saveOnboardingDtoSchema,
   ProfileInterestCategoryDto: profileInterestCategoryDtoSchema,
+  ProfileMetricsDto: profileMetricsDtoSchema,
   ProfileResponseDto: profileResponseDtoSchema,
+  UpdateProfileDto: updateProfileDtoSchema,
 } as const;

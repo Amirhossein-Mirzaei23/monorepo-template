@@ -5,6 +5,7 @@ import { FakePrisma } from '../../../test/fakes/fake-prisma';
 import { CategoriesRepository } from '../../categories/categories.repository';
 import { UsersRepository } from '../../users/users.repository';
 import type { SaveOnboardingDto } from '../dto/save-onboarding.dto';
+import type { UpdateProfileDto } from '../dto/update-profile.dto';
 import { ProfilesRepository } from '../profiles.repository';
 import { ProfilesService } from '../profiles.service';
 
@@ -253,6 +254,7 @@ describe('ProfilesService', () => {
         'interests',
         'isBuyer',
         'isSeller',
+        'metrics',
         'onboardingCompleted',
         'province',
         'sellerBusinessType',
@@ -268,6 +270,21 @@ describe('ProfilesService', () => {
       expect(result.interests).toEqual([{ id: apparel.id, nameFa: 'پوشاک', slug: 'apparel' }]);
     });
 
+    it('exposes placeholder trust metrics (zeros and nulls until the P1 jobs)', async () => {
+      await service.submitOnboarding(userId, buyerDto());
+
+      const result = await service.getMyProfile(userId);
+
+      expect(result.metrics).toEqual({
+        successfulTransactions: 0,
+        averageRating: null,
+        ratingCount: 0,
+        responseRateMinutes: null,
+        cancellationRate: null,
+        activeListings: 0,
+      });
+    });
+
     it('throws NotFound for a user that has not onboarded yet', async () => {
       await expect(service.getMyProfile(userId)).rejects.toBeInstanceOf(NotFoundException);
     });
@@ -276,6 +293,186 @@ describe('ProfilesService', () => {
       await expect(service.getMyProfile('missing-id')).rejects.toBeInstanceOf(
         UnauthorizedException,
       );
+    });
+  });
+
+  describe('updateMyProfile (PATCH semantics)', () => {
+    it('updates only the provided fields and leaves everything else untouched', async () => {
+      await service.submitOnboarding(
+        userId,
+        buyerDto({
+          bio: 'بیوی اول',
+          province: 'tehran',
+          city: 'tehran',
+          interests: [apparel.id],
+        }),
+      );
+
+      const result = await service.updateMyProfile(userId, { displayName: 'آرمان ویرایش' });
+
+      expect(result.displayName).toBe('آرمان ویرایش');
+      expect(result.bio).toBe('بیوی اول');
+      expect(result.province).toBe('tehran');
+      expect(result.city).toBe('tehran');
+      expect(result.interests.map((interest) => interest.slug)).toEqual(['apparel']);
+    });
+
+    it('clears optional fields on explicit null and replaces interests when provided', async () => {
+      await service.submitOnboarding(
+        userId,
+        buyerDto({ bio: 'بیوی اول', instagram: 'arman.tehrani', interests: [apparel.id] }),
+      );
+
+      const result = await service.updateMyProfile(userId, {
+        bio: null,
+        instagram: null,
+        interests: [shoes.id],
+      });
+
+      expect(result.bio).toBeNull();
+      expect(result.instagram).toBeNull();
+      expect(result.interests.map((interest) => interest.slug)).toEqual(['shoes']);
+    });
+
+    it('keeps the existing interests when the interests key is absent', async () => {
+      await service.submitOnboarding(userId, buyerDto({ interests: [apparel.id] }));
+
+      const result = await service.updateMyProfile(userId, { displayName: 'آرمان دوم' });
+
+      expect(result.interests.map((interest) => interest.slug)).toEqual(['apparel']);
+    });
+
+    it('accepts an empty PATCH body as a no-op round-trip', async () => {
+      const created = await service.submitOnboarding(userId, buyerDto({ bio: 'بیو' }));
+
+      const result = await service.updateMyProfile(userId, {});
+
+      expect(result.bio).toBe('بیو');
+      expect(result.id).toBe(created.id);
+    });
+
+    it('adds the seller hat in one call and syncs User.accountRoles', async () => {
+      await service.submitOnboarding(userId, buyerDto());
+
+      const result = await service.updateMyProfile(userId, {
+        isSeller: true,
+        businessName: 'تولیدی آرمان',
+        sellerBusinessType: 'WORKSHOP',
+      });
+
+      expect(result.isSeller).toBe(true);
+      expect(result.businessName).toBe('تولیدی آرمان');
+      expect((await storedUser())?.accountRoles).toEqual([AccountRole.BUYER, AccountRole.SELLER]);
+    });
+
+    it('adds the buyer hat to a seller and syncs User.accountRoles', async () => {
+      await service.submitOnboarding(userId, sellerDto());
+
+      const result = await service.updateMyProfile(userId, { isBuyer: true });
+
+      expect(result.isBuyer).toBe(true);
+      expect((await storedUser())?.accountRoles).toEqual([AccountRole.BUYER, AccountRole.SELLER]);
+    });
+
+    it('rejects removing a held role — "never removes history" (also protects the last role)', async () => {
+      await service.submitOnboarding(userId, buyerDto());
+
+      // Last-role removal:
+      await expect(service.updateMyProfile(userId, { isBuyer: false })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      // Removal while the other hat is kept is equally refused:
+      await service.submitOnboarding(userId, sellerDto({ isBuyer: true }));
+      await expect(service.updateMyProfile(userId, { isBuyer: false })).rejects.toThrow(
+        'Account roles are never removed',
+      );
+
+      // Nothing was written by the rejected PATCHes.
+      const profile = await fake.profile.findUnique({ where: { userId } });
+      expect(profile?.isBuyer).toBe(true);
+      expect(profile?.isSeller).toBe(true);
+      expect((await storedUser())?.accountRoles).toEqual([AccountRole.BUYER, AccountRole.SELLER]);
+    });
+
+    it('rejects adding the seller hat without a businessName', async () => {
+      await service.submitOnboarding(userId, buyerDto());
+
+      await expect(service.updateMyProfile(userId, { isSeller: true })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it('keeps businessName required for sellers when clearing it via PATCH', async () => {
+      await service.submitOnboarding(userId, sellerDto());
+
+      await expect(service.updateMyProfile(userId, { businessName: '   ' })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it('validates the resulting province/city pair (both-or-neither + geo check)', async () => {
+      // Clearing only one half of a stored pair leaves an invalid result.
+      await service.submitOnboarding(userId, buyerDto({ province: 'tehran', city: 'tehran' }));
+      await expect(service.updateMyProfile(userId, { city: null })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+
+      // A lone incoming province against an empty stored location.
+      const bare = fake.seedUser({ phone: '09123335555', name: 'Bare' });
+      await service.submitOnboarding(bare.id, {
+        isBuyer: true,
+        isSeller: false,
+        displayName: 'بدون شهر',
+      });
+      await expect(service.updateMyProfile(bare.id, { province: 'tehran' })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+
+      // A well-formed new pair passes.
+      const result = await service.updateMyProfile(userId, {
+        province: 'isfahan',
+        city: 'kashan',
+      });
+      expect(result.province).toBe('isfahan');
+      expect(result.city).toBe('kashan');
+    });
+
+    it('allows clearing the whole location in one PATCH', async () => {
+      await service.submitOnboarding(userId, buyerDto({ province: 'tehran', city: 'tehran' }));
+
+      const result = await service.updateMyProfile(userId, { province: null, city: null });
+
+      expect(result.province).toBeNull();
+      expect(result.city).toBeNull();
+    });
+
+    it('rejects interests referencing unknown categories', async () => {
+      await service.submitOnboarding(userId, buyerDto());
+
+      await expect(
+        service.updateMyProfile(userId, { interests: ['missing-id'] }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('returns placeholder metrics like GET does', async () => {
+      await service.submitOnboarding(userId, buyerDto());
+
+      const result = await service.updateMyProfile(userId, { displayName: 'آرمان دوم' });
+
+      expect(result.metrics.successfulTransactions).toBe(0);
+      expect(result.metrics.averageRating).toBeNull();
+    });
+
+    it('throws NotFound when the user has not onboarded yet', async () => {
+      await expect(service.updateMyProfile(userId, { bio: 'x' })).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it('throws Unauthorized for a user that no longer exists', async () => {
+      await expect(
+        service.updateMyProfile('missing-id', { bio: 'x' } as UpdateProfileDto),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
     });
   });
 });

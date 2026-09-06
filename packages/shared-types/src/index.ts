@@ -22,6 +22,9 @@ export type OtpVerifyResponseDto = components['schemas']['OtpVerifyResponseDto']
 export type MeResponseDto = components['schemas']['MeResponseDto'];
 export type SaveOnboardingDto = components['schemas']['SaveOnboardingDto'];
 export type ProfileResponseDto = components['schemas']['ProfileResponseDto'];
+export type UpdateProfileDto = components['schemas']['UpdateProfileDto'];
+/** Read-only trust metrics block on ProfileResponseDto (placeholders until P1). */
+export type ProfileMetricsDto = ProfileResponseDto['metrics'];
 export type CategoryTreeNodeDto = components['schemas']['CategoryTreeNodeDto'];
 /** The API inlines the role enum into its DTOs; derive it from the user shape. */
 export type UserRole = UserResponseDto['role'];
@@ -43,7 +46,17 @@ export const otpVerifySchema = apiSchemas.OtpVerifyDto;
 export const otpVerifyResponseSchema = apiSchemas.OtpVerifyResponseDto;
 export const meResponseSchema = apiSchemas.MeResponseDto;
 export const saveOnboardingSchema = apiSchemas.SaveOnboardingDto;
-export const profileResponseSchema = apiSchemas.ProfileResponseDto;
+/**
+ * The API serializes the `metrics` block as `allOf: [{$ref: ProfileMetricsDto}]`
+ * (Nest inheritance quirk), which the zod generator — it has no `allOf` branch —
+ * renders as a lossy `z.object({})`. Recompose the real metric fields so the
+ * runtime schema validates what the TS contract (ProfileResponseDto['metrics'])
+ * already promises.
+ */
+export const profileResponseSchema = apiSchemas.ProfileResponseDto.extend({
+  metrics: apiSchemas.ProfileMetricsDto,
+});
+export const updateProfileSchema = apiSchemas.UpdateProfileDto;
 export const categoryTreeNodeSchema = apiSchemas.CategoryTreeNodeDto;
 
 // --- shared helpers ---

@@ -444,6 +444,36 @@ export class FakePrisma {
       this.profiles.set(existing.id, next);
       return cloneProfile(next);
     },
+    /** Partial update (PATCH /profiles/me) — undefined keys stay untouched. */
+    update: async ({
+      where,
+      data,
+    }: {
+      where: { userId: string };
+      data: Partial<ProfileUpsertData>;
+    }): Promise<Profile> => {
+      const existing = [...this.profiles.values()].find((row) => row.userId === where.userId);
+      if (!existing) {
+        throw new Error(`FakePrisma: profile for user ${where.userId} not found`);
+      }
+      const next: Profile = { ...existing, updatedAt: nowIso() };
+      if (data.displayName !== undefined) next.displayName = data.displayName;
+      if (data.businessName !== undefined) next.businessName = data.businessName;
+      if (data.province !== undefined) next.province = data.province;
+      if (data.city !== undefined) next.city = data.city;
+      if (data.bio !== undefined) next.bio = data.bio;
+      if (data.instagram !== undefined) next.instagram = data.instagram;
+      if (data.website !== undefined) next.website = data.website;
+      if (data.isBuyer !== undefined) next.isBuyer = data.isBuyer;
+      if (data.isSeller !== undefined) next.isSeller = data.isSeller;
+      if (data.sellerYearsActive !== undefined) next.sellerYearsActive = data.sellerYearsActive;
+      if (data.sellerBusinessType !== undefined) {
+        next.sellerBusinessType = data.sellerBusinessType;
+      }
+      if (data.sellerDescription !== undefined) next.sellerDescription = data.sellerDescription;
+      this.profiles.set(existing.id, next);
+      return cloneProfile(next);
+    },
   };
 
   readonly profileInterest = {

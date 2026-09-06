@@ -23,6 +23,12 @@ export interface UpsertProfileData {
   sellerDescription: string | null;
 }
 
+/**
+ * Partial write payload for PATCH /profiles/me (PROF-001): absent keys are
+ * left untouched, `null` clears an optional field (Prisma `update` semantics).
+ */
+export type UpdateProfileData = Partial<UpsertProfileData>;
+
 export type Tx = Prisma.TransactionClient | undefined;
 
 /**
@@ -57,6 +63,15 @@ export class ProfilesRepository {
       create: { userId, ...data },
       update: data,
     });
+  }
+
+  /** Partial update for PATCH /profiles/me — undefined keys stay untouched. */
+  async updateByUserId(
+    userId: string,
+    data: UpdateProfileData,
+    tx: Tx = undefined,
+  ): Promise<Profile> {
+    return this.client(tx).profile.update({ where: { userId }, data });
   }
 
   /** Wholesale replacement of the interest set inside the onboarding transaction. */

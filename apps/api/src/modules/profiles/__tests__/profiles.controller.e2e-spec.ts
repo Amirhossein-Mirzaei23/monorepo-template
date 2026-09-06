@@ -4,11 +4,11 @@ import type { FakePrisma } from '../../../test/fakes/fake-prisma';
 import { createTestApp } from '../../../test/utils/create-test-app';
 
 /**
- * ONB-001 controller e2e: PUT /profiles/onboarding (happy path + idempotent
- * re-submit + 400s) and GET /profiles/me, both behind the global JWT guard.
- * Logins go through the real OTP dev-mode flow so the auth matrix (401s) is
- * exercised against the production guard chain, not a stub. Every login uses
- * a fresh phone — OTP send caps are per phone (3/hour).
+ * ONB-001 + PROF-001 controller e2e: PUT /profiles/onboarding (happy path +
+ * idempotent re-submit + 400s), GET /profiles/me and PATCH /profiles/me, all
+ * behind the global JWT guard. Logins go through the real OTP dev-mode flow so
+ * the auth matrix (401s) is exercised against the production guard chain, not
+ * a stub. Every login uses a fresh phone — OTP send caps are per phone (3/hour).
  */
 describe('ProfilesController (e2e)', () => {
   let app: INestApplication;
@@ -250,6 +250,7 @@ describe('ProfilesController (e2e)', () => {
         'interests',
         'isBuyer',
         'isSeller',
+        'metrics',
         'onboardingCompleted',
         'province',
         'sellerBusinessType',
@@ -266,6 +267,191 @@ describe('ProfilesController (e2e)', () => {
       expect(response.body).not.toHaveProperty('passwordHash');
       expect(response.body.verificationBadges).toEqual([]);
       expect(response.body.onboardingCompleted).toBe(true);
+      expect(response.body.metrics).toEqual({
+        successfulTransactions: 0,
+        averageRating: null,
+        ratingCount: 0,
+        responseRateMinutes: null,
+        cancellationRate: null,
+        activeListings: 0,
+      });
+    });
+  });
+
+  describe('PATCH /profiles/me', () => {
+    it('requires authentication (401 without a token)', async () => {
+      await request(app.getHttpServer())
+        .patch('/profiles/me')
+        .send({ displayName: 'آرمان تهرانی' })
+        .expect(401);
+    });
+
+    it('returns 404 for a user that has not onboarded', async () => {
+      const token = await login(nextPhone());
+      await request(app.getHttpServer())
+        .patch('/profiles/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ displayName: 'آرمان تهرانی' })
+        .expect(404);
+    });
+
+    it('persists a partial edit and leaves omitted fields untouched', async () => {
+      const token = await login(nextPhone());
+      await request(app.getHttpServer())
+        .put('/profiles/onboarding')
+        .set('Authorization', `Bearer ${token}`)
+        .send(validSellerBody([apparel.id]))
+        .expect(200);
+
+      const response = await request(app.getHttpServer())
+        .patch('/profiles/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          displayName: 'مینا ویرایش‌شده',
+          bio: null,
+          instagram: 'mina.updated',
+          interests: [fmcg.id],
+        })
+        .expect(200);
+
+      expect(response.body.displayName).toBe('مینا ویرایش‌شده');
+      expect(response.body.bio).toBeNull();
+      expect(response.body.instagram).toBe('mina.updated');
+      // Untouched by the PATCH:
+      expect(response.body.businessName).toBe('تولیدی پوشاک مینا');
+      expect(response.body.province).toBe('isfahan');
+      expect(response.body.isSeller).toBe(true);
+      expect(response.body.interests.map((i: { slug: string }) => i.slug)).toEqual(['fmcg']);
+      expect(response.body.metrics.activeListings).toBe(0);
+
+      const reread = await request(app.getHttpServer())
+        .get('/profiles/me')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(reread.body.displayName).toBe('مینا ویرایش‌شده');
+    });
+
+    it('adds the seller hat, syncs accountRoles on /auth/me and enforces businessName', async () => {
+      const phone = nextPhone();
+      const token = await login(phone);
+      await request(app.getHttpServer())
+        .put('/profiles/onboarding')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          isBuyer: true,
+          isSeller: false,
+          displayName: 'آرمان تهرانی',
+        })
+        .expect(200);
+
+      // Adding the seller hat without a businessName is a 400.
+      await request(app.getHttpServer())
+        .patch('/profiles/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ isSeller: true })
+        .expect(400);
+
+      const response = await request(app.getHttpServer())
+        .patch('/profiles/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ isSeller: true, businessName: 'کسب‌وکار آرمان' })
+        .expect(200);
+      expect(response.body.isSeller).toBe(true);
+      expect(response.body.isBuyer).toBe(true);
+
+      const me = await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(me.body.accountRoles).toEqual(['BUYER', 'SELLER']);
+    });
+
+    it('rejects role removal with 400 and keeps history (never removes)', async () => {
+      const phone = nextPhone();
+      const token = await login(phone);
+      await request(app.getHttpServer())
+        .put('/profiles/onboarding')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          isBuyer: true,
+          isSeller: false,
+          displayName: 'آرمان تهرانی',
+        })
+        .expect(200);
+
+      // Removing the only role:
+      await request(app.getHttpServer())
+        .patch('/profiles/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ isBuyer: false })
+        .expect(400);
+
+      // Removing one of two hats is refused the same way.
+      await request(app.getHttpServer())
+        .patch('/profiles/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ isSeller: true, businessName: 'کسب‌وکار آرمان' })
+        .expect(200);
+      await request(app.getHttpServer())
+        .patch('/profiles/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ isBuyer: false })
+        .expect(400);
+
+      const me = await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(me.body.accountRoles).toEqual(['BUYER', 'SELLER']);
+    });
+
+    it.each([
+      ['displayName too short', { displayName: 'آ' }],
+      ['bad instagram handle', { instagram: 'not valid!' }],
+      ['website not a URL', { website: 'not a url' }],
+      ['bad sellerBusinessType', { sellerBusinessType: 'FACTORY' }],
+      ['over 10 interests', { interests: Array.from({ length: 11 }, (_, i) => `cat-${i}`) }],
+    ])('rejects %s with 400 (DTO rules)', async (_label, overrides) => {
+      const token = await login(nextPhone());
+      await request(app.getHttpServer())
+        .put('/profiles/onboarding')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          isBuyer: true,
+          isSeller: false,
+          displayName: 'آرمان تهرانی',
+        })
+        .expect(200);
+      await request(app.getHttpServer())
+        .patch('/profiles/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send(overrides)
+        .expect(400);
+    });
+
+    it.each([
+      ['province without city (stored pair broken)', { city: null }],
+      ['city not in province', { province: 'tehran', city: 'kashan' }],
+      ['unknown interest id', { interests: ['missing-id'] }],
+    ])('rejects %s with 400 (service rules) and writes nothing', async (_label, overrides) => {
+      const token = await login(nextPhone());
+      await request(app.getHttpServer())
+        .put('/profiles/onboarding')
+        .set('Authorization', `Bearer ${token}`)
+        .send(validSellerBody([apparel.id]))
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .patch('/profiles/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ displayName: 'نباید ذخیره شود', ...overrides })
+        .expect(400);
+
+      const reread = await request(app.getHttpServer())
+        .get('/profiles/me')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(reread.body.displayName).toBe('مینا رضایی');
     });
   });
 });
