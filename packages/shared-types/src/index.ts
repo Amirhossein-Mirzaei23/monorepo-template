@@ -22,6 +22,7 @@ export type OtpVerifyResponseDto = components['schemas']['OtpVerifyResponseDto']
 export type MeResponseDto = components['schemas']['MeResponseDto'];
 export type SaveOnboardingDto = components['schemas']['SaveOnboardingDto'];
 export type ProfileResponseDto = components['schemas']['ProfileResponseDto'];
+export type CategoryTreeNodeDto = components['schemas']['CategoryTreeNodeDto'];
 /** The API inlines the role enum into its DTOs; derive it from the user shape. */
 export type UserRole = UserResponseDto['role'];
 export type UserStatus = UserResponseDto['status'];
@@ -43,6 +44,7 @@ export const otpVerifyResponseSchema = apiSchemas.OtpVerifyResponseDto;
 export const meResponseSchema = apiSchemas.MeResponseDto;
 export const saveOnboardingSchema = apiSchemas.SaveOnboardingDto;
 export const profileResponseSchema = apiSchemas.ProfileResponseDto;
+export const categoryTreeNodeSchema = apiSchemas.CategoryTreeNodeDto;
 
 // --- shared helpers ---
 

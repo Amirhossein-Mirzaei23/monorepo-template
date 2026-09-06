@@ -5,13 +5,13 @@ import {
   type OtpRequestResponseDto,
   type OtpVerifyDto,
   type OtpVerifyResponseDto,
-  type UserResponseDto,
+  type MeResponseDto,
 } from '@monorepo/shared-types';
 import {
   loginResponseSchema,
   otpRequestResponseSchema,
   otpVerifyResponseSchema,
-  userResponseSchema,
+  meResponseSchema,
 } from '@monorepo/shared-types';
 import { apiFetch } from '@/lib/api-client';
 
@@ -42,10 +42,10 @@ export async function logoutRequest(): Promise<void> {
   await apiFetch<void>('/api/auth/logout', { method: 'POST' });
 }
 
-export async function meRequest(token: string | undefined): Promise<UserResponseDto> {
+export async function meRequest(token: string | undefined): Promise<MeResponseDto> {
   if (!token) {
     throw new Error('Not authenticated');
   }
   const raw = await apiFetch<unknown>('/api/auth/me', { token });
-  return parseApiResponse(userResponseSchema, raw, 'profile');
+  return parseApiResponse(meResponseSchema, raw, 'profile');
 }

@@ -24,7 +24,7 @@ No business/legal documents in MVP. Public seller profile is a P0 trust surface.
 - **Testing:** service unit (transaction, role sync), controller e2e.
 - **DoD:** suites green; `gen:types` regenerated.
 
-### ONB-002 — Mobile-first onboarding UI
+### ONB-002 ✅ — Mobile-first onboarding UI
 
 **P0 · Phase 1 · Profiles · L** — Deps: ONB-001, CAT-001, PLAT-001
 
