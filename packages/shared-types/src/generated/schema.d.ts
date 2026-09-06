@@ -297,6 +297,40 @@ export interface paths {
         patch: operations["ProfilesController_updateMe"];
         trace?: never;
     };
+    "/lots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a lot as the seller — submit=false (default) saves a DRAFT, submit=true submits for moderation */
+        post: operations["LotsController_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lots/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Edit an owned lot — DRAFT/REJECTED fully editable (submit=true resubmits); ACTIVE/PAUSED only price/quantity fields; otherwise 409 */
+        patch: operations["LotsController_update"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -754,6 +788,398 @@ export interface components {
              *     ]
              */
             interests?: string[];
+        };
+        LotPublicResponseDto: {
+            /**
+             * @description Internal id — stays internal to the API
+             * @example clx…cuid
+             */
+            id: string;
+            /**
+             * @description Public, non-sequential URL id (nanoid-8 base62)
+             * @example 7Kd2Qm9x
+             */
+            code: string;
+            /**
+             * @description Seller user id — links the public profile
+             * @example clx…cuid
+             */
+            sellerId: string;
+            /** @example clx…cuid */
+            categoryId: string;
+            /** @example clx…cuid */
+            subcategoryId?: string | null;
+            /** @example عمده پیراهن مردانه — ۵۰ عدد */
+            title: string;
+            /** @example توضیحات کامل کالا و شرایط فروش */
+            description: string;
+            /** @example 50 */
+            quantity: number;
+            /**
+             * @example PIECE
+             * @enum {string}
+             */
+            unit: "PIECE" | "SET" | "BOX" | "KG" | "PAIR" | "OTHER";
+            /**
+             * @description Remaining sellable amount (0 ≤ available ≤ quantity)
+             * @example 50
+             */
+            availableQuantity: number;
+            /**
+             * @description Minimum order amount (1 ≤ min ≤ quantity)
+             * @example 10
+             */
+            minOrderQuantity: number;
+            /**
+             * @example NEGOTIABLE
+             * @enum {string}
+             */
+            pricingType: "FIXED" | "NEGOTIABLE";
+            /** @example 112500000 */
+            totalPrice: number;
+            /**
+             * @description Derived on write server-side: round(totalPrice / quantity)
+             * @example 2250000
+             */
+            unitPrice: number;
+            /**
+             * @example GRADE_A
+             * @enum {string}
+             */
+            condition: "GRADE_A" | "GRADE_B" | "GRADE_C" | "MIXED" | "NEW" | "USED" | "DAMAGED" | "NEAR_EXPIRY";
+            /**
+             * @example OVERSTOCK
+             * @enum {string}
+             */
+            liquidationReason: "EXCESS_PRODUCTION" | "CANCELLED_ORDER" | "EXPORT_RETURN" | "SEASON_CLEARANCE" | "OVERSTOCK" | "FACTORY_CLOSURE" | "PACKAGING_CHANGE" | "NEAR_EXPIRY" | "OTHER";
+            /**
+             * @description Province slug (static geo list)
+             * @example tehran
+             */
+            province: string;
+            /**
+             * @description City slug (static geo list)
+             * @example tehran
+             */
+            city: string;
+            /**
+             * @description Approximate public area hint — never the address
+             * @example بازار بزرگ تهران
+             */
+            locationHint?: string | null;
+            /**
+             * @example DRAFT
+             * @enum {string}
+             */
+            status: "DRAFT" | "PENDING_REVIEW" | "ACTIVE" | "PAUSED" | "REJECTED" | "EXPIRED" | "SOLD" | "REMOVED";
+            /** @example 0 */
+            viewCount: number;
+            /** @example 0 */
+            saveCount: number;
+            /**
+             * Format: date-time
+             * @description Listing expiry (+30d at create/submit)
+             * @example 2026-10-05T00:00:00.000Z
+             */
+            expiresAt: string;
+            /**
+             * Format: date-time
+             * @description Set when moderation publishes the lot (admin flow)
+             * @example null
+             */
+            publishedAt?: string | null;
+            /**
+             * Format: date-time
+             * @example null
+             */
+            soldAt?: string | null;
+            /**
+             * Format: date-time
+             * @example null
+             */
+            featuredAt?: string | null;
+            /**
+             * Format: date-time
+             * @example 2026-09-05T00:00:00.000Z
+             */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @example 2026-09-05T00:00:00.000Z
+             */
+            updatedAt: string;
+        };
+        CreateLotDto: {
+            /**
+             * @description 5–120, counted in Unicode code points (fa-aware) — enforced in LotsService
+             * @example عمده پیراهن مردانه — ۵۰ عدد
+             */
+            title: string;
+            /** @example توضیحات کامل کالا، جنس و شرایط فروش */
+            description: string;
+            /**
+             * @description Existing ACTIVE category id
+             * @example clx…cuid
+             */
+            categoryId: string;
+            /**
+             * @description Optional — must be a DIRECT CHILD of categoryId (service rule)
+             * @example clx…cuid
+             */
+            subcategoryId?: string | null;
+            /** @example 50 */
+            quantity: number;
+            /**
+             * @description Defaults to quantity; must stay within 0..quantity (service rule)
+             * @example 50
+             */
+            availableQuantity?: number;
+            /**
+             * @description Defaults to 1; must stay within 1..quantity (service rule)
+             * @example 10
+             */
+            minOrderQuantity?: number;
+            /**
+             * @default PIECE
+             * @enum {string}
+             */
+            unit: "PIECE" | "SET" | "BOX" | "KG" | "PAIR" | "OTHER";
+            /**
+             * @description Whole Toman — unitPrice is derived from this and quantity, never accepted
+             * @example 112500000
+             */
+            totalPrice: number;
+            /** @enum {string} */
+            pricingType: "FIXED" | "NEGOTIABLE";
+            /** @enum {string} */
+            condition: "GRADE_A" | "GRADE_B" | "GRADE_C" | "MIXED" | "NEW" | "USED" | "DAMAGED" | "NEAR_EXPIRY";
+            /** @enum {string} */
+            liquidationReason: "EXCESS_PRODUCTION" | "CANCELLED_ORDER" | "EXPORT_RETURN" | "SEASON_CLEARANCE" | "OVERSTOCK" | "FACTORY_CLOSURE" | "PACKAGING_CHANGE" | "NEAR_EXPIRY" | "OTHER";
+            /**
+             * @description Province slug — must pair with city (geo list)
+             * @example tehran
+             */
+            province: string;
+            /**
+             * @description City slug — must belong to province (geo list)
+             * @example tehran
+             */
+            city: string;
+            /**
+             * @description Approximate PUBLIC area hint — never the address
+             * @example بازار بزرگ تهران
+             */
+            locationHint?: string | null;
+            /**
+             * @description PRIVATE — owner-shape only, released publicly only after a deal (plan R7)
+             * @example تهران، خیابان …، پلاک ۱۲
+             */
+            exactAddress?: string | null;
+            /**
+             * @description false (default) → save as DRAFT; true → submit for moderation (PENDING_REVIEW)
+             * @default false
+             * @example false
+             */
+            submit: boolean;
+        };
+        LotOwnerResponseDto: {
+            /**
+             * @description Internal id — stays internal to the API
+             * @example clx…cuid
+             */
+            id: string;
+            /**
+             * @description Public, non-sequential URL id (nanoid-8 base62)
+             * @example 7Kd2Qm9x
+             */
+            code: string;
+            /**
+             * @description Seller user id — links the public profile
+             * @example clx…cuid
+             */
+            sellerId: string;
+            /** @example clx…cuid */
+            categoryId: string;
+            /** @example clx…cuid */
+            subcategoryId?: string | null;
+            /** @example عمده پیراهن مردانه — ۵۰ عدد */
+            title: string;
+            /** @example توضیحات کامل کالا و شرایط فروش */
+            description: string;
+            /** @example 50 */
+            quantity: number;
+            /**
+             * @example PIECE
+             * @enum {string}
+             */
+            unit: "PIECE" | "SET" | "BOX" | "KG" | "PAIR" | "OTHER";
+            /**
+             * @description Remaining sellable amount (0 ≤ available ≤ quantity)
+             * @example 50
+             */
+            availableQuantity: number;
+            /**
+             * @description Minimum order amount (1 ≤ min ≤ quantity)
+             * @example 10
+             */
+            minOrderQuantity: number;
+            /**
+             * @example NEGOTIABLE
+             * @enum {string}
+             */
+            pricingType: "FIXED" | "NEGOTIABLE";
+            /** @example 112500000 */
+            totalPrice: number;
+            /**
+             * @description Derived on write server-side: round(totalPrice / quantity)
+             * @example 2250000
+             */
+            unitPrice: number;
+            /**
+             * @example GRADE_A
+             * @enum {string}
+             */
+            condition: "GRADE_A" | "GRADE_B" | "GRADE_C" | "MIXED" | "NEW" | "USED" | "DAMAGED" | "NEAR_EXPIRY";
+            /**
+             * @example OVERSTOCK
+             * @enum {string}
+             */
+            liquidationReason: "EXCESS_PRODUCTION" | "CANCELLED_ORDER" | "EXPORT_RETURN" | "SEASON_CLEARANCE" | "OVERSTOCK" | "FACTORY_CLOSURE" | "PACKAGING_CHANGE" | "NEAR_EXPIRY" | "OTHER";
+            /**
+             * @description Province slug (static geo list)
+             * @example tehran
+             */
+            province: string;
+            /**
+             * @description City slug (static geo list)
+             * @example tehran
+             */
+            city: string;
+            /**
+             * @description Approximate public area hint — never the address
+             * @example بازار بزرگ تهران
+             */
+            locationHint?: string | null;
+            /**
+             * @example DRAFT
+             * @enum {string}
+             */
+            status: "DRAFT" | "PENDING_REVIEW" | "ACTIVE" | "PAUSED" | "REJECTED" | "EXPIRED" | "SOLD" | "REMOVED";
+            /** @example 0 */
+            viewCount: number;
+            /** @example 0 */
+            saveCount: number;
+            /**
+             * Format: date-time
+             * @description Listing expiry (+30d at create/submit)
+             * @example 2026-10-05T00:00:00.000Z
+             */
+            expiresAt: string;
+            /**
+             * Format: date-time
+             * @description Set when moderation publishes the lot (admin flow)
+             * @example null
+             */
+            publishedAt?: string | null;
+            /**
+             * Format: date-time
+             * @example null
+             */
+            soldAt?: string | null;
+            /**
+             * Format: date-time
+             * @example null
+             */
+            featuredAt?: string | null;
+            /**
+             * Format: date-time
+             * @example 2026-09-05T00:00:00.000Z
+             */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @example 2026-09-05T00:00:00.000Z
+             */
+            updatedAt: string;
+            /**
+             * @description PRIVATE — owner view only; never in public payloads (plan R7)
+             * @example تهران، خیابان …، پلاک ۱۲
+             */
+            exactAddress?: string | null;
+            /**
+             * @description Moderation verdict — owner view only; cleared on resubmit
+             * @example عکس‌ها کیفیت کافی ندارند
+             */
+            rejectionReason?: string | null;
+        };
+        UpdateLotDto: {
+            /**
+             * @description 5–120 code points (fa-aware); only while DRAFT/REJECTED
+             * @example عمده پیراهن مردانه — ۵۰ عدد
+             */
+            title?: string;
+            /** @example توضیحات به‌روزشده */
+            description?: string;
+            /**
+             * @description Existing ACTIVE category; optional sub must stay its direct child
+             * @example clx…cuid
+             */
+            categoryId?: string;
+            /**
+             * @description Direct child of the resulting categoryId; null clears it
+             * @example clx…cuid
+             */
+            subcategoryId?: string | null;
+            /** @example 50 */
+            quantity?: number;
+            /**
+             * @description Must stay within 0..(resulting quantity)
+             * @example 45
+             */
+            availableQuantity?: number;
+            /**
+             * @description Must stay within 1..(resulting quantity)
+             * @example 10
+             */
+            minOrderQuantity?: number;
+            /** @enum {string} */
+            unit?: "PIECE" | "SET" | "BOX" | "KG" | "PAIR" | "OTHER";
+            /**
+             * @description Editable while ACTIVE/PAUSED — unitPrice re-derived, no re-moderation
+             * @example 120000000
+             */
+            totalPrice?: number;
+            /** @enum {string} */
+            pricingType?: "FIXED" | "NEGOTIABLE";
+            /** @enum {string} */
+            condition?: "GRADE_A" | "GRADE_B" | "GRADE_C" | "MIXED" | "NEW" | "USED" | "DAMAGED" | "NEAR_EXPIRY";
+            /** @enum {string} */
+            liquidationReason?: "EXCESS_PRODUCTION" | "CANCELLED_ORDER" | "EXPORT_RETURN" | "SEASON_CLEARANCE" | "OVERSTOCK" | "FACTORY_CLOSURE" | "PACKAGING_CHANGE" | "NEAR_EXPIRY" | "OTHER";
+            /**
+             * @description The resulting (province, city) pair must be a valid geo pair
+             * @example alborz
+             */
+            province?: string;
+            /**
+             * @description Must belong to the resulting province
+             * @example karaj
+             */
+            city?: string;
+            /**
+             * @description Public area hint; null clears it
+             * @example میدان آزادگان
+             */
+            locationHint?: string | null;
+            /**
+             * @description PRIVATE (owner shape only); null clears it
+             * @example کرج، بلوار …
+             */
+            exactAddress?: string | null;
+            /**
+             * @description true → submit for moderation (DRAFT/REJECTED → PENDING_REVIEW; clears rejectionReason; refreshes expiresAt +30d)
+             * @example true
+             */
+            submit?: boolean;
         };
     };
     responses: never;
@@ -1262,6 +1688,54 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProfileResponseDto"];
+                };
+            };
+        };
+    };
+    LotsController_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateLotDto"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LotOwnerResponseDto"];
+                };
+            };
+        };
+    };
+    LotsController_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateLotDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LotOwnerResponseDto"];
                 };
             };
         };

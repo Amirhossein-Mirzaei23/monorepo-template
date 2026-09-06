@@ -26,6 +26,17 @@ export type UpdateProfileDto = components['schemas']['UpdateProfileDto'];
 /** Read-only trust metrics block on ProfileResponseDto (placeholders until P1). */
 export type ProfileMetricsDto = ProfileResponseDto['metrics'];
 export type CategoryTreeNodeDto = components['schemas']['CategoryTreeNodeDto'];
+// --- lots (LOT-002) ---
+export type CreateLotDto = components['schemas']['CreateLotDto'];
+export type UpdateLotDto = components['schemas']['UpdateLotDto'];
+export type LotPublicResponseDto = components['schemas']['LotPublicResponseDto'];
+/** Owner shape — the only one carrying exactAddress/rejectionReason (plan R7). */
+export type LotOwnerResponseDto = components['schemas']['LotOwnerResponseDto'];
+export type LotStatus = LotPublicResponseDto['status'];
+export type LotUnit = LotPublicResponseDto['unit'];
+export type LotCondition = LotPublicResponseDto['condition'];
+export type LiquidationReason = LotPublicResponseDto['liquidationReason'];
+export type PricingType = LotPublicResponseDto['pricingType'];
 /** The API inlines the role enum into its DTOs; derive it from the user shape. */
 export type UserRole = UserResponseDto['role'];
 export type UserStatus = UserResponseDto['status'];

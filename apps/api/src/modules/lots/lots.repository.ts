@@ -125,7 +125,12 @@ export class LotsRepository {
     return this.client(tx).lot.create({ data });
   }
 
-  async update(id: string, data: Prisma.LotUpdateInput, tx: Tx = undefined): Promise<Lot> {
+  /**
+   * Unchecked variant: callers (LOTS-002 service) set FKs as raw ids
+   * (`categoryId`, `subcategoryId: null`) — relation-object syntax is never
+   * needed because the service validates rows, not links.
+   */
+  async update(id: string, data: Prisma.LotUncheckedUpdateInput, tx: Tx = undefined): Promise<Lot> {
     return this.client(tx).lot.update({ where: { id }, data });
   }
 

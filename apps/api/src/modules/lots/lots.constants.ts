@@ -90,3 +90,33 @@ export function generateLotCode(): string {
   }
   return code;
 }
+
+/**
+ * Create/edit validation bounds (LOT-002, card "validations"). DTOs carry the
+ * coarse per-field guards; LotsService re-asserts the business-critical ones so
+ * every write path (create AND patch, incl. LOT-003 later) shares one source.
+ */
+export const LOT_TITLE_MIN_CODEPOINTS = 5;
+export const LOT_TITLE_MAX_CODEPOINTS = 120;
+export const LOT_DESCRIPTION_MAX = 5000;
+export const LOT_LOCATION_HINT_MAX = 100;
+export const LOT_EXACT_ADDRESS_MAX = 300;
+/** Toman bounds for `totalPrice` (plan §3: money is Int, ≤ 2,000,000,000). */
+export const LOT_MIN_TOTAL_PRICE = 1;
+export const LOT_MAX_TOTAL_PRICE = 2_000_000_000;
+/**
+ * Listing expiry window: stamps `expiresAt` at create AND refreshed at every
+ * submit (PATCH submit=true). Drafts get it too so the `findPublic` safety
+ * filter (expiresAt > now) and the ending-soon sort stay total.
+ */
+export const LOT_DEFAULT_EXPIRY_DAYS = 30;
+/** Unique-code retries on create before giving up (P2002 → new code → 500). */
+export const LOT_CODE_MAX_CREATE_ATTEMPTS = 3;
+
+/** Machine-readable error codes carried on 403/409 bodies (LOT-002). */
+export const LOT_ERROR_CODES = {
+  /** Authenticated user without the SELLER hat (fa copy lives web-side). */
+  SELLER_REQUIRED: 'SELLER_REQUIRED',
+  /** PATCH touching fields that are locked for the lot's current status. */
+  ILLEGAL_STATUS_EDIT: 'ILLEGAL_STATUS_EDIT',
+} as const;

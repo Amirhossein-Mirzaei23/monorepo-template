@@ -85,7 +85,7 @@ Covered by CAT-001 (`GET /categories`). Kept as ID for dependency references onl
 - **Testing:** repository tests against fake-prisma for filter/sort composition; migration up/down tested.
 - **DoD:** migration + model committed; `prisma generate` clean.
 
-### LOT-002 — Lot create/update service + API
+### LOT-002 ✅ — Lot create/update service + API
 
 **P0 · Phase 2 · Lots · M** — Deps: LOT-001, ONB-001 (seller role)
 
