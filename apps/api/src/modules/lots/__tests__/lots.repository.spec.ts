@@ -3,6 +3,7 @@ import {
   LiquidationReason,
   LotStatus,
   LotUnit,
+  MediaType,
   PricingType,
   type Lot,
 } from '@prisma/client';
@@ -261,6 +262,114 @@ describe('LotsRepository', () => {
       const found = await repository.findBySellerAndId('seller-2', lot.id);
 
       expect(found).toBeNull();
+    });
+  });
+
+  describe('findMine (LOT-005)', () => {
+    it('returns every non-REMOVED status of the caller and excludes REMOVED', async () => {
+      seedLot({ title: 'draft', status: LotStatus.DRAFT });
+      seedLot({ title: 'pending', status: LotStatus.PENDING_REVIEW });
+      seedLot({ title: 'active' });
+      seedLot({ title: 'paused', status: LotStatus.PAUSED });
+      seedLot({ title: 'rejected', status: LotStatus.REJECTED });
+      seedLot({ title: 'sold', status: LotStatus.SOLD });
+      seedLot({ title: 'expired', status: LotStatus.EXPIRED });
+      seedLot({ title: 'removed', status: LotStatus.REMOVED, deletedAt: new Date() });
+
+      const result = await repository.findMine('seller-1');
+
+      expect(result.items.map((lot) => lot.title).sort()).toEqual([
+        'active',
+        'draft',
+        'expired',
+        'paused',
+        'pending',
+        'rejected',
+        'sold',
+      ]);
+      expect(result.total).toBe(7);
+    });
+
+    it('scopes strictly to the caller (ownership isolation)', async () => {
+      seedLot({ title: 'mine' });
+      seedLot({ sellerId: 'seller-2', title: 'theirs' });
+
+      const mine = await repository.findMine('seller-1');
+      const theirs = await repository.findMine('seller-2');
+
+      expect(mine.items.map((lot) => lot.title)).toEqual(['mine']);
+      expect(theirs.items.map((lot) => lot.title)).toEqual(['theirs']);
+    });
+
+    it('hides soft-deleted rows even if a status edit ever skipped the deletedAt stamp', async () => {
+      seedLot({ title: 'live' });
+      seedLot({ title: 'stamped', status: LotStatus.REMOVED, deletedAt: new Date() });
+
+      const result = await repository.findMine('seller-1');
+
+      expect(result.items.map((lot) => lot.title)).toEqual(['live']);
+    });
+
+    it('filters by a single status (the dashboard tabs)', async () => {
+      seedLot({ title: 'draft-1', status: LotStatus.DRAFT });
+      seedLot({ title: 'draft-2', status: LotStatus.DRAFT });
+      seedLot({ title: 'active' });
+
+      const drafts = await repository.findMine('seller-1', { status: LotStatus.DRAFT });
+      const active = await repository.findMine('seller-1', { status: LotStatus.ACTIVE });
+      const removed = await repository.findMine('seller-1', { status: LotStatus.REMOVED });
+
+      expect(drafts.items.map((lot) => lot.title)).toEqual(['draft-1', 'draft-2']);
+      expect(drafts.total).toBe(2);
+      expect(active.items.map((lot) => lot.title)).toEqual(['active']);
+      expect(removed.items).toEqual([]);
+    });
+
+    it('sorts newest first (createdAt desc) — the fixed inventory order', async () => {
+      seedLot({ title: 'oldest', createdAt: new Date(BASE_TIME.getTime() - 2 * DAY_MS) });
+      seedLot({ title: 'middle' });
+      seedLot({ title: 'newest', createdAt: new Date(BASE_TIME.getTime() + DAY_MS) });
+
+      const result = await repository.findMine('seller-1');
+
+      expect(result.items.map((lot) => lot.title)).toEqual(['newest', 'middle', 'oldest']);
+    });
+
+    it('returns the Paginated envelope with page slicing', async () => {
+      for (let i = 0; i < 5; i += 1) {
+        seedLot({ title: `lot-${i}`, createdAt: new Date(BASE_TIME.getTime() + i * 1000) });
+      }
+
+      const page1 = await repository.findMine('seller-1', { page: 1, limit: 2 });
+      const page3 = await repository.findMine('seller-1', { page: 3, limit: 2 });
+      const past = await repository.findMine('seller-1', { page: 4, limit: 2 });
+
+      expect(page1.total).toBe(5);
+      expect(page1.page).toBe(1);
+      expect(page1.limit).toBe(2);
+      expect(page1.items.map((lot) => lot.title)).toEqual(['lot-4', 'lot-3']);
+      expect(page3.items.map((lot) => lot.title)).toEqual(['lot-0']);
+      expect(past.items).toEqual([]);
+    });
+
+    it('joins the ordered gallery (owner rows always carry media[])', async () => {
+      const asset = fake.seedMediaAsset({
+        ownerId: 'seller-1',
+        type: MediaType.IMAGE,
+        mime: 'image/png',
+        sizeBytes: 10,
+      });
+      fake.seedLotMedia({
+        lotId: seedLot({ title: 'with-media' }).id,
+        mediaAssetId: asset.id,
+        sortOrder: 0,
+        isCover: true,
+      });
+
+      const result = await repository.findMine('seller-1');
+
+      expect(result.items[0]?.media).toHaveLength(1);
+      expect(result.items[0]?.media[0]?.isCover).toBe(true);
     });
   });
 

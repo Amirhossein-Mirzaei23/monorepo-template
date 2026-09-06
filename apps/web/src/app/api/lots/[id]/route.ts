@@ -41,3 +41,17 @@ export async function PATCH(request: NextRequest, context: RouteContext): Promis
   const payload = await upstream.json();
   return NextResponse.json(payload);
 }
+
+/** BFF proxy: DELETE /lots/:id — soft delete to REMOVED (removed owner body back). */
+export async function DELETE(request: NextRequest, context: RouteContext): Promise<Response> {
+  const { id } = await context.params;
+  const upstream = await proxyToApi(request, `lots/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    forwardAuth: true,
+  });
+  if (!upstream.ok) {
+    return upstreamError(upstream);
+  }
+  const payload = await upstream.json();
+  return NextResponse.json(payload);
+}

@@ -93,8 +93,9 @@ type MediaAssetCreateData = {
   durationMs?: number | null;
 };
 
-/** Exactly the surface LotsRepository composes (LOT-001 findPublic + lookups). */
-type LotEnumFilter<T extends string> = T | { in: T[] };
+/** Exactly the surface LotsRepository composes (LOT-001 findPublic + lookups
+ * + LOT-005 findMine's notIn status predicate). */
+type LotEnumFilter<T extends string> = T | { in: T[] } | { notIn: T[] };
 type LotTextFilter = { contains: string; mode: 'insensitive' };
 type LotWhere = {
   id?: string;
@@ -1227,7 +1228,13 @@ function matchesLotWhere(where: LotWhere | undefined): (row: Lot) => boolean {
 }
 
 function matchesLotEnumFilter<T extends string>(value: T, filter: LotEnumFilter<T>): boolean {
-  return typeof filter === 'string' ? value === filter : filter.in.includes(value);
+  if (typeof filter === 'string') {
+    return value === filter;
+  }
+  if ('in' in filter) {
+    return filter.in.includes(value);
+  }
+  return !filter.notIn.includes(value);
 }
 
 /** OR-branch matcher for the search filter (case-insensitive contains). */

@@ -20,6 +20,7 @@ import {
 } from '@prisma/client';
 import { requireAppConfig } from '../../config/configuration';
 import { findIranCity } from '../../common/constants/iran-geo';
+import type { Paginated } from '../../common/dto/pagination-query.dto';
 import { CategoriesRepository } from '../categories/categories.repository';
 import { MediaRepository } from '../media/media.repository';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -40,6 +41,7 @@ import {
 import { toLotOwnerResponse, type LotOwnerResponseDto } from './dto/lot-response.dto';
 import type { PutLotMediaDto } from './dto/lot-media.dto';
 import type { CreateLotDto } from './dto/create-lot.dto';
+import type { MyLotsQueryDto } from './dto/my-lots-query.dto';
 import type { UpdateLotDto } from './dto/update-lot.dto';
 
 /**
@@ -439,6 +441,39 @@ export class LotsService {
         deletedAt: new Date(),
       }),
     );
+  }
+
+  // --- owner reads (LOT-005: seller inventory + the edit-flow load step) ---
+
+  /**
+   * Seller inventory (GET /lots/mine, LOT-005): every NON-REMOVED lot the
+   * caller owns, newest first, one optional status filter (the dashboard
+   * tabs), Paginated envelope of OWNER shapes (media[] per row). The SELLER
+   * hat is asserted like every other owner route (403 SELLER_REQUIRED first —
+   * the same order requireOwnedLot uses for single-lot actions).
+   */
+  async findMine(sellerId: string, query: MyLotsQueryDto): Promise<Paginated<LotOwnerResponseDto>> {
+    const user = await this.requireUser(sellerId);
+    this.assertSeller(user);
+    const { items, total, page, limit } = await this.repository.findMine(sellerId, {
+      status: query.status,
+      page: query.page,
+      limit: query.limit,
+    });
+    return { items: items.map((lot) => this.toResponse(lot)), total, page, limit };
+  }
+
+  /**
+   * Owner-scoped single read (GET /lots/:id, LOT-005) — closes the LOT-004
+   * edit-load gap (the wizard's useLot already calls it through the BFF).
+   * requireOwnedLot = authenticated (401) → SELLER hat (403 SELLER_REQUIRED)
+   * → 404 missing → 403 foreign. REMOVED stays resolvable per LOT-003
+   * semantics: the soft-deleted row is hidden from listings, not erased for
+   * its owner.
+   */
+  async findOwned(sellerId: string, id: string): Promise<LotOwnerResponseDto> {
+    const lot = await this.requireOwnedLot(sellerId, id);
+    return this.toResponse(lot);
   }
 
   // --- gallery replace (MEDIA-005) ---

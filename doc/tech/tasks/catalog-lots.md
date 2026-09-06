@@ -142,7 +142,7 @@ Covered by CAT-001 (`GET /categories`). Kept as ID for dependency references onl
 - **Testing:** component tests per step; wizard flow test (mocked api); unit-price derivation test.
 - **DoD:** lint/typecheck/test green; used by QA-001.
 
-### LOT-005 — My Lots management UI
+### LOT-005 ✅ — My Lots management UI
 
 **P0 · Phase 2 · Lots · M** — Deps: LOT-003, LOT-004
 

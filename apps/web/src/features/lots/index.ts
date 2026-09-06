@@ -4,6 +4,7 @@
  */
 export { CreateLotWizard, type CreateLotWizardProps } from './components/create-lot-wizard';
 export { LotSummaryCard, type LotSummaryCardProps } from './components/lot-summary-card';
+export { MyLotsPage } from './components/my-lots-page';
 export { UnitPricePreview, type UnitPricePreviewProps } from './components/unit-price-preview';
 export { StepMedia } from './components/steps/step-media';
 export { StepBasics } from './components/steps/step-basics';

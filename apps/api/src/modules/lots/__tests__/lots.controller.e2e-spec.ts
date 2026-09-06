@@ -40,7 +40,9 @@ describe('LotsController (e2e)', () => {
   let child: { id: string };
   let otherChild: { id: string };
 
-  /** Registers-or-logs-in by phone OTP (dev mode echoes the code) → bearer token. */
+  /** Registers-or-logs-in by phone OTP (dev mode echoes the code) → bearer token.
+   * The verify hop gets its own per-IP bucket like otp/request — LOT-005 grew
+   * the suite past the shared 100 req/min global throttle budget. */
   async function login(phone: string): Promise<string> {
     const otp = await request(app.getHttpServer())
       .post('/auth/otp/request')
@@ -49,6 +51,7 @@ describe('LotsController (e2e)', () => {
       .expect(200);
     const response = await request(app.getHttpServer())
       .post('/auth/otp/verify')
+      .set('X-Forwarded-For', nextIp())
       .send({ phone, code: otp.body.devCode })
       .expect(200);
     return response.body.accessToken as string;
@@ -425,6 +428,191 @@ describe('LotsController (e2e)', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({ subcategoryId: otherChild.id }) // child of shoes, lot category is apparel
         .expect(400);
+    });
+  });
+
+  // ==========================================================================
+  // LOT-005 — owner reads: GET /lots/mine (seller inventory) + GET /lots/:id
+  // ==========================================================================
+
+  describe('GET /lots/mine', () => {
+    it('requires authentication (401 without a token)', async () => {
+      await request(app.getHttpServer()).get('/lots/mine').expect(401);
+    });
+
+    it('rejects buyer-only accounts with 403 + code SELLER_REQUIRED', async () => {
+      const buyer = await login(nextPhone());
+      const response = await request(app.getHttpServer())
+        .get('/lots/mine')
+        .set('Authorization', `Bearer ${buyer}`)
+        .expect(403);
+      expect(response.body.code).toBe('SELLER_REQUIRED');
+    });
+
+    it('returns the caller’s lots across every non-REMOVED status, newest first, in the Paginated envelope', async () => {
+      const { token, userId } = await loginAsSeller();
+      const now = Date.now();
+      seedLot(userId, {
+        title: 'قدیمی‌ترین',
+        status: LotStatus.DRAFT,
+        createdAt: new Date(now - 2_000),
+      });
+      seedLot(userId, {
+        title: 'جدیدترین',
+        status: LotStatus.ACTIVE,
+        publishedAt: new Date(),
+        createdAt: new Date(now),
+      });
+      seedLot(userId, {
+        title: 'میانه',
+        status: LotStatus.PAUSED,
+        createdAt: new Date(now - 1_000),
+      });
+      seedLot(userId, { title: 'حذف‌شده', status: LotStatus.REMOVED, deletedAt: new Date() });
+
+      const response = await request(app.getHttpServer())
+        .get('/lots/mine')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(response.body.total).toBe(3);
+      expect(response.body.page).toBe(1);
+      expect(response.body.limit).toBe(20);
+      expect(response.body.items.map((lot: { title: string }) => lot.title)).toEqual([
+        'جدیدترین',
+        'میانه',
+        'قدیمی‌ترین',
+      ]);
+      // Owner shape per row: the private fields + the gallery array.
+      expect(response.body.items[0]).toHaveProperty('exactAddress');
+      expect(response.body.items[0]).toHaveProperty('rejectionReason');
+      expect(Array.isArray(response.body.items[0].media)).toBe(true);
+    });
+
+    it('isolates by owner — another seller’s lots never appear', async () => {
+      const { userId } = await loginAsSeller();
+      seedLot(userId, { title: 'مال من' });
+      const other = await loginAsSeller();
+      seedLot(other.userId, { title: 'مال دیگری' });
+
+      const response = await request(app.getHttpServer())
+        .get('/lots/mine')
+        .set('Authorization', `Bearer ${other.token}`)
+        .expect(200);
+
+      expect(response.body.items.map((lot: { title: string }) => lot.title)).toEqual(['مال دیگری']);
+    });
+
+    it('filters by status (?status=DRAFT) and validates the enum (400 on junk)', async () => {
+      const { token, userId } = await loginAsSeller();
+      seedLot(userId, { title: 'پیش‌نویس', status: LotStatus.DRAFT });
+      seedLot(userId, { title: 'فعال', status: LotStatus.ACTIVE, publishedAt: new Date() });
+
+      const drafts = await request(app.getHttpServer())
+        .get('/lots/mine?status=DRAFT')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(drafts.body.items.map((lot: { title: string }) => lot.title)).toEqual(['پیش‌نویس']);
+      expect(drafts.body.total).toBe(1);
+
+      const sold = await request(app.getHttpServer())
+        .get('/lots/mine?status=SOLD')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(sold.body.items).toEqual([]);
+      expect(sold.body.total).toBe(0);
+
+      await request(app.getHttpServer())
+        .get('/lots/mine?status=NOT_A_STATUS')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(400);
+    });
+
+    it('paginates (?page=&limit=)', async () => {
+      const { token, userId } = await loginAsSeller();
+      for (let i = 0; i < 3; i += 1) {
+        seedLot(userId, { title: `لوت ${i}` });
+      }
+
+      const page1 = await request(app.getHttpServer())
+        .get('/lots/mine?page=1&limit=2')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const page2 = await request(app.getHttpServer())
+        .get('/lots/mine?page=2&limit=2')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(page1.body.total).toBe(3);
+      expect(page1.body.items).toHaveLength(2);
+      expect(page2.body.items).toHaveLength(1);
+    });
+  });
+
+  describe('GET /lots/:id (owner read)', () => {
+    it('requires authentication (401 without a token)', async () => {
+      const { userId } = await loginAsSeller();
+      const lot = seedLot(userId);
+      await request(app.getHttpServer()).get(`/lots/${lot.id}`).expect(401);
+    });
+
+    it('returns the owner shape: exactAddress + rejectionReason + media, exact key allowlist', async () => {
+      const { token, userId } = await loginAsSeller();
+      const lot = seedLot(userId, {
+        status: LotStatus.REJECTED,
+        rejectionReason: 'عکس‌ها کیفیت کافی ندارند',
+        exactAddress: 'تهران، خیابان …، پلاک ۱۲',
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(`/lots/${lot.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(response.body.id).toBe(lot.id);
+      expect(response.body.exactAddress).toBe('تهران، خیابان …، پلاک ۱۲');
+      expect(response.body.rejectionReason).toBe('عکس‌ها کیفیت کافی ندارند');
+      expect(Array.isArray(response.body.media)).toBe(true);
+      expect(Object.keys(response.body).sort()).toContain('exactAddress');
+    });
+
+    it('resolves a REMOVED lot for its owner (LOT-003 soft-delete semantics)', async () => {
+      const { token, userId } = await loginAsSeller();
+      const lot = seedLot(userId, { status: LotStatus.REMOVED, deletedAt: new Date() });
+
+      const response = await request(app.getHttpServer())
+        .get(`/lots/${lot.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(response.body.status).toBe('REMOVED');
+    });
+
+    it('404 for an unknown id and 403 for a foreign lot', async () => {
+      const { token, userId } = await loginAsSeller();
+      const lot = seedLot(userId);
+
+      await request(app.getHttpServer())
+        .get('/lots/missing-lot-id')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(404);
+
+      const other = await loginAsSeller();
+      const foreign = await request(app.getHttpServer())
+        .get(`/lots/${lot.id}`)
+        .set('Authorization', `Bearer ${other.token}`)
+        .expect(403);
+      expect(foreign.body.message).toContain('own');
+    });
+
+    it('403 + SELLER_REQUIRED for buyer-only accounts', async () => {
+      const { userId } = await loginAsSeller();
+      const lot = seedLot(userId);
+      const buyer = await login(nextPhone());
+      const response = await request(app.getHttpServer())
+        .get(`/lots/${lot.id}`)
+        .set('Authorization', `Bearer ${buyer}`)
+        .expect(403);
+      expect(response.body.code).toBe('SELLER_REQUIRED');
     });
   });
 

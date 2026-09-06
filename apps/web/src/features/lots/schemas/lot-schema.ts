@@ -17,6 +17,7 @@ import type {
   LotUnit,
   PricingType,
 } from '@monorepo/shared-types';
+import { lotOwnerResponseSchema } from '@monorepo/shared-types';
 import { formatFaDigits } from '@/lib/format';
 import { IRAN_PROVINCES, findIranCity } from '@/lib/iran-geo';
 
@@ -178,6 +179,18 @@ export const lotFormSchema = z
   });
 
 export type LotFormData = z.infer<typeof lotFormSchema>;
+
+/**
+ * GET /lots/mine response envelope (LOT-005) — the API's Paginated<LotOwnerResponseDto>
+ * composed from the generated owner schema, so contract drift on the inventory
+ * list fails loudly like every other parsed response.
+ */
+export const lotMinePageSchema = z.object({
+  items: z.array(lotOwnerResponseSchema),
+  total: z.number(),
+  page: z.number(),
+  limit: z.number(),
+});
 
 /** Per-step field names — a step is valid when its slice parses. */
 export const STEP_FIELDS = {

@@ -9,10 +9,22 @@ import {
   parseApiResponse,
   type CreateLotDto,
   type LotOwnerResponseDto,
+  type LotStatus,
+  type Paginated,
   type UpdateLotDto,
 } from '@monorepo/shared-types';
 import { apiFetch } from '@/lib/api-client';
+import { lotMinePageSchema } from '../schemas/lot-schema';
 import type { LotMediaPutPayload } from '../types';
+
+/** Tab filter for GET /lots/mine — a real status, or `all` (the merged فعال tab). */
+export type MineStatusFilter = LotStatus | 'all';
+
+export interface MyLotsQuery {
+  status?: MineStatusFilter;
+  page?: number;
+  limit?: number;
+}
 
 /** POST /lots — submit=false saves a DRAFT, submit=true submits for moderation. */
 export async function createLotRequest(
@@ -36,6 +48,66 @@ export async function lotRequest(
   }
   const raw = await apiFetch<unknown>(`/api/lots/${encodeURIComponent(id)}`, { token });
   return parseApiResponse(lotOwnerResponseSchema, raw, 'lot');
+}
+
+/** GET /lots/mine — paginated seller inventory, newest first (LOT-005). */
+export async function myLotsRequest(
+  token: string | undefined,
+  query: MyLotsQuery = {},
+): Promise<Paginated<LotOwnerResponseDto>> {
+  if (!token) {
+    throw new Error('Not authenticated');
+  }
+  const params = new URLSearchParams();
+  if (query.status !== undefined && query.status !== 'all') {
+    params.set('status', query.status);
+  }
+  if (query.page !== undefined) {
+    params.set('page', String(query.page));
+  }
+  if (query.limit !== undefined) {
+    params.set('limit', String(query.limit));
+  }
+  const search = params.toString();
+  const raw = await apiFetch<unknown>(`/api/lots/mine${search ? `?${search}` : ''}`, { token });
+  return parseApiResponse(lotMinePageSchema, raw, 'my lots');
+}
+
+/**
+ * POST /lots/:id/<action> — the LOT-003 lifecycle endpoints the my-lots UI
+ * exposes (`duplicate` returns 201, the rest 200; every body is the fresh
+ * owner shape).
+ */
+export type LotLifecycleAction = 'pause' | 'resume' | 'mark-sold' | 'duplicate';
+
+export async function lotActionRequest(
+  token: string | undefined,
+  id: string,
+  action: LotLifecycleAction,
+): Promise<LotOwnerResponseDto> {
+  if (!token) {
+    throw new Error('Not authenticated');
+  }
+  const raw = await apiFetch<unknown>(`/api/lots/${encodeURIComponent(id)}/${action}`, {
+    method: 'POST',
+    token,
+  });
+  return parseApiResponse(lotOwnerResponseSchema, raw, `${action} lot`);
+}
+
+/** DELETE /lots/:id — soft delete to REMOVED (200 with the removed owner body). */
+export async function deleteLotRequest(
+  token: string | undefined,
+  id: string,
+): Promise<LotOwnerResponseDto> {
+  if (!token) {
+    throw new Error('Not authenticated');
+  }
+  const raw = await apiFetch<unknown>(`/api/lots/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    token,
+  });
+  return parseApiResponse(lotOwnerResponseSchema, raw, 'delete lot');
 }
 
 /** PATCH /lots/:id — DRAFT/REJECTED fully editable; ACTIVE/PAUSED price/quantity only. */

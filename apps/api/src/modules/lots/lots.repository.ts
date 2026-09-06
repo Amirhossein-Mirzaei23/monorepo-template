@@ -26,6 +26,13 @@ export interface FindPublicLotsParams {
   limit?: number;
 }
 
+/** Owner inventory params (GET /lots/mine, LOT-005) — one optional status tab. */
+export interface FindMineLotsParams {
+  status?: LotStatus;
+  page?: number;
+  limit?: number;
+}
+
 /** Sort allowlist for the public listing — mapped to orderBy below. */
 export const LOT_PUBLIC_SORTS = ['newest', 'price-asc', 'price-desc', 'ending-soon'] as const;
 export type LotPublicSort = (typeof LOT_PUBLIC_SORTS)[number];
@@ -138,6 +145,47 @@ export class LotsRepository {
   /** Owner-scoped fetch (seller dashboard/actions) — null for other sellers' lots. */
   async findBySellerAndId(sellerId: string, id: string, tx: Tx = undefined): Promise<Lot | null> {
     return this.client(tx).lot.findFirst({ where: { id, sellerId } });
+  }
+
+  /**
+   * Seller inventory (GET /lots/mine, LOT-005): every lot the caller owns in a
+   * NON-REMOVED status, newest first, with the gallery include (owner rows
+   * always carry media[] — same include as the single-row reads).
+   *
+   * - Default predicate is `status: { notIn: [REMOVED] }` rather than an
+   *   explicit allowlist of the current statuses: a future enum member must
+   *   show up in the seller's list instead of silently vanishing. REMOVED is
+   *   the only status that never belongs in any tab (the card's «deleted lots
+   *   are REMOVED and hidden» rule); `deletedAt: null` is the same belt-and-
+   *   braces as findPublic.
+   * - `status` narrows to exactly one tab (validated against the enum at the
+   *   controller).
+   * - Sort is FIXED to createdAt desc (newest first) — no sort param on this
+   *   endpoint's contract.
+   * - Served by the (sellerId, status, updatedAt) index from LOT-001.
+   */
+  async findMine(
+    sellerId: string,
+    { status, page = 1, limit = 20 }: FindMineLotsParams = {},
+    tx: Tx = undefined,
+  ): Promise<Paginated<LotWithMedia>> {
+    const where: Prisma.LotWhereInput = {
+      sellerId,
+      deletedAt: null,
+      status: status ?? { notIn: [LotStatus.REMOVED] },
+    };
+    const client = this.client(tx);
+    const [items, total] = await Promise.all([
+      client.lot.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: LOT_MEDIA_INCLUDE,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      client.lot.count({ where }),
+    ]);
+    return { items, total, page, limit };
   }
 
   async findById(id: string, tx: Tx = undefined): Promise<LotWithMedia | null> {
