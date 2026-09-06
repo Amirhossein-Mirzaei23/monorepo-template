@@ -55,7 +55,7 @@ Complexity: XS 1 · S 22 · M 71 · L 12 · XL 1.
 | PROF-005  | Seller metrics rollup job             | P1  | 9   | M   |     | DEAL-007 | Dispute handling                    | P1  | 9   | M   |
 | CAT-001   | ✅ Category domain + seed             | P0  | 2   | M   |     | TRS-001  | Verification domain + admin API     | P0  | 7   | M   |
 | CAT-002   | _(folded into CAT-001)_               | —   | —   | —   |     | TRS-002  | Badge display                       | P0  | 7   | S   |
-| CAT-003   | Category picker components            | P0  | 2   | S   |     | TRS-003  | Reports domain + create API         | P0  | 7   | M   |
+| CAT-003   | ✅ Category picker components         | P0  | 2   | S   |     | TRS-003  | Reports domain + create API         | P0  | 7   | M   |
 | CAT-004   | Admin categories CRUD API             | P0  | 2   | M   |     | TRS-004  | Report UI                           | P0  | 7   | S   |
 | LOT-001   | Lot domain model + repository         | P0  | 2   | L   |     | TRS-005  | Lot moderation queue API            | P0  | 7   | M   |
 | LOT-002   | Lot create/update API                 | P0  | 2   | M   |     | TRS-006  | Moderation wiring (seller view)     | P0  | 7   | S   |

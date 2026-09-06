@@ -29,7 +29,7 @@ Lot lifecycle: `DRAFT → PENDING_REVIEW → ACTIVE ⇄ PAUSED; → SOLD | EXPIR
 
 Covered by CAT-001 (`GET /categories`). Kept as ID for dependency references only.
 
-### CAT-003 — Category picker components
+### CAT-003 ✅ — Category picker components
 
 **P0 · Phase 2 · Catalog · S** — Deps: CAT-001
 
