@@ -43,6 +43,20 @@ export class MediaRepository {
     return this.client(tx).mediaAsset.findUnique({ where: { id } });
   }
 
+  /**
+   * MEDIA-002 quota read: rows the owner already created since `since`
+   * (start of the current UTC day). The (ownerId, createdAt) index from
+   * MEDIA-001 covers exactly this scan. Count-then-create is intentionally
+   * NOT transactional — the quota is a soft daily cap and a racing double
+   * upload at most overshoots it by one; serializing uploads per user for
+   * that is not worth the lock.
+   */
+  async countByOwnerSince(ownerId: string, since: Date, tx: Tx = undefined): Promise<number> {
+    return this.client(tx).mediaAsset.count({
+      where: { ownerId, createdAt: { gte: since } },
+    });
+  }
+
   async create(data: MediaAssetCreateData, tx: Tx = undefined): Promise<MediaAsset> {
     return this.client(tx).mediaAsset.create({
       data: {

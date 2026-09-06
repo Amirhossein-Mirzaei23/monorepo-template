@@ -64,7 +64,7 @@ Complexity: XS 1 · S 22 · M 71 · L 12 · XL 1.
 | LOT-005   | My Lots management UI                    | P0  | 2   | M   |     | ADM-002  | Admin users management              | P0  | 7   | M   |
 | LOT-006   | ✅ Lot expiration job                    | P0  | 2   | S   |     | ADM-003  | Admin lots moderation UI            | P0  | 7   | L   |
 | MEDIA-001 | ✅ StorageService + MediaAsset + serving | P0  | 3   | M   |     | ADM-004  | Admin reports queue                 | P0  | 7   | M   |
-| MEDIA-002 | Image upload API (sharp variants)        | P0  | 3   | M   |     | ADM-005  | Admin deals view                    | P0  | 7   | M   |
+| MEDIA-002 | ✅ Image upload API (sharp variants)     | P0  | 3   | M   |     | ADM-005  | Admin deals view                    | P0  | 7   | M   |
 | MEDIA-003 | Video upload API (client poster)         | P0  | 3   | M   |     | ADM-006  | Admin verification review           | P0  | 7   | M   |
 | MEDIA-004 | Web uploader components                  | P0  | 3   | L   |     | ADM-007  | Admin categories management         | P0  | 7   | M   |
 | MEDIA-005 | Lot media attach/organize                | P0  | 3   | S   |     | ADM-008  | Admin dashboard completeness        | P0  | 7   | S   |

@@ -15,6 +15,7 @@ const managedKeys = [
   'MAX_LOT_IMAGES',
   'MAX_LOT_VIDEOS',
   'MAX_VIDEO_SECONDS',
+  'MAX_IMAGE_UPLOADS_PER_DAY',
   'WS_ORIGINS',
 ] as const;
 
@@ -60,6 +61,7 @@ describe('configuration factory (PLAT-003 additions)', () => {
       maxLotImages: 15,
       maxLotVideos: 3,
       maxVideoSeconds: 60,
+      dailyImageUploads: 200,
     });
     expect(app.ws).toEqual({ origins: ['http://localhost:3000'] });
   });
@@ -72,6 +74,7 @@ describe('configuration factory (PLAT-003 additions)', () => {
     process.env.PUBLIC_MEDIA_BASE_URL = 'https://cdn.example.com/media';
     process.env.MAX_VIDEO_MB = '80';
     process.env.MAX_VIDEO_SECONDS = '30';
+    process.env.MAX_IMAGE_UPLOADS_PER_DAY = '50';
 
     const { app } = configuration();
 
@@ -80,7 +83,11 @@ describe('configuration factory (PLAT-003 additions)', () => {
       dir: '/var/lib/rakdsho/media',
       publicMediaBaseUrl: 'https://cdn.example.com/media',
     });
-    expect(app.uploads).toMatchObject({ maxVideoMb: 80, maxVideoSeconds: 30 });
+    expect(app.uploads).toMatchObject({
+      maxVideoMb: 80,
+      maxVideoSeconds: 30,
+      dailyImageUploads: 50,
+    });
   });
 
   it('parses WS_ORIGINS into a trimmed, de-blanked string array', () => {

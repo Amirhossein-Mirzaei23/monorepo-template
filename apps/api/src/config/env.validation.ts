@@ -164,6 +164,12 @@ export class EnvironmentVariables {
   @Min(1)
   MAX_VIDEO_SECONDS: number = 60;
 
+  // MEDIA-002 per-user daily image-upload quota (MediaAsset rows today, UTC).
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  MAX_IMAGE_UPLOADS_PER_DAY: number = 200;
+
   // WebSocket gateway (CHT-004) — comma-separated handshake origin allowlist.
   @IsOptional()
   @IsString()

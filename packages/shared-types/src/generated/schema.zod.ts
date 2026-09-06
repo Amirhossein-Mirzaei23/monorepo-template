@@ -298,6 +298,19 @@ export const updateLotDtoSchema = z.object({
   submit: z.boolean().optional(),
 });
 
+export const mediaUploadUrlsDtoSchema = z.object({
+  original: z.string(),
+  cover: z.string(),
+  thumb: z.string(),
+});
+
+export const mediaUploadResponseDtoSchema = z.object({
+  id: z.string(),
+  urls: mediaUploadUrlsDtoSchema,
+  width: z.number(),
+  height: z.number(),
+});
+
 export const apiSchemas = {
   Object: objectSchema,
   UserResponseDto: userResponseDtoSchema,
@@ -324,4 +337,6 @@ export const apiSchemas = {
   CreateLotDto: createLotDtoSchema,
   LotOwnerResponseDto: lotOwnerResponseDtoSchema,
   UpdateLotDto: updateLotDtoSchema,
+  MediaUploadUrlsDto: mediaUploadUrlsDtoSchema,
+  MediaUploadResponseDto: mediaUploadResponseDtoSchema,
 } as const;

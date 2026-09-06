@@ -26,7 +26,7 @@ on the distroless API). Limits (PLAT-003): image ≤ 10 MB × 15/lot, video ≤ 
 - **Testing:** driver unit tests (tmp dir), controller e2e (streams, headers, auth).
 - **DoD:** `STORAGE_DIR` in .gitignore + docker-compose volume for api service; suites green.
 
-### MEDIA-002 — Image upload API (variants via sharp)
+### MEDIA-002 ✅ — Image upload API (variants via sharp)
 
 **P0 · Phase 3 · Media · M** — Deps: MEDIA-001 (adds `sharp` dep — intentional package-lock change)
 

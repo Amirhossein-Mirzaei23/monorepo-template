@@ -417,6 +417,23 @@ export interface paths {
         patch: operations["LotsController_update"];
         trace?: never;
     };
+    "/media": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload an image (multipart `file`): stores the original plus 1200w/480w WebP variants */
+        post: operations["MediaController_uploadImage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/media/secure/{year}/{month}/{file}": {
         parameters: {
             query?: never;
@@ -1301,6 +1318,38 @@ export interface components {
              */
             submit?: boolean;
         };
+        MediaUploadUrlsDto: {
+            /** @example http://localhost:3001/media/2026/09/abc…123.jpg */
+            original: string;
+            /**
+             * @description WebP q80 variant, width ≤ 1200 (no upscale)
+             * @example http://localhost:3001/media/2026/09/abc…123c.webp
+             */
+            cover: string;
+            /**
+             * @description WebP q80 variant, width ≤ 480 (no upscale)
+             * @example http://localhost:3001/media/2026/09/abc…123t.webp
+             */
+            thumb: string;
+        };
+        MediaUploadResponseDto: {
+            /**
+             * @description MediaAsset id
+             * @example clx…cuid
+             */
+            id: string;
+            urls: components["schemas"]["MediaUploadUrlsDto"];
+            /**
+             * @description Original pixel width (sharp metadata)
+             * @example 4032
+             */
+            width: number;
+            /**
+             * @description Original pixel height (sharp metadata)
+             * @example 3024
+             */
+            height: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -1982,6 +2031,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LotOwnerResponseDto"];
+                };
+            };
+        };
+    };
+    MediaController_uploadImage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /**
+                     * Format: binary
+                     * @description Image file: JPEG, PNG or WebP ≤ 10 MB. The declared Content-Type is verified against the magic bytes; filenames are ignored for storage.
+                     */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaUploadResponseDto"];
                 };
             };
         };

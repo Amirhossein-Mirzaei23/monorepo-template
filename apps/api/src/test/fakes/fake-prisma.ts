@@ -72,10 +72,12 @@ type OtpWhere = {
 };
 type OtpOrderBy = Record<string, 'asc' | 'desc'>;
 
-/** Exactly the surface MediaRepository composes (MEDIA-001 serving + CRUD). */
+/** Exactly the surface MediaRepository composes (MEDIA-001 serving + MEDIA-002 quota). */
 type MediaAssetWhere = {
   id?: string;
   storageKey?: string;
+  ownerId?: string;
+  createdAt?: { gte?: Date };
 };
 /** Create payload: all scalars (no relations — ownerId is the FK column). */
 type MediaAssetCreateData = {
@@ -763,7 +765,7 @@ export class FakePrisma {
     },
   };
 
-  /** Exactly the surface MediaRepository uses (MEDIA-001). */
+  /** Exactly the surface MediaRepository uses (MEDIA-001 + MEDIA-002 quota). */
   readonly mediaAsset = {
     findUnique: async ({ where }: { where: MediaAssetWhere }): Promise<MediaAsset | null> => {
       let found: MediaAsset | undefined;
@@ -774,6 +776,8 @@ export class FakePrisma {
       }
       return found ? cloneMediaAsset(found) : null;
     },
+    count: async ({ where }: { where?: MediaAssetWhere } = {}): Promise<number> =>
+      [...this.mediaAssets.values()].filter(matchesMediaAssetWhere(where)).length,
     create: async ({ data }: { data: MediaAssetCreateData }): Promise<MediaAsset> => {
       const row = buildMediaAssetRow(data);
       this.mediaAssets.set(row.id, row);
@@ -1160,6 +1164,17 @@ function cloneMediaAsset(row: MediaAsset): MediaAsset {
     createdAt: new Date(row.createdAt),
     updatedAt: new Date(row.updatedAt),
   };
+}
+
+/** MEDIA-002 quota matcher: owner scoping + optional createdAt lower bound. */
+function matchesMediaAssetWhere(where: MediaAssetWhere | undefined): (row: MediaAsset) => boolean {
+  return (row) =>
+    (where?.id === undefined || row.id === where.id) &&
+    (where?.storageKey === undefined || row.storageKey === where.storageKey) &&
+    (where?.ownerId === undefined || row.ownerId === where.ownerId) &&
+    (where?.createdAt === undefined ||
+      where.createdAt.gte === undefined ||
+      row.createdAt >= where.createdAt.gte);
 }
 
 function cloneProfile(row: Profile): Profile {

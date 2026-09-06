@@ -1,6 +1,15 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  InternalServerErrorException,
+  NotFoundException,
+  PayloadTooLargeException,
+  UnsupportedMediaTypeException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MediaType } from '@prisma/client';
+import sharp from 'sharp';
 import { mkdtemp, rm } from 'node:fs/promises';
 import type { Readable } from 'node:stream';
 import { tmpdir } from 'node:os';
@@ -8,6 +17,7 @@ import { join } from 'node:path';
 import type { AppConfig } from '../../../config/configuration';
 import type { PrismaService } from '../../../prisma/prisma.service';
 import { FakePrisma } from '../../../test/fakes/fake-prisma';
+import { ImageVariantService } from '../images/variant.service';
 import { MediaRepository } from '../media.repository';
 import {
   MEDIA_ERROR_CODES,
@@ -15,6 +25,7 @@ import {
   MEDIA_SECURE_KEY_PATTERN,
 } from '../media.constants';
 import { MediaService } from '../media.service';
+import type { UploadedMediaFile } from '../media.service';
 import { LocalDiskDriver } from '../storage/local-disk.driver';
 import { StorageService } from '../storage/storage.service';
 
@@ -43,6 +54,9 @@ function errorCodeOf(error: Error): unknown {
   return (error as BadRequestException).getResponse?.();
 }
 
+/** Shared typed-config stub (storage root + uploads limits) for both suites. */
+let serviceConfig: AppConfig;
+
 describe('MediaService (MEDIA-001)', () => {
   let service: MediaService;
   let storage: StorageService;
@@ -55,12 +69,26 @@ describe('MediaService (MEDIA-001)', () => {
 
   beforeAll(async () => {
     root = await mkdtemp(join(tmpdir(), 'media-service-'));
-    const config = {
+    serviceConfig = {
       storage: { dir: root, publicMediaBaseUrl: 'http://localhost:3001/media' },
+      uploads: {
+        maxImageMb: 10,
+        maxVideoMb: 50,
+        maxLotImages: 15,
+        maxLotVideos: 3,
+        maxVideoSeconds: 60,
+        // Small quota so the 429 branch is reachable without 200 uploads.
+        dailyImageUploads: 3,
+      },
     } as unknown as AppConfig;
-    storage = new LocalDiskDriver({ get: () => config } as unknown as ConfigService);
+    storage = new LocalDiskDriver({ get: () => serviceConfig } as unknown as ConfigService);
     fake = new FakePrisma();
-    service = new MediaService(new MediaRepository(fake as unknown as PrismaService), storage);
+    service = new MediaService(
+      new MediaRepository(fake as unknown as PrismaService),
+      storage,
+      new ImageVariantService(),
+      { get: () => serviceConfig } as unknown as ConfigService,
+    );
     ownerId = fake.seedUser({ phone: '09111111111', name: 'Owner' }).id;
   });
 
@@ -217,5 +245,205 @@ describe('MediaService (MEDIA-001)', () => {
       expect(MEDIA_SECURE_KEY_PATTERN.test('secure/secure/2026/01/abc.jpg')).toBe(false);
       expect(MEDIA_SECURE_KEY_PATTERN.test('secure/2026/01/abc.jpg/extra')).toBe(false);
     });
+  });
+});
+
+/**
+ * MEDIA-002 upload pipeline (real sharp + real local-disk driver over a fresh
+ * temp root; quota pinned to 3/day in serviceConfig).
+ */
+describe('MediaService uploadImage (MEDIA-002)', () => {
+  let service: MediaService;
+  let storage: StorageService;
+  let fake: FakePrisma;
+  let ownerId: string;
+  let otherOwnerId: string;
+
+  const URL_BASE = 'http://localhost:3001/media/';
+
+  const makeFile = (
+    buffer: Buffer,
+    mimetype: string,
+    size: number = buffer.length,
+    originalname = 'upload.png',
+  ): UploadedMediaFile => ({ buffer, mimetype, size, originalname });
+
+  /** Real tiny fixtures generated in-process with sharp — no binaries committed. */
+  const png40x30 = sharp({
+    create: { width: 40, height: 30, channels: 3, background: { r: 200, g: 10, b: 10 } },
+  })
+    .png()
+    .toBuffer();
+  const jpeg40x30 = sharp({
+    create: { width: 40, height: 30, channels: 3, background: { r: 10, g: 200, b: 10 } },
+  })
+    .jpeg()
+    .toBuffer();
+
+  beforeAll(async () => {
+    // This suite owns the storage root for its driver; the MEDIA-001 suite's
+    // driver already pinned the previous dir at construction, so re-pointing
+    // the shared config here is safe.
+    serviceConfig.storage.dir = await mkdtemp(join(tmpdir(), 'media-upload-'));
+    storage = new LocalDiskDriver({ get: () => serviceConfig } as unknown as ConfigService);
+    fake = new FakePrisma();
+    service = new MediaService(
+      new MediaRepository(fake as unknown as PrismaService),
+      storage,
+      new ImageVariantService(),
+      { get: () => serviceConfig } as unknown as ConfigService,
+    );
+    ownerId = fake.seedUser({ phone: '09222222222', name: 'Uploader' }).id;
+    otherOwnerId = fake.seedUser({ phone: '09333333333', name: 'Other Uploader' }).id;
+  });
+
+  it('stores original + derived cover/thumb keys, creates the row, returns absolute URLs', async () => {
+    const png = await png40x30;
+    const response = await service.uploadImage(ownerId, makeFile(png, 'image/png'));
+
+    expect(response.width).toBe(40);
+    expect(response.height).toBe(30);
+
+    const originalKey = response.urls.original.slice(URL_BASE.length);
+    const coverKey = response.urls.cover.slice(URL_BASE.length);
+    const thumbKey = response.urls.thumb.slice(URL_BASE.length);
+    // All three keys are public-pattern keys; variants are DERIVED from the
+    // original id (`{id}c.webp` / `{id}t.webp`) so the URLs stay computable
+    // from the row (no coverKey column, no migration on this card).
+    for (const key of [originalKey, coverKey, thumbKey]) {
+      expect(key).toMatch(MEDIA_PUBLIC_KEY_PATTERN);
+    }
+    expect(coverKey).toBe(originalKey.replace(/\.png$/, 'c.webp'));
+    expect(thumbKey).toBe(originalKey.replace(/\.png$/, 't.webp'));
+    for (const key of [originalKey, coverKey, thumbKey]) {
+      expect(await storage.exists(key)).toBe(true);
+    }
+
+    // ONE row per upload: original key + thumb key + source mime + original size.
+    const row = await fake.mediaAsset.findUnique({ where: { id: response.id } });
+    expect(row).toMatchObject({
+      ownerId,
+      type: MediaType.IMAGE,
+      storageKey: originalKey,
+      thumbKey,
+      mime: 'image/png',
+      sizeBytes: png.length,
+      width: 40,
+      height: 30,
+    });
+  });
+
+  it('keeps the original bytes as-received (JPEG stays JPEG under a .jpg key)', async () => {
+    const jpeg = await jpeg40x30;
+    const response = await service.uploadImage(
+      ownerId,
+      makeFile(jpeg, 'image/jpeg', jpeg.length, 'camera-photo.jpg'),
+    );
+    const originalKey = response.urls.original.slice(URL_BASE.length);
+    expect(originalKey).toMatch(/\.jpg$/);
+    const stored = await readAll(storage.get(originalKey));
+    expect(stored.equals(jpeg)).toBe(true);
+  });
+
+  it('415 UNSUPPORTED_MEDIA_TYPE for a declared mime outside the allowlist', async () => {
+    for (const mimetype of ['image/gif', 'application/octet-stream', '']) {
+      const error = await rejectionOf(
+        service.uploadImage(ownerId, makeFile(await png40x30, mimetype)),
+      );
+      expect(error).toBeInstanceOf(UnsupportedMediaTypeException);
+      expect((errorCodeOf(error) as { code?: string }).code).toBe(
+        MEDIA_ERROR_CODES.UNSUPPORTED_MEDIA_TYPE,
+      );
+    }
+  });
+
+  it('415 MEDIA_TYPE_MISMATCH for forged bytes: JPEG content named .png declared as image/png', async () => {
+    const error = await rejectionOf(
+      service.uploadImage(ownerId, makeFile(await jpeg40x30, 'image/png', undefined, 'forged.png')),
+    );
+    expect(error).toBeInstanceOf(UnsupportedMediaTypeException);
+    expect((errorCodeOf(error) as { code?: string }).code).toBe(
+      MEDIA_ERROR_CODES.MEDIA_TYPE_MISMATCH,
+    );
+  });
+
+  it('413 IMAGE_TOO_LARGE when the buffered size exceeds uploads.maxImageMb', async () => {
+    const error = await rejectionOf(
+      service.uploadImage(ownerId, makeFile(await png40x30, 'image/png', 10 * 1024 * 1024 + 1)),
+    );
+    expect(error).toBeInstanceOf(PayloadTooLargeException);
+    expect((errorCodeOf(error) as { code?: string }).code).toBe(MEDIA_ERROR_CODES.IMAGE_TOO_LARGE);
+  });
+
+  it('429 QUOTA_EXCEEDED at uploads.dailyImageUploads rows today — other users unaffected', async () => {
+    // Dedicated user so the seeded rows can't leak into the other suites.
+    const quotaOwnerId = fake.seedUser({ phone: '09444444444', name: 'Quota User' }).id;
+    for (let i = 0; i < 3; i++) {
+      fake.seedMediaAsset({
+        ownerId: quotaOwnerId,
+        type: MediaType.IMAGE,
+        mime: 'image/png',
+        sizeBytes: 1,
+        createdAt: new Date(), // today → inside the quota window
+      });
+    }
+    const error = await rejectionOf(
+      service.uploadImage(quotaOwnerId, makeFile(await png40x30, 'image/png')),
+    );
+    expect(error).toBeInstanceOf(HttpException);
+    expect((error as HttpException).getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
+    expect((errorCodeOf(error) as { code?: string }).code).toBe(MEDIA_ERROR_CODES.QUOTA_EXCEEDED);
+
+    // Quota is per owner — a fresh user still uploads.
+    const response = await service.uploadImage(otherOwnerId, makeFile(await png40x30, 'image/png'));
+    expect(response.id).toBeDefined();
+  });
+
+  it('rolls back and 500s when sharp cannot decode (magic passed, body is garbage)', async () => {
+    const failingVariants = {
+      sniffMime: (): 'image/png' => 'image/png',
+      buildVariants: (): Promise<never> => Promise.reject(new Error('sharp exploded')),
+    };
+    const failingService = new MediaService(
+      new MediaRepository(fake as unknown as PrismaService),
+      storage,
+      failingVariants as unknown as ImageVariantService,
+      { get: () => serviceConfig } as unknown as ConfigService,
+    );
+    const rowsBefore = await fake.mediaAsset.count({ where: {} });
+
+    const error = await rejectionOf(
+      failingService.uploadImage(ownerId, makeFile(Buffer.from('not-an-image'), 'image/png')),
+    );
+    expect(error).toBeInstanceOf(InternalServerErrorException);
+    expect((errorCodeOf(error) as { code?: string }).code).toBe(
+      MEDIA_ERROR_CODES.IMAGE_PROCESSING_FAILED,
+    );
+    // Nothing was stored and no row was created.
+    expect(await fake.mediaAsset.count({ where: {} })).toBe(rowsBefore);
+  });
+
+  it('deletes already-stored keys when a later put fails (partial-key cleanup)', async () => {
+    const realPut = storage.put.bind(storage);
+    const putSpy = jest
+      .spyOn(storage, 'put')
+      .mockImplementation((key: string, buffer: Buffer, contentType: string) => {
+        if (key.endsWith('c.webp')) {
+          return Promise.reject(new Error('simulated disk full'));
+        }
+        return realPut(key, buffer, contentType);
+      });
+
+    const rowsBefore = await fake.mediaAsset.count({ where: { ownerId } });
+    const error = await rejectionOf(
+      service.uploadImage(ownerId, makeFile(await png40x30, 'image/png')),
+    );
+    expect(error).toBeInstanceOf(InternalServerErrorException);
+    expect((errorCodeOf(error) as { code?: string }).code).toBe(
+      MEDIA_ERROR_CODES.IMAGE_PROCESSING_FAILED,
+    );
+    // The original bytes that WERE written got rolled back; no row survived.
+    expect(await fake.mediaAsset.count({ where: { ownerId } })).toBe(rowsBefore);
+    putSpy.mockRestore();
   });
 });

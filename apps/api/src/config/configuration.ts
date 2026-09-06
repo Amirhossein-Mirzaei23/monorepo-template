@@ -60,6 +60,8 @@ export interface UploadsConfig {
   maxLotImages: number;
   maxLotVideos: number;
   maxVideoSeconds: number;
+  /** MEDIA-002 per-user daily image-upload quota (MediaAsset rows today, UTC). */
+  dailyImageUploads: number;
 }
 
 /** WebSocket gateway handshake origins (CHT-004). */
@@ -112,6 +114,7 @@ export default (): { app: AppConfig } => ({
       maxLotImages: toInt(process.env.MAX_LOT_IMAGES, 15),
       maxLotVideos: toInt(process.env.MAX_LOT_VIDEOS, 3),
       maxVideoSeconds: toInt(process.env.MAX_VIDEO_SECONDS, 60),
+      dailyImageUploads: toInt(process.env.MAX_IMAGE_UPLOADS_PER_DAY, 200),
     },
     ws: {
       origins: toOriginList(process.env.WS_ORIGINS, 'http://localhost:3000'),
