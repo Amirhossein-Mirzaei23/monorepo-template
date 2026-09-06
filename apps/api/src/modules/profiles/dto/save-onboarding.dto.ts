@@ -93,7 +93,12 @@ export class SaveOnboardingDto {
   @MaxLength(100)
   city?: string | null;
 
-  @ApiPropertyOptional({ example: 'خرید عمده پوشاک برای فروشگاه', maxLength: 500, nullable: true })
+  @ApiPropertyOptional({
+    example: 'خرید عمده پوشاک برای فروشگاه',
+    maxLength: 500,
+    nullable: true,
+    type: String,
+  })
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -122,7 +127,7 @@ export class SaveOnboardingDto {
   @IsUrl({ require_tld: false })
   website?: string | null;
 
-  @ApiPropertyOptional({ example: 6, minimum: 0, maximum: 99, nullable: true })
+  @ApiPropertyOptional({ example: 6, minimum: 0, maximum: 99, nullable: true, type: Number })
   @IsOptional()
   @IsInt()
   @Min(0)
@@ -138,6 +143,7 @@ export class SaveOnboardingDto {
     example: 'تولیدکننده پوشاک زنانه با ۶ سال سابقه صادرات',
     maxLength: 2000,
     nullable: true,
+    type: String,
   })
   @IsOptional()
   @IsString()

@@ -458,7 +458,7 @@ export interface components {
              */
             city?: string | null;
             /** @example خرید عمده پوشاک برای فروشگاه */
-            bio?: Record<string, never> | null;
+            bio?: string | null;
             /**
              * @description Instagram handle (username only, no URL)
              * @example mina.apparel
@@ -470,11 +470,11 @@ export interface components {
              */
             website?: string | null;
             /** @example 6 */
-            sellerYearsActive?: Record<string, never> | null;
+            sellerYearsActive?: number | null;
             /** @enum {string|null} */
             sellerBusinessType?: "MANUFACTURER" | "WORKSHOP" | "WHOLESALER" | "RETAILER" | "TRADING" | "SERVICE" | "OTHER" | null;
             /** @example تولیدکننده پوشاک زنانه با ۶ سال سابقه صادرات */
-            sellerDescription?: Record<string, never> | null;
+            sellerDescription?: string | null;
             /**
              * @description Interest category ids (active categories only)
              * @example [

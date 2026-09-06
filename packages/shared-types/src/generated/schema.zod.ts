@@ -98,18 +98,12 @@ export const saveOnboardingDtoSchema = z.object({
   businessName: z.string().nullable().optional(),
   province: z.string().nullable().optional(),
   city: z.string().nullable().optional(),
-  bio:   z.object({
-
-    }).nullable().optional(),
+  bio: z.string().nullable().optional(),
   instagram: z.string().nullable().optional(),
   website: z.string().nullable().optional(),
-  sellerYearsActive:   z.object({
-
-    }).nullable().optional(),
+  sellerYearsActive: z.number().nullable().optional(),
   sellerBusinessType: z.enum(['MANUFACTURER', 'WORKSHOP', 'WHOLESALER', 'RETAILER', 'TRADING', 'SERVICE', 'OTHER']).nullable().optional(),
-  sellerDescription:   z.object({
-
-    }).nullable().optional(),
+  sellerDescription: z.string().nullable().optional(),
   interests: z.array(z.string()).optional(),
 });
 
