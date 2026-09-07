@@ -82,19 +82,26 @@ export async function fetchMessages(
   return parseApiResponse(messagePageSchema, raw, 'messages');
 }
 
-/** POST /conversations/:id/messages — send a TEXT message (CHT-003); type
- * defaults to TEXT server-side, so only the trimmed body travels. */
+/**
+ * The `POST /conversations/:id/messages` body — exactly one of the two API
+ * shapes (CHT-003/CHT-007): a trimmed TEXT body, or a media reference whose
+ * type matches the uploaded asset (media rows are body-less by contract).
+ */
+export type SendMessagePayload =
+  { body: string } | { type: 'IMAGE' | 'VIDEO'; mediaAssetId: string };
+
+/** POST /conversations/:id/messages — send a TEXT or media message. */
 export async function sendMessage(
   token: string | undefined,
   conversationId: string,
-  body: string,
+  payload: SendMessagePayload,
 ): Promise<MessageResponseDto> {
   if (!token) {
     throw new Error('Not authenticated');
   }
   const raw = await apiFetch<unknown>(
     `/api/conversations/${encodeURIComponent(conversationId)}/messages`,
-    { method: 'POST', token, body: { body } },
+    { method: 'POST', token, body: payload },
   );
   return parseApiResponse(messageResponseSchema, raw, 'message');
 }

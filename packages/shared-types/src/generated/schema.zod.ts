@@ -280,8 +280,9 @@ export const conversationLotSummaryDtoSchema = z.object({
 });
 
 export const sendMessageDtoSchema = z.object({
-  type: z.enum(['TEXT']).optional(),
-  body: z.string(),
+  type: z.enum(['TEXT', 'IMAGE', 'VIDEO']).optional(),
+  body: z.string().optional(),
+  mediaAssetId: z.string().optional(),
 });
 
 export const messageResponseDtoSchema = z.object({
@@ -290,6 +291,9 @@ export const messageResponseDtoSchema = z.object({
   senderId: z.string().nullable(),
   type: z.enum(['TEXT', 'IMAGE', 'VIDEO', 'SYSTEM', 'ACTION']),
   body: z.string().nullable(),
+  mediaAssetId: z.string().nullable(),
+  mediaStorageKey: z.string().nullable(),
+  mediaPreviewKey: z.string().nullable(),
   createdAt: z.iso.datetime(),
   readAt: z.iso.datetime().nullable(),
 });

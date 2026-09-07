@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type, Transform } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator';
-import { MessageType, type Message } from '@prisma/client';
+import { MediaType, MessageType, type Message } from '@prisma/client';
 import {
   MESSAGE_BODY_MAX_LENGTH,
   MESSAGES_DEFAULT_LIMIT,
@@ -9,39 +9,64 @@ import {
 } from '../conversations.constants';
 
 /**
- * CHT-003 — the Messages API contract under /conversations/:id/*. Only TEXT
- * sends exist today: IMAGE/VIDEO land in CHT-007, SYSTEM rows are written by
- * the server only (the CHT-001 welcome) and ACTION stays reserved (CHT-008
+ * CHT-003 — the Messages API contract under /conversations/:id/*. CHT-007
+ * opens IMAGE/VIDEO sends: {type: IMAGE|VIDEO, mediaAssetId} with an EMPTY
+ * body (media rows are body-less by contract); TEXT keeps requiring a
+ * 1..2000 body and rejects mediaAssetId. SYSTEM rows are written by the
+ * server only (the CHT-001 welcome) and ACTION stays reserved (CHT-008
  * architecture note) — the DTO enum is deliberately restricted so any other
- * type answers 400 at the validation boundary.
+ * type answers 400 at the validation boundary. The per-type cross-field
+ * rules (body/mediaAssetId/ownership/type-match) live in the SERVICE (the
+ * validation pipe has no clean access to the asset row).
  */
 
-/** The only client-sendable message type (see the file header). */
-export const SENDABLE_MESSAGE_TYPES = [MessageType.TEXT] as const;
+/** The client-sendable message types (see the file header). */
+export const SENDABLE_MESSAGE_TYPES = [
+  MessageType.TEXT,
+  MessageType.IMAGE,
+  MessageType.VIDEO,
+] as const;
 
-/** `POST /conversations/:id/messages` body — the trimmed TEXT payload. */
+/** `POST /conversations/:id/messages` body — TEXT or a media reference. */
 export class SendMessageDto {
   @ApiPropertyOptional({
-    enum: [MessageType.TEXT],
+    enum: SENDABLE_MESSAGE_TYPES,
     default: MessageType.TEXT,
     description:
-      'Message type — only TEXT is open for sends; IMAGE/VIDEO arrive with CHT-007 and anything else (incl. SYSTEM) answers 400',
+      'Message type — TEXT (default; requires body), IMAGE/VIDEO (require mediaAssetId, body must be empty); SYSTEM/ACTION answer 400',
   })
   @IsOptional()
-  @IsIn(SENDABLE_MESSAGE_TYPES, { message: 'type must be TEXT (other types are not open yet)' })
+  @IsIn(SENDABLE_MESSAGE_TYPES, {
+    message: 'type must be TEXT, IMAGE or VIDEO (other types are not open)',
+  })
   type: MessageType = MessageType.TEXT;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'قیمت برای ۵ ستون چقدر می‌شود؟',
-    minLength: 1,
     maxLength: MESSAGE_BODY_MAX_LENGTH,
-    description: `Trimmed message text — required for TEXT, 1..${MESSAGE_BODY_MAX_LENGTH} chars (validated AFTER trimming)`,
+    description: `Trimmed message text — REQUIRED for TEXT (1..${MESSAGE_BODY_MAX_LENGTH} chars post-trim, enforced service-side) and must be EMPTY for IMAGE/VIDEO`,
   })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsOptional()
   @IsString()
-  @Length(1, MESSAGE_BODY_MAX_LENGTH)
-  body!: string;
+  @Length(0, MESSAGE_BODY_MAX_LENGTH)
+  body?: string;
+
+  @ApiPropertyOptional({
+    example: 'clx…cuid',
+    description:
+      'MediaAsset id — REQUIRED for IMAGE/VIDEO, must be owned by the sender (else 403 MEDIA_NOT_OWNED) and its MediaType must match the message type (else 400)',
+  })
+  @IsOptional()
+  @IsString()
+  mediaAssetId?: string;
 }
+
+/** The media block joined onto a message row (media messages only). */
+export type MessageMediaBlock = {
+  storageKey: string;
+  thumbKey: string | null;
+} | null;
 
 export class MessageResponseDto {
   @ApiProperty({ example: 'clx…cuid', description: 'Message id — also the list `before` cursor' })
@@ -64,6 +89,32 @@ export class MessageResponseDto {
   @ApiProperty({ example: 'سلام، موجود است؟', nullable: true, type: String })
   body!: string | null;
 
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    type: String,
+    description: 'Referenced MediaAsset id — null for TEXT/SYSTEM rows (CHT-007)',
+  })
+  mediaAssetId!: string | null;
+
+  @ApiProperty({
+    example: '2026/09/abc123.mp4',
+    nullable: true,
+    type: String,
+    description:
+      'Storage key of the referenced asset (original bytes). Render through GET /media/secure/{key} with a bearer token — never the public route (CHT-007)',
+  })
+  mediaStorageKey!: string | null;
+
+  @ApiProperty({
+    example: '2026/09/abc123pt.webp',
+    nullable: true,
+    type: String,
+    description:
+      'Cheaper preview key — IMAGE: the 1200w WebP cover variant; VIDEO: the poster thumb ({id}pt.webp); null when the asset has none (videos may be poster-less)',
+  })
+  mediaPreviewKey!: string | null;
+
   @ApiProperty({ example: '2026-09-05T00:00:00.000Z', description: 'ASC history sort key' })
   createdAt!: Date;
 
@@ -82,17 +133,29 @@ export class MessageResponseDto {
  * transaction returns the freshly created row through this mapper (the clean
  * seam CHT-004's gateway needs: emit the SAME payload after the service
  * resolves), and every history row maps through it too — SYSTEM rows visible.
+ * `mediaAsset` (MESSAGE_MEDIA_INCLUDE join) feeds the CHT-007 media keys; a
+ * row read WITHOUT the join (or a TEXT/SYSTEM row) maps them null.
  */
-export function toMessageResponse(row: Message): MessageResponseDto {
+export function toMessageResponse(
+  row: Message & { mediaAsset?: MessageMediaBlock },
+): MessageResponseDto {
   return {
     id: row.id,
     conversationId: row.conversationId,
     senderId: row.senderId,
     type: row.type,
     body: row.body,
+    mediaAssetId: row.mediaAssetId,
+    mediaStorageKey: row.mediaAsset?.storageKey ?? null,
+    mediaPreviewKey: row.mediaAsset?.thumbKey ?? null,
     createdAt: row.createdAt,
     readAt: row.readAt,
   };
+}
+
+/** Guard for the send path: the MessageType that matches a MediaType. */
+export function messageTypeForMedia(type: MediaType): MessageType {
+  return type === MediaType.IMAGE ? MessageType.IMAGE : MessageType.VIDEO;
 }
 
 /**

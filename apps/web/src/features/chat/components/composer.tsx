@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, SendHorizontal } from 'lucide-react';
+import { ImagePlus, Loader2, SendHorizontal, Video } from 'lucide-react';
 import { formatFaDigits } from '@/lib/format';
 import { MESSAGE_BODY_MAX_LENGTH } from '../api/chat-api';
 
@@ -15,6 +15,13 @@ import { MESSAGE_BODY_MAX_LENGTH } from '../api/chat-api';
  * - Enter sends, Shift+Enter inserts a newline (IME-safe: composition
  *   keystrokes never send);
  * - every keystroke notifies the throttled typing emitter (use-typing).
+ *
+ * CHT-007 — attachments: an image button (accept="image/*" — mobile OS
+ * pickers offer camera capture from this input; MEDIA-004's dedicated
+ * capture="environment" input covers the explicit camera flow elsewhere)
+ * and a video button (accept="video/mp4,video/webm"). A picked file goes to
+ * onAttachImage/onAttachVideo (use-attachment-send: upload with progress →
+ * auto-send); uploads are upload-state, NOT composer text state.
  */
 
 export interface ComposerProps {
@@ -25,6 +32,10 @@ export interface ComposerProps {
   onSend: (body: string) => void;
   /** Throttled typing notifier (useTypingEmitter) — called on every input. */
   onTyping: () => void;
+  /** CHT-007 — image picked → upload pipeline (use-attachment-send). */
+  onAttachImage?: (file: File) => void;
+  /** CHT-007 — video picked → upload pipeline (use-attachment-send). */
+  onAttachVideo?: (file: File) => void;
 }
 
 /** Char count past which the «x / ۲۰۰۰» counter becomes visible. */
@@ -39,9 +50,13 @@ export function Composer({
   isSending = false,
   onSend,
   onTyping,
+  onAttachImage,
+  onAttachVideo,
 }: ComposerProps) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
 
   const trimmedLength = value.trim().length;
   const canSend =
@@ -67,6 +82,22 @@ export function Composer({
     setValue('');
   };
 
+  const pickFile = (input: HTMLInputElement | null): void => {
+    const file = input?.files?.[0];
+    // Reset so picking the SAME file again re-fires onChange.
+    if (input) {
+      input.value = '';
+    }
+    if (!file) {
+      return;
+    }
+    if (file.type.startsWith('video/')) {
+      onAttachVideo?.(file);
+    } else if (file.type.startsWith('image/')) {
+      onAttachImage?.(file);
+    }
+  };
+
   return (
     <form
       className="border-border bg-card flex items-end gap-2 border-t p-3"
@@ -76,6 +107,55 @@ export function Composer({
       }}
       aria-label={`ارسال پیام در گفتگو ${conversationId}`}
     >
+      {onAttachImage || onAttachVideo ? (
+        <div className="flex shrink-0 items-center gap-1 pb-0.5">
+          {onAttachImage ? (
+            <>
+              <button
+                type="button"
+                aria-label="ارسال تصویر"
+                disabled={disabled}
+                onClick={() => imageInputRef.current?.click()}
+                className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 flex size-10 cursor-pointer items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <ImagePlus className="size-5" aria-hidden="true" />
+              </button>
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                aria-hidden="true"
+                tabIndex={-1}
+                onChange={() => pickFile(imageInputRef.current)}
+              />
+            </>
+          ) : null}
+          {onAttachVideo ? (
+            <>
+              <button
+                type="button"
+                aria-label="ارسال ویدیو"
+                disabled={disabled}
+                onClick={() => videoInputRef.current?.click()}
+                className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 flex size-10 cursor-pointer items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Video className="size-5" aria-hidden="true" />
+              </button>
+              <input
+                ref={videoInputRef}
+                type="file"
+                accept="video/mp4,video/webm"
+                className="hidden"
+                aria-hidden="true"
+                tabIndex={-1}
+                onChange={() => pickFile(videoInputRef.current)}
+              />
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="flex-1">
         <textarea
           ref={textareaRef}

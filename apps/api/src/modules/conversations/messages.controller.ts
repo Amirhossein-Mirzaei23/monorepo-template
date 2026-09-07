@@ -36,6 +36,13 @@ import {
  *   nextCursor}), so there is no page/total envelope.
  * - POST /:id/read answers { readCount } — the number of counterpart
  *   messages this call stamped readAt = now.
+ *
+ * CHT-007: the send accepts TEXT (body 1..2000) or media references
+ * {type: IMAGE|VIDEO, mediaAssetId} with an EMPTY body; the service validates
+ * asset ownership (403 MEDIA_NOT_OWNED) and type match (400). Media rows
+ * answer with their storage/preview keys — clients stream them through the
+ * BEARER route GET /media/secure/{key} (the secure route enforces
+ * participation for message-referenced assets), never through the public one.
  */
 @ApiTags('conversations')
 @ApiBearerAuth('access-token')
@@ -50,11 +57,11 @@ export class MessagesController {
   @ApiCreatedResponse({
     type: MessageResponseDto,
     description:
-      'The created TEXT message (readAt null) — the conversation lockstep (lastMessageAt/preview + counterpart unread increment) committed in the same transaction',
+      'The created message (readAt null) — TEXT or IMAGE/VIDEO with its media keys; the conversation lockstep (lastMessageAt/preview + counterpart unread increment) committed in the same transaction',
   })
   @ApiOperation({
     summary:
-      'Send a TEXT message to a thread I participate in (403 non-participant/blocked, 404 unknown, 400 validation, 429 over 30/min)',
+      'Send a TEXT or IMAGE/VIDEO message to a thread I participate in (403 non-participant/blocked/foreign-asset, 404 unknown, 400 validation/type mismatch, 429 over 30/min)',
   })
   async send(
     @CurrentUser() user: AuthUser,

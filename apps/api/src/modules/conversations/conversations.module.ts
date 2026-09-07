@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { LotsModule } from '../lots/lots.module';
+import { MediaModule } from '../media/media.module';
 import { UsersModule } from '../users/users.module';
 import { CHAT_EMITTER } from './chat.events';
 import { ChatGateway } from './chat.gateway';
@@ -17,7 +18,10 @@ import { MessagesController } from './messages.controller';
  * Users for the requester lookup, Lots for the lot read (existence/status/
  * seller derivation + the cover-join the response's lot summary needs) and —
  * since CHT-004 — AuthModule for the handshake's TokenService (the SAME
- * access-token verification REST uses).
+ * access-token verification REST uses). CHT-007 adds MediaModule for the
+ * MediaRepository (media-send asset ownership/type validation) — a safe leaf
+ * import: MediaModule imports nothing back, so no cycle with the media
+ * module's own serving route.
  *
  * CHT-004 wiring: ChatGateway implements the ChatEmitter interface and is
  * bound to the CHAT_EMITTER token with `useExisting`, so ConversationsService
@@ -29,7 +33,7 @@ import { MessagesController } from './messages.controller';
  * a forwardRef cycle for zero benefit.
  */
 @Module({
-  imports: [UsersModule, LotsModule, AuthModule],
+  imports: [UsersModule, LotsModule, AuthModule, MediaModule],
   controllers: [ConversationsController, MessagesController],
   providers: [
     ConversationsService,

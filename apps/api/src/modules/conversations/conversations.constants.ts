@@ -8,6 +8,8 @@
  * stored in the DB and shown in the thread, so it is Persian by design.
  */
 
+import { MessageType } from '@prisma/client';
+
 /** Machine-readable error codes carried on 403/409 bodies (CHT-001). */
 export const CONVERSATION_ERROR_CODES = {
   /** Authenticated user without the BUYER hat (403) — mirrors the lots
@@ -39,6 +41,10 @@ export function truncatePreview(body: string): string {
 /**
  * CHT-003 — machine-readable error codes carried on 403/400 bodies. Persian
  * user-facing copy is web-side (same discipline as CONVERSATION_ERROR_CODES).
+ * CHT-007 adds the media-send codes (documented on the card: TEXT requires
+ * body; IMAGE/VIDEO require an OWN mediaAssetId whose type matches; the asset
+ * is NOT idempotently probeable — missing and foreign answer uniformly 403
+ * like MEDIA-005's gallery validation).
  */
 export const MESSAGE_ERROR_CODES = {
   /** Known conversation the requester takes no side of (403). The card pins
@@ -51,6 +57,23 @@ export const MESSAGE_ERROR_CODES = {
   /** `before` is not a message of THIS conversation (400) — a foreign/garbage
    * cursor is a client bug, not a probeable resource. */
   INVALID_CURSOR: 'INVALID_CURSOR',
+  /** TEXT send without a 1..2000 body (400, CHT-007). */
+  MESSAGE_BODY_REQUIRED: 'MESSAGE_BODY_REQUIRED',
+  /** TEXT send carrying a mediaAssetId (400, CHT-007 — media ids are only
+   * valid with the matching IMAGE/VIDEO type). */
+  MEDIA_ASSET_WITH_TEXT: 'MEDIA_ASSET_WITH_TEXT',
+  /** IMAGE/VIDEO send without mediaAssetId (400, CHT-007). */
+  MEDIA_ASSET_REQUIRED: 'MEDIA_ASSET_REQUIRED',
+  /** IMAGE/VIDEO send carrying a non-empty body (400, CHT-007 — media rows
+   * are body-less by contract). */
+  MEDIA_BODY_FORBIDDEN: 'MEDIA_BODY_FORBIDDEN',
+  /** mediaAssetId does not resolve to a row owned by the sender (403) —
+   * missing and foreign are deliberately uniform (no existence oracle for
+   * unguessable asset ids; MEDIA-005's documented precedent). */
+  MEDIA_NOT_OWNED: 'MEDIA_NOT_OWNED',
+  /** The owned asset's MediaType does not match the message type (400) —
+   * an IMAGE message cannot carry a VIDEO asset and vice versa. */
+  MEDIA_TYPE_MISMATCH: 'MEDIA_TYPE_MISMATCH',
 } as const;
 
 /** Hard cap of a TEXT message body (post-trim characters) — CHT-003 card. */
@@ -90,4 +113,14 @@ function formatTomanFa(amount: number): string {
 
 export function welcomeMessageBody(title: string, unitPrice: number): string {
   return `گفتگو درباره: ${title} — ${formatTomanFa(unitPrice)}`;
+}
+
+/**
+ * CHT-007 — the stored inbox preview for MEDIA messages. Media rows are
+ * body-less by contract, so the conversation's lastMessagePreview carries a
+ * Persian placeholder instead (CONTENT copy in fa by design — the same
+ * exception as the SYSTEM welcome above; documented on the card).
+ */
+export function mediaMessagePreview(type: MessageType): string {
+  return type === MessageType.IMAGE ? '📷 تصویر' : '🎬 ویدیو';
 }

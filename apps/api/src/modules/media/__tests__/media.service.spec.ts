@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import type { AppConfig } from '../../../config/configuration';
 import type { PrismaService } from '../../../prisma/prisma.service';
 import { FakePrisma } from '../../../test/fakes/fake-prisma';
+import { ChatMediaAccessService } from '../chat-media-access.service';
 import { ImageVariantService } from '../images/variant.service';
 import { MediaRepository } from '../media.repository';
 import {
@@ -87,6 +88,7 @@ describe('MediaService (MEDIA-001)', () => {
       new MediaRepository(fake as unknown as PrismaService),
       storage,
       new ImageVariantService(),
+      new ChatMediaAccessService(fake as unknown as PrismaService),
       { get: () => serviceConfig } as unknown as ConfigService,
     );
     ownerId = fake.seedUser({ phone: '09111111111', name: 'Owner' }).id;
@@ -152,9 +154,9 @@ describe('MediaService (MEDIA-001)', () => {
       await expect(rejectionOf(service.servePublic('/etc/passwd'))).resolves.toBeInstanceOf(
         BadRequestException,
       );
-      await expect(rejectionOf(service.serveSecure('/etc/passwd'))).resolves.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(
+        rejectionOf(service.serveSecure('/etc/passwd', ownerId)),
+      ).resolves.toBeInstanceOf(BadRequestException);
     });
 
     it('rejects keys failing the public pattern (wrong shape, uppercase, bad ext)', async () => {
@@ -177,7 +179,9 @@ describe('MediaService (MEDIA-001)', () => {
       await expect(
         rejectionOf(service.servePublic('secure/2026/01/chatvideo.mp4')),
       ).resolves.toBeInstanceOf(BadRequestException);
-      await expect(service.serveSecure('secure/2026/01/chatvideo.mp4')).resolves.toMatchObject({
+      await expect(
+        service.serveSecure('secure/2026/01/chatvideo.mp4', ownerId),
+      ).resolves.toMatchObject({
         mime: 'video/mp4',
         secure: true,
       });
@@ -221,7 +225,7 @@ describe('MediaService (MEDIA-001)', () => {
       ).resolves.toBeInstanceOf(NotFoundException);
     });
 
-    it('secure route rejects public-pattern keys (path after /media IS the key — no splicing)', async () => {
+    it('CHT-007: serves public-pattern keys on the SECURE route for unreferenced assets (authenticated-only)', async () => {
       fake.seedMediaAsset({
         ownerId,
         type: MediaType.IMAGE,
@@ -230,11 +234,15 @@ describe('MediaService (MEDIA-001)', () => {
         sizeBytes: 2,
       });
       await storage.put('2026/01/alsopublic.png', Buffer.from('ok'), 'image/png');
-      // A public asset reached through the secure route would resolve the key
-      // 'secure/2026/01/...' — it fails the mandatory-prefix pattern.
-      await expect(
-        rejectionOf(service.serveSecure('2026/01/alsopublic.png')),
-      ).resolves.toBeInstanceOf(BadRequestException);
+      // Chat attachments are uploaded through MEDIA-002/003 and keep their
+      // public-pattern keys, so the secure route must reach them. No Message
+      // references this asset → unchanged contract: authenticated 200 (the
+      // MEDIA-001 "no splicing" rule is untouched — the spliced URL's key
+      // 'secure/2026/01/…' still 404s, see the e2e suite).
+      await expect(service.serveSecure('2026/01/alsopublic.png', ownerId)).resolves.toMatchObject({
+        mime: 'image/png',
+        secure: false,
+      });
     });
   });
 
@@ -291,6 +299,7 @@ describe('MediaService uploadImage (MEDIA-002)', () => {
       new MediaRepository(fake as unknown as PrismaService),
       storage,
       new ImageVariantService(),
+      new ChatMediaAccessService(fake as unknown as PrismaService),
       { get: () => serviceConfig } as unknown as ConfigService,
     );
     ownerId = fake.seedUser({ phone: '09222222222', name: 'Uploader' }).id;
@@ -408,6 +417,7 @@ describe('MediaService uploadImage (MEDIA-002)', () => {
       new MediaRepository(fake as unknown as PrismaService),
       storage,
       failingVariants as unknown as ImageVariantService,
+      new ChatMediaAccessService(fake as unknown as PrismaService),
       { get: () => serviceConfig } as unknown as ConfigService,
     );
     const rowsBefore = await fake.mediaAsset.count({ where: {} });

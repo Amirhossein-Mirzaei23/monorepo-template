@@ -39,6 +39,27 @@ export class MediaRepository {
     return this.client(tx).mediaAsset.findUnique({ where: { storageKey: key } });
   }
 
+  /**
+   * CHT-007 — the variant-key → base-asset probe behind the secure route's
+   * participant gate (baseAssetKeyPrefixes): rows only exist for ORIGINALS,
+   * so a rowless variant key resolves its base by a storage-key PREFIX scan
+   * (`{dir}/{id}.`). The unique index's B-tree serves `startsWith` scans, so
+   * this stays index-backed; `take: 2` bounds the read — the uniqueness of
+   * minted 24-char ids makes a second match practically impossible, and the
+   * first row wins regardless (variant keys are server-minted siblings of
+   * exactly one original).
+   */
+  async findFirstByStorageKeyPrefix(
+    prefix: string,
+    tx: Tx = undefined,
+  ): Promise<MediaAsset | null> {
+    const rows = await this.client(tx).mediaAsset.findMany({
+      where: { storageKey: { startsWith: prefix } },
+      take: 2,
+    });
+    return rows[0] ?? null;
+  }
+
   async findById(id: string, tx: Tx = undefined): Promise<MediaAsset | null> {
     return this.client(tx).mediaAsset.findUnique({ where: { id } });
   }

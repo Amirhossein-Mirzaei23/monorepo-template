@@ -226,11 +226,13 @@ type ConversationFindUniqueArgs = {
   include?: { lot?: unknown };
 };
 /** Exactly the surface ConversationsRepository composes (CHT-002 list): the
- * participant-union page read (OR of the two participant arms) + count. */
+ * participant-union page read (OR of the two participant arms) + count. The
+ * CHT-007 secure-serving probe adds the `messages.some(mediaAssetId)` arm. */
 type ConversationListWhere = {
   buyerId?: string;
   sellerId?: string;
   OR?: Array<{ buyerId?: string; sellerId?: string }>;
+  messages?: { some: { mediaAssetId?: string } };
 };
 type ConversationListOrderBy =
   Record<string, 'asc' | 'desc'> | Array<Record<string, 'asc' | 'desc'>>;
@@ -274,15 +276,22 @@ type MessageCreateData = {
   replyToId?: string | null;
   readAt?: Date | null;
 };
+/** CHT-007 — the one include the conversations repository composes on message
+ * reads (MESSAGE_MEDIA_INCLUDE): the media block for secure serving. */
+type MessageInclude = { mediaAsset?: unknown };
+/** A Message row with its media block joined (rows without an asset → null). */
+type MessageRowWithMedia = Message & { mediaAsset: MediaAsset | null };
 /** Exactly the surface ConversationsRepository composes (CHT-003): thread +
  * sender scoping (null matches SYSTEM rows), the cursor page's createdAt
- * `lt` arm, the read-marking `readAt: null` arm and plain id equality. */
+ * `lt` arm, the read-marking `readAt: null` arm, plain id equality — and
+ * CHT-007's media-reference filter (ChatMediaAccessService/secure serving). */
 type MessageWhere = {
   conversationId?: string;
   senderId?: string | null;
   id?: string;
   readAt?: null;
   createdAt?: { lt?: Date; lte?: Date };
+  mediaAssetId?: string | null;
 };
 type MessageOrderBy = Record<string, 'asc' | 'desc'>;
 
@@ -1066,19 +1075,43 @@ export class FakePrisma {
       take,
     }: ConversationFindManyArgs): Promise<ConversationListRow[]> =>
       sortRows(
-        [...this.conversations.values()].filter(matchesConversationListWhere(where)),
+        [...this.conversations.values()].filter((row) =>
+          this.matchesConversationListQuery(row, where),
+        ),
         orderBy,
       )
         .slice(skip, take !== undefined ? skip + take : undefined)
         .map((row) => this.withConversationListJoins(row)),
     count: async ({ where }: { where?: ConversationListWhere } = {}): Promise<number> =>
-      [...this.conversations.values()].filter(matchesConversationListWhere(where)).length,
+      [...this.conversations.values()].filter((row) =>
+        this.matchesConversationListQuery(row, where),
+      ).length,
+    /** CHT-007 secure-serving probe: first conversation matching the
+     * participant-union + `messages.some(mediaAssetId)` predicate. */
+    findFirst: async ({
+      where,
+    }: {
+      where?: ConversationListWhere;
+    }): Promise<{ id: string } | null> => {
+      const found = [...this.conversations.values()].find((row) =>
+        this.matchesConversationListQuery(row, where),
+      );
+      return found ? { id: found.id } : null;
+    },
   };
 
   /** Exactly the surface CHT-001 (welcome message), CHT-003 (sends, the
-   * before-cursor history page, read-marking) + spec assertions use. */
+   * before-cursor history page, read-marking) + spec assertions use. Reads
+   * honor the repository's MESSAGE_MEDIA_INCLUDE (CHT-007): rows come back
+   * with `mediaAsset` joined (null when the row references no asset). */
   readonly message = {
-    create: async ({ data }: { data: MessageCreateData }): Promise<Message> => {
+    create: async ({
+      data,
+      include,
+    }: {
+      data: MessageCreateData;
+      include?: MessageInclude;
+    }): Promise<MessageRowWithMedia> => {
       const conversation = this.conversations.get(data.conversationId);
       if (!conversation) {
         throw new Error(
@@ -1097,25 +1130,33 @@ export class FakePrisma {
         createdAt: nowIso(),
       };
       this.messages.set(row.id, row);
-      return cloneMessage(row);
+      return this.withMessageAsset(row, include);
     },
     /** CHT-003 cursor resolution: the `before` message id lookup. */
-    findUnique: async ({ where }: { where: { id: string } }): Promise<Message | null> => {
+    findUnique: async ({
+      where,
+      include,
+    }: {
+      where: { id: string };
+      include?: MessageInclude;
+    }): Promise<MessageRowWithMedia | null> => {
       const found = this.messages.get(where.id);
-      return found ? cloneMessage(found) : null;
+      return found ? this.withMessageAsset(found, include) : null;
     },
     findMany: async ({
       where,
       orderBy,
       take,
+      include,
     }: {
       where?: MessageWhere;
       orderBy?: MessageOrderBy | MessageOrderBy[];
       take?: number;
-    } = {}): Promise<Message[]> =>
+      include?: MessageInclude;
+    } = {}): Promise<MessageRowWithMedia[]> =>
       sortRows([...this.messages.values()].filter(matchesMessageWhere(where)), orderBy)
         .slice(0, take)
-        .map(cloneMessage),
+        .map((row) => this.withMessageAsset(row, include)),
     count: async ({ where }: { where?: MessageWhere } = {}): Promise<number> =>
       [...this.messages.values()].filter(matchesMessageWhere(where)).length,
     /** CHT-003 read-marking: batch readAt stamp over the matched rows (a row
@@ -1139,6 +1180,35 @@ export class FakePrisma {
     },
   };
 
+  /** MESSAGE_MEDIA_INCLUDE join: the referenced MediaAsset (or null). */
+  private withMessageAsset(row: Message, include?: MessageInclude): MessageRowWithMedia {
+    if (!include?.mediaAsset) {
+      return { ...cloneMessage(row), mediaAsset: null };
+    }
+    const asset = row.mediaAssetId === null ? undefined : this.mediaAssets.get(row.mediaAssetId);
+    return { ...cloneMessage(row), mediaAsset: asset ? cloneMediaAsset(asset) : null };
+  }
+
+  /**
+   * Conversation list/findFirst predicate: the pure participant matcher plus
+   * the CHT-007 `messages.some({ mediaAssetId })` arm (an absent arm never
+   * matches vacuously — it must not narrow findMany/count).
+   */
+  private matchesConversationListQuery(row: Conversation, where?: ConversationListWhere): boolean {
+    if (!matchesConversationListWhere(where)(row)) {
+      return false;
+    }
+    const some = where?.messages?.some;
+    if (some === undefined) {
+      return true;
+    }
+    return [...this.messages.values()].some(
+      (message) =>
+        message.conversationId === row.id &&
+        (some.mediaAssetId === undefined || message.mediaAssetId === some.mediaAssetId),
+    );
+  }
+
   /** Exactly the surface MediaRepository uses (MEDIA-001 + MEDIA-002 quota +
    * MEDIA-005 batch id lookup). */
   readonly mediaAsset = {
@@ -1151,11 +1221,18 @@ export class FakePrisma {
       }
       return found ? cloneMediaAsset(found) : null;
     },
-    findMany: async ({ where }: { where?: { id?: { in: string[] } } } = {}): Promise<
-      MediaAsset[]
-    > =>
+    findMany: async ({
+      where,
+    }: {
+      where?: { id?: { in: string[] }; storageKey?: { startsWith: string } };
+    } = {}): Promise<MediaAsset[]> =>
       [...this.mediaAssets.values()]
-        .filter((row) => where?.id === undefined || where.id.in.includes(row.id))
+        .filter(
+          (row) =>
+            (where?.id === undefined || where.id.in.includes(row.id)) &&
+            (where?.storageKey === undefined ||
+              row.storageKey.startsWith(where.storageKey.startsWith)),
+        )
         .map(cloneMediaAsset),
     count: async ({ where }: { where?: MediaAssetWhere } = {}): Promise<number> =>
       [...this.mediaAssets.values()].filter(matchesMediaAssetWhere(where)).length,
@@ -1493,6 +1570,7 @@ export class FakePrisma {
     senderId?: string | null;
     type?: MessageType;
     body?: string | null;
+    mediaAssetId?: string | null;
     createdAt?: Date;
   }): Message {
     const conversation = this.conversations.get(message.conversationId);
@@ -1507,7 +1585,7 @@ export class FakePrisma {
       senderId: message.senderId ?? null,
       type: message.type ?? MessageType.TEXT,
       body: message.body ?? null,
-      mediaAssetId: null,
+      mediaAssetId: message.mediaAssetId ?? null,
       replyToId: null,
       readAt: null,
       createdAt: message.createdAt ?? nowIso(),
@@ -1856,7 +1934,9 @@ function matchesConversationWhere(
 }
 
 /** CHT-002 list matcher: the participant union — an arm matches when EVERY
- * field it carries equals the row (an absent field never matches vacuously). */
+ * field it carries equals the row (an absent field never matches vacuously).
+ * The CHT-007 `messages.some(mediaAssetId)` arm needs the message store, so
+ * it is applied by FakePrisma.matchesConversationListQuery on top of this. */
 function matchesConversationListWhere(
   where: ConversationListWhere | undefined,
 ): (row: Conversation) => boolean {
@@ -1886,13 +1966,15 @@ function cloneConversation(row: Conversation): Conversation {
 
 /** Message matcher (CHT-001/003): thread scoping + optional sender (null
  * matches SYSTEM rows) + the cursor page's strict `createdAt` bounds + the
- * read-marking arm (`readAt: null` — only the unset form is ever queried). */
+ * read-marking arm (`readAt: null` — only the unset form is ever queried) +
+ * the CHT-007 media-reference arm (secure serving / chat-attach probes). */
 function matchesMessageWhere(where: MessageWhere | undefined): (row: Message) => boolean {
   return (row) =>
     (where?.conversationId === undefined || row.conversationId === where.conversationId) &&
     (where?.senderId === undefined || row.senderId === where.senderId) &&
     (where?.id === undefined || row.id === where.id) &&
     (where?.readAt === undefined || row.readAt === null) &&
+    (where?.mediaAssetId === undefined || row.mediaAssetId === where.mediaAssetId) &&
     (where?.createdAt === undefined ||
       ((where.createdAt.lt === undefined || row.createdAt < where.createdAt.lt) &&
         (where.createdAt.lte === undefined || row.createdAt <= where.createdAt.lte)));

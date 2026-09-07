@@ -195,16 +195,20 @@ export class MediaController {
   @Get('secure/:year/:month/:file')
   @ApiBearerAuth('access-token')
   @ApiOkResponse({ schema: { type: 'string', format: 'binary' } })
-  @ApiOperation({ summary: 'Stream a bearer-only media asset (chat media) by storage key' })
+  @ApiOperation({
+    summary:
+      'Stream a bearer-only media asset by storage key — chat messages reference these; an asset referenced by any message requires conversation participation (403), others are authenticated-only (CHT-007)',
+  })
   async serveSecure(
     @Res() res: Response,
+    @CurrentUser() user: AuthUser,
     @Param('year') year: string,
     @Param('month') month: string,
     @Param('file') file: string,
   ): Promise<void> {
     await this.stream(
       res,
-      this.media.serveSecure(`secure/${year}/${month}/${file}`),
+      this.media.serveSecure(`secure/${year}/${month}/${file}`, user.sub),
       'private, no-store',
     );
   }

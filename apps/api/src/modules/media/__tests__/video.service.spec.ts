@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import type { AppConfig } from '../../../config/configuration';
 import type { PrismaService } from '../../../prisma/prisma.service';
 import { FakePrisma } from '../../../test/fakes/fake-prisma';
+import { ChatMediaAccessService } from '../chat-media-access.service';
 import { ImageVariantService } from '../images/variant.service';
 import { MediaRepository } from '../media.repository';
 import { MEDIA_ERROR_CODES, MEDIA_PUBLIC_KEY_PATTERN } from '../media.constants';
@@ -130,6 +131,7 @@ describe('VideoService.uploadVideo (MEDIA-003)', () => {
       new MediaRepository(fake as unknown as PrismaService),
       storage,
       new ImageVariantService(),
+      new ChatMediaAccessService(fake as unknown as PrismaService),
       { get: () => serviceConfig } as unknown as ConfigService,
     );
     service = new VideoService(
@@ -402,6 +404,7 @@ describe('VideoService.uploadVideo (MEDIA-003)', () => {
         new MediaRepository(fake as unknown as PrismaService),
         storage,
         failingVariants as unknown as ImageVariantService,
+        new ChatMediaAccessService(fake as unknown as PrismaService),
         { get: () => serviceConfig } as unknown as ConfigService,
       ),
       new MediaRepository(fake as unknown as PrismaService),

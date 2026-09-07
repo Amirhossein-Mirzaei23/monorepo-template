@@ -215,6 +215,48 @@ describe('useSendMessage (CHT-006 optimistic send)', () => {
     expect(cached?.pages.flatMap((page) => page.items).map((item) => item.id)).toEqual(['m-2']);
   });
 
+  it('CHT-007: sendMedia POSTs {type, mediaAssetId} and reconciles on the WS echo', async () => {
+    const { queryClient, Wrapper } = createWrapper();
+    seedLoadedThread(queryClient);
+    fetchMock.mockResolvedValue(
+      deferredOk(
+        messageFixture({
+          id: 'm-media-1',
+          senderId: 'user-1',
+          type: 'IMAGE',
+          body: null,
+          mediaAssetId: 'asset-9',
+        }),
+        201,
+      ),
+    );
+
+    const { result } = renderHook(() => useSendMessage('conv-1'), { wrapper: Wrapper });
+    act(() => {
+      result.current.sendMedia('IMAGE', 'asset-9', 'blob:local-preview');
+    });
+
+    // The optimistic media tile is pending with its local preview.
+    expect(result.current.pending[0]?.media).toEqual({
+      type: 'IMAGE',
+      mediaAssetId: 'asset-9',
+      localPreviewUrl: 'blob:local-preview',
+    });
+
+    await waitFor(() => expect(result.current.pending).toHaveLength(0));
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/conversations/conv-1/messages');
+    expect(JSON.parse(String(init.body))).toEqual({ type: 'IMAGE', mediaAssetId: 'asset-9' });
+    expect(
+      queryClient
+        .getQueryData<{ pages: Array<{ items: Array<{ id: string }> }> }>(
+          chatKeys.messages('conv-1'),
+        )
+        ?.pages.flatMap((page) => page.items)
+        .map((item) => item.id),
+    ).toEqual(['m-media-1']);
+  });
+
   it('never hits the wire for empty, whitespace-only or oversize bodies', async () => {
     const { Wrapper } = createWrapper();
     const { result } = renderHook(() => useSendMessage('conv-1'), { wrapper: Wrapper });

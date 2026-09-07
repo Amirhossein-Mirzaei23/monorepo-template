@@ -19,6 +19,27 @@ export const MEDIA_PUBLIC_KEY_PATTERN = /^\d{4}\/\d{2}\/[a-z0-9]+\.\w{2,5}$/;
  */
 export const MEDIA_SECURE_KEY_PATTERN = /^secure\/\d{4}\/\d{2}\/[a-z0-9]+\.\w{2,5}$/;
 
+/**
+ * CHT-007 — keys the SECURE route resolves. Chat attachments are uploaded
+ * through the MEDIA-002/003 endpoints (POST /media, POST /media/video), which
+ * mint PUBLIC-pattern keys, so the secure route must ALSO resolve
+ * public-pattern keys to serve chat media behind the participant gate.
+ * Authorization matrix on the route (CHT-007):
+ * - asset referenced by a chat Message → requester must participate in one of
+ *   those conversations (403 otherwise);
+ * - asset NOT referenced by any message → authenticated-only (unchanged
+ *   MEDIA-001 contract; those are public-pattern assets that the public route
+ *   serves anyway, so nothing new is exposed);
+ * - `secure/`-prefixed keys keep resolving EXACTLY (no prefix stripping — the
+ *   MEDIA-001 "no splicing" contract stands).
+ * Residual (documented follow-up for a MEDIA card): a message-referenced
+ * asset with a public-pattern key remains technically streamable through the
+ * PUBLIC route by anyone — the durable fix is chat-scoped uploads minting
+ * `secure/`-prefixed keys, which needs a consumer context on the upload
+ * endpoints (out of CHT-007 scope).
+ */
+export const MEDIA_SECURE_ROUTE_KEY_PATTERN = /^(?:secure\/)?\d{4}\/\d{2}\/[a-z0-9]+\.\w{2,5}$/;
+
 /** Path prefix that marks an asset as bearer-only (chat attachments). */
 export const MEDIA_SECURE_PREFIX = 'secure/';
 
@@ -59,6 +80,10 @@ export const MEDIA_ERROR_CODES = {
   DURATION_REQUIRED: 'DURATION_REQUIRED',
   /** Poster thumb generation/storage failed — partial storage rolled back (MEDIA-003). */
   VIDEO_PROCESSING_FAILED: 'VIDEO_PROCESSING_FAILED',
+  /** CHT-007: the requested chat media's asset is referenced by at least one
+   * Message and the authenticated requester participates in NONE of those
+   * conversations (403). */
+  SECURE_MEDIA_FORBIDDEN: 'SECURE_MEDIA_FORBIDDEN',
 } as const;
 
 /**
@@ -117,6 +142,44 @@ export function derivePosterKeys(
 ): { original: string; thumb: string } {
   const base = videoKey.slice(0, videoKey.lastIndexOf('.'));
   return { original: `${base}p.${posterExtension}`, thumb: `${base}pt.webp` };
+}
+
+/**
+ * CHT-007 — reverse of the variant derivation for the SECURE route's
+ * participant gate. A secure-route key may be a VARIANT object ({id}c.webp
+ * cover, {id}t.webp thumb, {id}p.jpg poster original, {id}pt.webp poster
+ * thumb) which has NO MediaAsset row of its own — authorization must resolve
+ * the BASE asset it was derived from. RESOLUTION (documented per the card:
+ * "derive the id prefix by stripping the 1–2-char suffix + extension"): the
+ * file segment's extension AND the 1–2-char variant suffix (`pt` first, then
+ * the single letters c/t/p) are peeled off, yielding storage-key PREFIXES
+ * (`{dir}/{id}.`) the base row is probed with — rows only ever exist for
+ * originals (`{id}.{anyAllowedExt}`), variants are rowless, and the base's
+ * own extension is NOT derivable from the variant's (a `.webp` cover may
+ * come from a `.jpg` original; a `.webp` poster thumb from an `.mp4` video),
+ * so an exact-key lookup cannot work here. Ids are 24 lowercase base36
+ * chars, so a base id may itself end in c/t/p; the EXACT-key lookup always
+ * runs first in MediaService, so this helper is only consulted for rowless
+ * keys, each candidate is just another probe, and a wrong peel matches
+ * nothing. Returns [] for keys without a `{dir}/{stem}.{ext}` file segment
+ * (callers pattern-guard first).
+ */
+export function baseAssetKeyPrefixes(key: string): string[] {
+  const slash = key.lastIndexOf('/');
+  const dot = key.lastIndexOf('.');
+  if (slash === -1 || dot <= slash + 1) {
+    return [];
+  }
+  const dir = key.slice(0, slash + 1);
+  const stem = key.slice(slash + 1, dot);
+  const candidates: string[] = [];
+  if (stem.endsWith('pt')) {
+    candidates.push(`${dir}${stem.slice(0, -2)}.`);
+  }
+  if (/[ctp]$/.test(stem)) {
+    candidates.push(`${dir}${stem.slice(0, -1)}.`);
+  }
+  return candidates;
 }
 
 /**

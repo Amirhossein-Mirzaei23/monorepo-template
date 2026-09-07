@@ -1,10 +1,10 @@
 # Conversations module
 
 CHT-001 (get-or-create) · CHT-002 (inbox) · CHT-003 (messages send/list/read)
-· CHT-004 (the `/ws` socket.io gateway). Reference pattern:
-`apps/api/src/modules/users`. REST surface is documented in swagger (`/docs`);
-this README tracks the WS contract, which is NOT part of the generated
-OpenAPI document.
+· CHT-004 (the `/ws` socket.io gateway) · CHT-007 (media messages). Reference
+pattern: `apps/api/src/modules/users`. REST surface is documented in swagger
+(`/docs`); this README tracks the WS contract, which is NOT part of the
+generated OpenAPI document, plus the CHT-007 media rules.
 
 ## Endpoints (REST)
 
@@ -12,9 +12,63 @@ OpenAPI document.
 | ------ | ----------------------------- | ---- | ------------------------------------------------------------- |
 | POST   | `/conversations`              | JWT  | get-or-create for lot+buyer (CHT-001)                         |
 | GET    | `/conversations`              | JWT  | participant inbox, paginated, newest activity first (CHT-002) |
-| POST   | `/conversations/:id/messages` | JWT  | send TEXT, throttled 30/min (CHT-003)                         |
+| POST   | `/conversations/:id/messages` | JWT  | send TEXT or IMAGE/VIDEO, throttled 30/min (CHT-003/007)      |
 | GET    | `/conversations/:id/messages` | JWT  | backwards cursor history (CHT-003)                            |
 | POST   | `/conversations/:id/read`     | JWT  | mark my side read → `{ readCount }` (CHT-003)                 |
+
+## Media messages (CHT-007)
+
+`POST /conversations/:id/messages` accepts exactly one of:
+
+- `{ body }` — TEXT (trimmed 1..2000 chars); a `mediaAssetId` on a TEXT send
+  answers 400 `MEDIA_ASSET_WITH_TEXT`, a missing/empty body 400
+  `MESSAGE_BODY_REQUIRED`.
+- `{ type: 'IMAGE' | 'VIDEO', mediaAssetId }` — media rows are BODY-LESS by
+  contract (a non-empty body answers 400 `MEDIA_BODY_FORBIDDEN`; a missing
+  `mediaAssetId` 400 `MEDIA_ASSET_REQUIRED`). The referenced MediaAsset must
+  be owned by the sender — missing and foreign assets answer uniformly 403
+  `MEDIA_NOT_OWNED` (no existence oracle, MEDIA-005's precedent) — and its
+  MediaType must match the message type (else 400 `MEDIA_TYPE_MISMATCH`).
+
+The send transaction is unchanged otherwise: message row + conversation
+lockstep + counterpart unread increment in one transaction. Media rows store
+NO body; the conversation's `lastMessagePreview` carries the Persian
+placeholders **«📷 تصویر» / «🎬 ویدیو»** (CONTENT copy in fa by design, same
+exception as the SYSTEM welcome).
+
+Message responses (REST history + `message:new` WS payloads) carry
+`mediaAssetId`, `mediaStorageKey` (original bytes) and `mediaPreviewKey`
+(IMAGE: the 1200w WebP cover variant; VIDEO: the poster thumb
+`{id}pt.webp`; null when the asset has none). Clients render these
+EXCLUSIVELY through the bearer route `GET /media/secure/{key}` — never the
+public route.
+
+### Secure serving — authorization matrix (`GET /media/secure/:key`)
+
+After authentication (401 anonymous — the global guard):
+
+| Key resolved to                                                                       | Authenticated requester                |
+| ------------------------------------------------------------------------------------- | -------------------------------------- |
+| Asset referenced by ≥ 1 Message, requester takes a side of one of those conversations | **200** stream (`private, no-store`)   |
+| Asset referenced by ≥ 1 Message, requester in NONE of them                            | **403** `SECURE_MEDIA_FORBIDDEN`       |
+| Asset NOT referenced by any message (secure/-prefixed)                                | **200** — unchanged MEDIA-001 contract |
+| Unknown key / rowless object without bytes                                            | **404** (unchanged)                    |
+| Malformed key (pattern/traversal)                                                     | **400** (unchanged)                    |
+
+The public route `GET /media/:key` is UNCHANGED by CHT-007 (public assets,
+immutable cache headers). Variant keys (`{id}c.webp`, `{id}t.webp`,
+`{id}p.*`, `{id}pt.webp`) have no rows of their own; the route resolves their
+BASE asset by stripping the extension and the 1–2-char suffix from the file
+segment and probing the storage-key prefix `{yyyy}/{mm}/{id}.` — the gate
+then applies to the base asset. Chat attachments are uploaded through the
+MEDIA-002/003 endpoints (which mint PUBLIC-pattern keys), so the secure route
+additionally resolves the requested key WITHOUT its `secure/` prefix — but
+only when the inner asset is chat-attached (message-referenced); unreferenced
+public keys still 404 here, which keeps MEDIA-001's "no splicing" contract.
+Documented residual: a message-referenced asset with a public-pattern key
+remains reachable through the PUBLIC route by anyone — the durable fix is
+chat-scoped uploads minting `secure/`-prefixed keys (follow-up for a MEDIA
+card; needs a consumer context on the upload endpoints).
 
 ## WS contract (CHT-004)
 

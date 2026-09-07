@@ -544,7 +544,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Stream a bearer-only media asset (chat media) by storage key */
+        /** Stream a bearer-only media asset by storage key — chat messages reference these; an asset referenced by any message requires conversation participation (403), others are authenticated-only (CHT-007) */
         get: operations["MediaController_serveSecure"];
         put?: never;
         post?: never;
@@ -599,7 +599,7 @@ export interface paths {
         /** Walk a thread history backwards: ?before=<messageId>&limit≤50 (default 30) — ASC page of strictly older messages */
         get: operations["MessagesController_list"];
         put?: never;
-        /** Send a TEXT message to a thread I participate in (403 non-participant/blocked, 404 unknown, 400 validation, 429 over 30/min) */
+        /** Send a TEXT or IMAGE/VIDEO message to a thread I participate in (403 non-participant/blocked/foreign-asset, 404 unknown, 400 validation/type mismatch, 429 over 30/min) */
         post: operations["MessagesController_send"];
         delete?: never;
         options?: never;
@@ -2025,16 +2025,21 @@ export interface components {
         };
         SendMessageDto: {
             /**
-             * @description Message type — only TEXT is open for sends; IMAGE/VIDEO arrive with CHT-007 and anything else (incl. SYSTEM) answers 400
+             * @description Message type — TEXT (default; requires body), IMAGE/VIDEO (require mediaAssetId, body must be empty); SYSTEM/ACTION answer 400
              * @default TEXT
              * @enum {string}
              */
-            type: "TEXT";
+            type: "TEXT" | "IMAGE" | "VIDEO";
             /**
-             * @description Trimmed message text — required for TEXT, 1..2000 chars (validated AFTER trimming)
+             * @description Trimmed message text — REQUIRED for TEXT (1..2000 chars post-trim, enforced service-side) and must be EMPTY for IMAGE/VIDEO
              * @example قیمت برای ۵ ستون چقدر می‌شود؟
              */
-            body: string;
+            body?: string;
+            /**
+             * @description MediaAsset id — REQUIRED for IMAGE/VIDEO, must be owned by the sender (else 403 MEDIA_NOT_OWNED) and its MediaType must match the message type (else 400)
+             * @example clx…cuid
+             */
+            mediaAssetId?: string;
         };
         MessageResponseDto: {
             /**
@@ -2056,6 +2061,21 @@ export interface components {
             type: "TEXT" | "IMAGE" | "VIDEO" | "SYSTEM" | "ACTION";
             /** @example سلام، موجود است؟ */
             body: string | null;
+            /**
+             * @description Referenced MediaAsset id — null for TEXT/SYSTEM rows (CHT-007)
+             * @example null
+             */
+            mediaAssetId: string | null;
+            /**
+             * @description Storage key of the referenced asset (original bytes). Render through GET /media/secure/{key} with a bearer token — never the public route (CHT-007)
+             * @example 2026/09/abc123.mp4
+             */
+            mediaStorageKey: string | null;
+            /**
+             * @description Cheaper preview key — IMAGE: the 1200w WebP cover variant; VIDEO: the poster thumb ({id}pt.webp); null when the asset has none (videos may be poster-less)
+             * @example 2026/09/abc123pt.webp
+             */
+            mediaPreviewKey: string | null;
             /**
              * Format: date-time
              * @description ASC history sort key
@@ -3142,7 +3162,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The created TEXT message (readAt null) — the conversation lockstep (lastMessageAt/preview + counterpart unread increment) committed in the same transaction */
+            /** @description The created message (readAt null) — TEXT or IMAGE/VIDEO with its media keys; the conversation lockstep (lastMessageAt/preview + counterpart unread increment) committed in the same transaction */
             201: {
                 headers: {
                     [name: string]: unknown;

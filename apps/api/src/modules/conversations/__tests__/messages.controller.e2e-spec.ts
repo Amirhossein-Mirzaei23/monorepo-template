@@ -5,6 +5,7 @@ import {
   LiquidationReason,
   LotCondition,
   LotStatus,
+  MediaType,
   PricingType,
   type User,
 } from '@prisma/client';
@@ -171,10 +172,6 @@ describe('MessagesController (e2e, CHT-003)', () => {
       await sendMessage(buyer.token, conversationId, { body: '   ' }).expect(400); // trims to empty
       await sendMessage(buyer.token, conversationId, { body: 'خ'.repeat(2001) }).expect(400);
       await sendMessage(buyer.token, conversationId, {
-        type: 'IMAGE', // media types land in CHT-007 — rejected for now
-        body: 'سلام',
-      }).expect(400);
-      await sendMessage(buyer.token, conversationId, {
         type: 'SYSTEM', // SYSTEM rows are server-written only
         body: 'سلام',
       }).expect(400);
@@ -194,7 +191,18 @@ describe('MessagesController (e2e, CHT-003)', () => {
       expect(response.body.type).toBe('TEXT');
       expect(response.body.readAt).toBeNull();
       expect(Object.keys(response.body).sort()).toEqual(
-        ['body', 'conversationId', 'createdAt', 'id', 'readAt', 'senderId', 'type'].sort(),
+        [
+          'body',
+          'conversationId',
+          'createdAt',
+          'id',
+          'mediaAssetId',
+          'mediaPreviewKey',
+          'mediaStorageKey',
+          'readAt',
+          'senderId',
+          'type',
+        ].sort(),
       );
     });
 
@@ -303,7 +311,18 @@ describe('MessagesController (e2e, CHT-003)', () => {
       expect(response.body.items[1].createdAt >= response.body.items[0].createdAt).toBe(true);
       expect(Object.keys(response.body).sort()).toEqual(['hasMore', 'items', 'nextCursor'].sort());
       expect(Object.keys(response.body.items[0]).sort()).toEqual(
-        ['body', 'conversationId', 'createdAt', 'id', 'readAt', 'senderId', 'type'].sort(),
+        [
+          'body',
+          'conversationId',
+          'createdAt',
+          'id',
+          'mediaAssetId',
+          'mediaPreviewKey',
+          'mediaStorageKey',
+          'readAt',
+          'senderId',
+          'type',
+        ].sort(),
       );
     });
 
@@ -409,6 +428,108 @@ describe('MessagesController (e2e, CHT-003)', () => {
       });
       expect(myOwnRows).toHaveLength(1);
       expect(myOwnRows.every((message) => message.readAt === null)).toBe(true); // buyer read ≠ buyer's own rows
+    });
+  });
+
+  describe('CHT-007 — media messages (POST extended + history keys)', () => {
+    /** Seeds a chat asset owned by `owner` (public-pattern key — MEDIA-002/003
+     * uploads mint these; the secure route reaches them behind the gate). */
+    const seedAsset = (owner: string, type: MediaType, key: string) =>
+      prisma.seedMediaAsset({
+        ownerId: owner,
+        type,
+        storageKey: key,
+        thumbKey: type === MediaType.IMAGE ? `${key.replace(/\.\w+$/, 'c.webp')}` : undefined,
+        mime: type === MediaType.IMAGE ? 'image/png' : 'video/mp4',
+        sizeBytes: 256,
+      });
+
+    it('creates an IMAGE message (201) with the media keys, «📷 تصویر» preview and counterpart unread', async () => {
+      const { buyer, seller, conversationId } = await createThread();
+      const asset = seedAsset(buyer.user.id, MediaType.IMAGE, '2026/07/photo0001.png');
+
+      const response = await sendMessage(buyer.token, conversationId, {
+        type: 'IMAGE',
+        mediaAssetId: asset.id,
+      }).expect(201);
+
+      expect(response.body.type).toBe('IMAGE');
+      expect(response.body.body).toBeNull();
+      expect(response.body.mediaAssetId).toBe(asset.id);
+      expect(response.body.mediaStorageKey).toBe('2026/07/photo0001.png');
+      expect(response.body.mediaPreviewKey).toBe('2026/07/photo0001c.webp'); // cover variant
+
+      const sellerInbox = await getInbox(seller.token).expect(200);
+      const item = sellerInbox.body.items.find((it: { id: string }) => it.id === conversationId);
+      expect(item.lastMessagePreview).toBe('📷 تصویر'); // the fa placeholder (documented)
+      expect(item.myUnreadCount).toBe(1);
+    });
+
+    it('403 MEDIA_NOT_OWNED for a foreign asset and uniformly for a missing one', async () => {
+      const { buyer, conversationId } = await createThread();
+      const outsider = await loginAsBuyer();
+      const foreignAsset = seedAsset(outsider.user.id, MediaType.IMAGE, '2026/07/foreign1.png');
+
+      const foreign = await sendMessage(buyer.token, conversationId, {
+        type: 'IMAGE',
+        mediaAssetId: foreignAsset.id,
+      }).expect(403);
+      expect(foreign.body.code).toBe('MEDIA_NOT_OWNED');
+
+      const missing = await sendMessage(buyer.token, conversationId, {
+        type: 'IMAGE',
+        mediaAssetId: 'no-such-asset',
+      }).expect(403);
+      expect(missing.body.code).toBe('MEDIA_NOT_OWNED');
+    });
+
+    it('400 for the payload invariants: no body on TEXT, body on media, mediaAssetId on TEXT, missing mediaAssetId, type mismatch', async () => {
+      const { buyer, conversationId } = await createThread();
+      const imageAsset = seedAsset(buyer.user.id, MediaType.IMAGE, '2026/07/photo0002.png');
+      const videoAsset = seedAsset(buyer.user.id, MediaType.VIDEO, '2026/07/clip0001.mp4');
+
+      const noBody = await sendMessage(buyer.token, conversationId, {}).expect(400);
+      expect(noBody.body.code).toBe('MESSAGE_BODY_REQUIRED');
+
+      const mediaWithBody = await sendMessage(buyer.token, conversationId, {
+        type: 'IMAGE',
+        mediaAssetId: imageAsset.id,
+        body: 'نگاه کن',
+      }).expect(400);
+      expect(mediaWithBody.body.code).toBe('MEDIA_BODY_FORBIDDEN');
+
+      const textWithAsset = await sendMessage(buyer.token, conversationId, {
+        body: 'سلام',
+        mediaAssetId: imageAsset.id,
+      }).expect(400);
+      expect(textWithAsset.body.code).toBe('MEDIA_ASSET_WITH_TEXT');
+
+      const missingAsset = await sendMessage(buyer.token, conversationId, {
+        type: 'IMAGE',
+      }).expect(400);
+      expect(missingAsset.body.code).toBe('MEDIA_ASSET_REQUIRED');
+
+      const mismatch = await sendMessage(buyer.token, conversationId, {
+        type: 'VIDEO',
+        mediaAssetId: imageAsset.id,
+      }).expect(400);
+      expect(mismatch.body.code).toBe('MEDIA_TYPE_MISMATCH');
+      expect(videoAsset.type).toBe(MediaType.VIDEO);
+    });
+
+    it('serves the media keys back through the history page', async () => {
+      const { buyer, conversationId } = await createThread();
+      const asset = seedAsset(buyer.user.id, MediaType.IMAGE, '2026/07/photo0003.png');
+      const sent = await sendMessage(buyer.token, conversationId, {
+        type: 'IMAGE',
+        mediaAssetId: asset.id,
+      }).expect(201);
+
+      const response = await listMessages(buyer.token, conversationId).expect(200);
+      const last = response.body.items.at(-1);
+      expect(last.id).toBe(sent.body.id);
+      expect(last.mediaStorageKey).toBe('2026/07/photo0003.png');
+      expect(last.mediaPreviewKey).toBe('2026/07/photo0003c.webp');
     });
   });
 });

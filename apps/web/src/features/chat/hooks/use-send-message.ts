@@ -17,26 +17,49 @@ import type { MessageNewEvent } from '../lib/socket-contract';
  * - send(): trimmed body validated against the CHT-003 bound (1..2000) —
  *   the temp bubble renders instantly with status 'sending' and the POST
  *   goes out (composer gates empty/oversize too; the hook re-checks);
+ * - sendMedia() (CHT-007): once an attachment UPLOAD completed, the bubble
+ *   carries its local preview while the {type, mediaAssetId} POST goes out;
  * - reconcile: the temp retires when EITHER ack arrives — the POST response
  *   or the `message:new` WS echo of my own row (the sender is in the room).
  *   Both paths land the row in the cache through `appendServerMessage`
  *   (id-dedupe makes the double delivery harmless); the ✓ tick then lives on
  *   the server row (readAt null), so temps only ever rest in
- *   'sending' | 'failed' — there is no lingering 'sent' state to clean up;
+ *   'sending' | 'failed' — there is no lingering 'sent' state to clean up.
+ *   TEXT temps reconcile by body equality; MEDIA temps by kind (the client
+ *   does not know the asset id before the ack) — oldest matching temp wins.
  * - failure: the temp flips to 'failed' (red bubble + retry); retry() puts
- *   the SAME temp back to 'sending' and re-POSTs the same body.
+ *   the SAME temp back to 'sending' and re-POSTs the same payload.
  */
 
 /** Lifecycle of an optimistic bubble (see the module doc — no 'sent' rest state). */
 export type PendingMessageStatus = 'sending' | 'failed';
+
+/** jsdom-safe object URL revocation (not every environment implements it). */
+function revokeObjectUrl(url: string | undefined): void {
+  if (url && typeof URL.revokeObjectURL === 'function') {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** The media a pending bubble was sent with (CHT-007) — the local preview
+ * keeps rendering while the POST is in flight. */
+export interface PendingMedia {
+  type: 'IMAGE' | 'VIDEO';
+  /** The uploaded MediaAsset id — re-POSTed verbatim on retry. */
+  mediaAssetId: string;
+  /** Object URL of the LOCAL file — revoked by use-attachment-send on unmount. */
+  localPreviewUrl: string;
+}
 
 export interface PendingMessage {
   /** Negative, decreasing per session — never collides with real ids. */
   tempId: number;
   conversationId: string;
   senderId: string;
-  /** Already-trimmed body (what the POST sends). */
+  /** Already-trimmed body (TEXT sends); empty for media sends. */
   body: string;
+  /** The media reference (media sends) or undefined (TEXT sends). */
+  media?: PendingMedia;
   /** Client clock ISO stamp — replaced by the server row on reconcile. */
   createdAt: string;
   status: PendingMessageStatus;
@@ -46,7 +69,11 @@ export interface UseSendMessageResult {
   /** In-flight/failed optimistic bubbles, in send order. */
   pending: PendingMessage[];
   send: (body: string) => void;
+  /** CHT-007 — send an uploaded attachment (upload completion callback). */
+  sendMedia: (type: 'IMAGE' | 'VIDEO', mediaAssetId: string, localPreviewUrl: string) => void;
   retry: (tempId: number) => void;
+  /** CHT-007 — discard a pending bubble (revokes its local preview URL). */
+  discard: (tempId: number) => void;
 }
 
 export function useSendMessage(conversationId: string): UseSendMessageResult {
@@ -67,7 +94,28 @@ export function useSendMessage(conversationId: string): UseSendMessageResult {
   }, [pending]);
 
   const removePending = useCallback((tempId: number) => {
-    setPending((items) => items.filter((item) => item.tempId !== tempId));
+    setPending((items) => {
+      const target = items.find((item) => item.tempId === tempId);
+      // CHT-007: the retired optimistic bubble's LOCAL preview object URL is
+      // ours to revoke — the server row renders via the authed-fetch keys.
+      if (target?.media) {
+        revokeObjectUrl(target.media.localPreviewUrl);
+      }
+      return items.filter((item) => item.tempId !== tempId);
+    });
+  }, []);
+
+  // Unmount: revoke the local previews of optimistic bubbles still pending
+  // (handed over from use-attachment-send on upload success).
+  useEffect(() => {
+    const items = pendingRef.current;
+    return () => {
+      for (const item of items) {
+        if (item.media) {
+          revokeObjectUrl(item.media.localPreviewUrl);
+        }
+      }
+    };
   }, []);
 
   const setPendingStatus = useCallback((tempId: number, status: PendingMessageStatus) => {
@@ -77,8 +125,12 @@ export function useSendMessage(conversationId: string): UseSendMessageResult {
   }, []);
 
   const mutation = useMutation({
-    mutationFn: ({ body }: { tempId: number; body: string }) =>
-      sendMessage(token, conversationId, body),
+    mutationFn: ({
+      payload,
+    }: {
+      tempId: number;
+      payload: { body: string } | { type: 'IMAGE' | 'VIDEO'; mediaAssetId: string };
+    }) => sendMessage(token, conversationId, payload),
     onSuccess: (message, variables) => {
       appendServerMessage(queryClient, conversationId, message);
       removePending(variables.tempId);
@@ -91,9 +143,12 @@ export function useSendMessage(conversationId: string): UseSendMessageResult {
   const { mutate } = mutation;
 
   const startSend = useCallback(
-    (tempId: number, body: string) => {
+    (
+      tempId: number,
+      payload: { body: string } | { type: 'IMAGE' | 'VIDEO'; mediaAssetId: string },
+    ) => {
       setPendingStatus(tempId, 'sending');
-      mutate({ tempId, body });
+      mutate({ tempId, payload });
     },
     [mutate, setPendingStatus],
   );
@@ -107,9 +162,14 @@ export function useSendMessage(conversationId: string): UseSendMessageResult {
         return;
       }
       appendServerMessage(queryClient, conversationId, payload.message);
-      const match = pendingRef.current.find(
-        (item) => item.status === 'sending' && item.body === payload.message.body,
-      );
+      const message = payload.message;
+      const match = pendingRef.current
+        .filter((item) => item.status === 'sending')
+        .filter((item) =>
+          message.mediaAssetId !== null
+            ? item.media?.type === message.type
+            : item.body !== '' && item.body === message.body,
+        )[0];
       if (match) {
         removePending(match.tempId);
       }
@@ -137,7 +197,31 @@ export function useSendMessage(conversationId: string): UseSendMessageResult {
           status: 'sending',
         },
       ]);
-      mutate({ tempId, body: trimmed });
+      mutate({ tempId, payload: { body: trimmed } });
+    },
+    [conversationId, mutate, myId],
+  );
+
+  const sendMedia = useCallback(
+    (type: 'IMAGE' | 'VIDEO', mediaAssetId: string, localPreviewUrl: string) => {
+      if (!mediaAssetId) {
+        return;
+      }
+      nextTempIdRef.current -= 1;
+      const tempId = nextTempIdRef.current;
+      setPending((items) => [
+        ...items,
+        {
+          tempId,
+          conversationId,
+          senderId: myId ?? '',
+          body: '',
+          media: { type, mediaAssetId, localPreviewUrl },
+          createdAt: new Date().toISOString(),
+          status: 'sending',
+        },
+      ]);
+      mutate({ tempId, payload: { type, mediaAssetId } });
     },
     [conversationId, mutate, myId],
   );
@@ -148,10 +232,15 @@ export function useSendMessage(conversationId: string): UseSendMessageResult {
       if (!item || item.status !== 'failed') {
         return;
       }
-      startSend(item.tempId, item.body);
+      startSend(
+        item.tempId,
+        item.media
+          ? { type: item.media.type, mediaAssetId: item.media.mediaAssetId }
+          : { body: item.body },
+      );
     },
     [startSend],
   );
 
-  return { pending, send, retry };
+  return { pending, send, sendMedia, retry, discard: removePending };
 }

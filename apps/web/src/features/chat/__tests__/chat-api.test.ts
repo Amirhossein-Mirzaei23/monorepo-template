@@ -56,7 +56,7 @@ describe('chat-api CHT-003 fetchers', () => {
   it('POSTs the trimmed send body as TEXT and parses the created row', async () => {
     fetchMock.mockResolvedValue(ok(messageFixture({ id: 'm-new' }), 201));
 
-    const created = await sendMessage('tok', 'conv-1', 'قیمت چقدر می‌شود؟');
+    const created = await sendMessage('tok', 'conv-1', { body: 'قیمت چقدر می‌شود؟' });
 
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('/api/conversations/conv-1/messages');
@@ -84,7 +84,9 @@ describe('chat-api CHT-003 fetchers', () => {
 
   it('requires an access token before any call', async () => {
     await expect(fetchMessages(undefined, 'conv-1')).rejects.toThrow('Not authenticated');
-    await expect(sendMessage(undefined, 'conv-1', 'سلام')).rejects.toThrow('Not authenticated');
+    await expect(sendMessage(undefined, 'conv-1', { body: 'سلام' })).rejects.toThrow(
+      'Not authenticated',
+    );
     await expect(markConversationRead(undefined, 'conv-1')).rejects.toThrow('Not authenticated');
     expect(fetchMock).not.toHaveBeenCalled();
     expect(CONVERSATIONS_CONTEXT_SCAN_LIMIT).toBe(50); // API hard cap

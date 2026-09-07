@@ -106,3 +106,36 @@ describe('Composer (CHT-006 validation + send)', () => {
     expect(onTyping).toHaveBeenCalledTimes(4); // per keystroke; throttling is the hook's job
   });
 });
+
+describe('Composer attachments (CHT-007)', () => {
+  it('hands picked image/video files to the attach handlers and resets the inputs', () => {
+    const onAttachImage = jest.fn();
+    const onAttachVideo = jest.fn();
+    const { container } = renderComposer({ onAttachImage, onAttachVideo });
+
+    const imageInput = container.querySelector('input[accept="image/*"]') as HTMLInputElement;
+    const videoInput = container.querySelector(
+      'input[accept="video/mp4,video/webm"]',
+    ) as HTMLInputElement;
+    expect(imageInput).not.toBeNull();
+    expect(videoInput).not.toBeNull();
+
+    const image = new File(['x'], 'photo.png', { type: 'image/png' });
+    fireEvent.change(imageInput, { target: { files: [image] } });
+    expect(onAttachImage).toHaveBeenCalledWith(image);
+
+    const video = new File(['y'], 'clip.mp4', { type: 'video/mp4' });
+    fireEvent.change(videoInput, { target: { files: [video] } });
+    expect(onAttachVideo).toHaveBeenCalledWith(video);
+
+    // Same-file re-pick fires again (the input value was reset).
+    fireEvent.change(imageInput, { target: { files: [image] } });
+    expect(onAttachImage).toHaveBeenCalledTimes(2);
+  });
+
+  it('renders no attachment buttons when the handlers are absent (feature-off surface)', () => {
+    const { container } = renderComposer();
+    expect(container.querySelector('input[accept="image/*"]')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'ارسال تصویر' })).not.toBeInTheDocument();
+  });
+});

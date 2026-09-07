@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -17,12 +18,15 @@ import {
   MEDIA_ERROR_CODES,
   MEDIA_MIME_EXTENSIONS,
   MEDIA_PUBLIC_KEY_PATTERN,
-  MEDIA_SECURE_KEY_PATTERN,
+  MEDIA_SECURE_PREFIX,
+  MEDIA_SECURE_ROUTE_KEY_PATTERN,
+  baseAssetKeyPrefixes,
   deriveVariantKey,
   generateMediaId,
   mimeFromKeyExtension,
 } from './media.constants';
 import { MediaRepository } from './media.repository';
+import { ChatMediaAccessService } from './chat-media-access.service';
 import { ImageVariantService } from './images/variant.service';
 import { StorageService } from './storage/storage.service';
 import type { MediaUploadResponseDto, MediaUploadUrlsDto } from './dto/media-upload-response.dto';
@@ -69,10 +73,14 @@ export interface MediaContent {
  * - Content-type comes from the STORED MediaAsset row, never from the request.
  * - 404 for unknown keys; 400 for keys failing the pattern/traversal guard.
  * - The public route resolves public-pattern keys only; the secure route
- *   resolves `secure/`-prefixed keys only (the path after /media IS the key).
- * - The secure route is bearer-authenticated ONLY (any valid account) on this
- *   card — per-message authorization is chat territory (CHT) and lands there;
- *   chat media keys are unguessable random paths, which is the residual guard.
+ *   resolves `secure/`-prefixed keys AND (CHT-007) public-pattern keys — chat
+ *   attachments are uploaded through the MEDIA-002/003 endpoints and mint
+ *   public-pattern keys, so the bearer route must reach them.
+ * - The secure route is bearer-authenticated; since CHT-007 an asset
+ *   referenced by a chat Message additionally requires the requester to
+ *   participate in one of the conversations carrying it (403 otherwise) —
+ *   see serveSecure for the full matrix. Unreferenced assets stay
+ *   authenticated-only here and public on the public route.
  * - MEDIA-002 addition: cover/thumb variant objects are stored WITHOUT their
  *   own MediaAsset row (one row per upload). For those pattern-valid,
  *   server-minted keys the fallback below derives the content-type from the
@@ -99,6 +107,11 @@ export class MediaService {
     private readonly repository: MediaRepository,
     private readonly storage: StorageService,
     private readonly variants: ImageVariantService,
+    /**
+     * CHT-007 — the chat-attachment authorization probes (message reference +
+     * conversation participation) used by the secure serving route.
+     */
+    private readonly chatAccess: ChatMediaAccessService,
     private readonly config: ConfigService,
   ) {}
 
@@ -259,12 +272,92 @@ export class MediaService {
 
   /**
    * Resolves a secure-route key (`GET /media/secure/:key`) to streamable
-   * content. Bearer-authenticated (global JwtAuthGuard — the route is not
-   * @Public); the URL path after /media IS the storage key, so only
-   * `secure/`-prefixed (chat) keys resolve here.
+   * content — bearer-authenticated (global JwtAuthGuard — the route is not
+   * @Public). CHT-007 extends MEDIA-001's authenticated-only contract with
+   * the PARTICIPANT gate:
+   *
+   * - an asset referenced by any Message is chat-attached: the requester must
+   *   participate in one of those conversations — 403 SECURE_MEDIA_FORBIDDEN
+   *   otherwise (the card's acceptance: a non-participant cannot fetch a chat
+   *   media URL);
+   * - assets NOT referenced by messages keep the unchanged contract:
+   *   authenticated-only here (secure/-prefixed keys), public on the public
+   *   route.
+   *
+   * KEY RESOLUTION (documented; the controller assembles `secure/…` + path):
+   * 1. the requested key resolves in its own namespace — exact row, then the
+   *    rowless VARIANT keys ({id}c.webp / {id}t.webp / {id}p.* / {id}pt.webp)
+   *    via the documented id-prefix probes (baseAssetKeyPrefixes);
+   * 2. CHT-007 chat media: attachments upload through MEDIA-002/003, which
+   *    mint PUBLIC-pattern keys, so the route ALSO resolves the key without
+   *    the `secure/` prefix — but ONLY when the inner asset is chat-attached
+   *    (then the INNER key streams: the bytes live there). A public-pattern
+   *    asset NOT referenced by any message stays unresolvable here (the
+   *    rowless fallback 404s — MEDIA-001's "no splicing" contract stands; its
+   *    bytes remain public via the public route, so nothing is hidden there).
    */
-  serveSecure(key: string): Promise<MediaContent> {
-    return this.serve(key, MEDIA_SECURE_KEY_PATTERN);
+  async serveSecure(key: string, requesterId: string): Promise<MediaContent> {
+    this.assertServableKey(key, MEDIA_SECURE_ROUTE_KEY_PATTERN);
+
+    // 1) in-namespace resolution + participant gate.
+    const direct = await this.resolveBaseAsset(key);
+    if (direct) {
+      await this.gateOnChatAsset(direct, requesterId);
+      return this.serve(key, MEDIA_SECURE_ROUTE_KEY_PATTERN);
+    }
+
+    // 2) chat media uploaded under a public-pattern key.
+    if (key.startsWith(MEDIA_SECURE_PREFIX)) {
+      const inner = key.slice(MEDIA_SECURE_PREFIX.length);
+      const innerBase = await this.resolveBaseAsset(inner);
+      if (innerBase && (await this.chatAccess.isReferencedByMessage(innerBase.id))) {
+        if (!(await this.chatAccess.requesterParticipates(innerBase.id, requesterId))) {
+          throw new ForbiddenException({
+            code: MEDIA_ERROR_CODES.SECURE_MEDIA_FORBIDDEN,
+            message: 'You do not have access to this media',
+          });
+        }
+        return this.serve(inner, MEDIA_PUBLIC_KEY_PATTERN);
+      }
+    }
+
+    // Nothing resolved → the regular contract (unknown key → 404).
+    return this.serve(key, MEDIA_SECURE_ROUTE_KEY_PATTERN);
+  }
+
+  /** The chat-attachment gate: 403 unless the requester participates in a
+   * conversation carrying this asset (only message-referenced assets gate). */
+  private async gateOnChatAsset(asset: { id: string }, requesterId: string): Promise<void> {
+    if (await this.chatAccess.isReferencedByMessage(asset.id)) {
+      const participates = await this.chatAccess.requesterParticipates(asset.id, requesterId);
+      if (!participates) {
+        throw new ForbiddenException({
+          code: MEDIA_ERROR_CODES.SECURE_MEDIA_FORBIDDEN,
+          message: 'You do not have access to this media',
+        });
+      }
+    }
+  }
+
+  /**
+   * The base-asset resolution for the participant gate: the EXACT storage key
+   * first (original keys have rows), then — for rowless VARIANT keys — the
+   * documented id-prefix probes (baseAssetKeyPrefixes). Null when nothing
+   * resolves (unknown keys → the regular 404 path; no gate decision either
+   * way).
+   */
+  private async resolveBaseAsset(key: string) {
+    const exact = await this.repository.findByStorageKey(key);
+    if (exact) {
+      return exact;
+    }
+    for (const prefix of baseAssetKeyPrefixes(key)) {
+      const found = await this.repository.findFirstByStorageKeyPrefix(prefix);
+      if (found) {
+        return found;
+      }
+    }
+    return null;
   }
 
   private async serve(key: string, pattern: RegExp): Promise<MediaContent> {

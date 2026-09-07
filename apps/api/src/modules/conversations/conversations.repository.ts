@@ -52,6 +52,21 @@ export type ConversationListRepositoryRow = Prisma.ConversationGetPayload<{
 }>;
 
 /**
+ * CHT-007 — the media block every message response needs when the row
+ * references a MediaAsset (storage key for the secure stream + thumbKey as
+ * the preview/poster key). Joined on the send's create and every history
+ * page; TEXT/SYSTEM rows read back with mediaAsset: null.
+ */
+export const MESSAGE_MEDIA_INCLUDE = {
+  mediaAsset: { select: { storageKey: true, thumbKey: true } },
+} satisfies Prisma.MessageInclude;
+
+/** A Message row as the message reads produce it (media block joined). */
+export type MessageWithMedia = Prisma.MessageGetPayload<{
+  include: typeof MESSAGE_MEDIA_INCLUDE;
+}>;
+
+/**
  * Data access only. Every method accepts an optional transaction client so the
  * repository stays unit-of-work agnostic — services own transaction boundaries
  * (doc/CONVENTIONS.md → Transactions). Repositories never call $transaction.
@@ -111,12 +126,17 @@ export class ConversationsRepository {
     return this.client(tx).conversation.update({ where: { id }, data });
   }
 
-  /** Insert one message (the SYSTEM welcome on CHT-001; sends land CHT-003). */
+  /**
+   * Insert one message (the SYSTEM welcome on CHT-001; sends land CHT-003).
+   * CHT-007: the row reads back WITH its media block so the send's response
+   * (and the WS echo of it) can carry the secure media keys without a
+   * second read inside the transaction.
+   */
   async createMessage(
     data: Prisma.MessageUncheckedCreateInput,
     tx: Tx = undefined,
-  ): Promise<Message> {
-    return this.client(tx).message.create({ data });
+  ): Promise<MessageWithMedia> {
+    return this.client(tx).message.create({ data, include: MESSAGE_MEDIA_INCLUDE });
   }
 
   /** CHT-003 — the `before` cursor resolution (message id → its createdAt). */
@@ -137,7 +157,7 @@ export class ConversationsRepository {
     beforeCreatedAt: Date | null,
     take: number,
     tx: Tx = undefined,
-  ): Promise<Message[]> {
+  ): Promise<MessageWithMedia[]> {
     return this.client(tx).message.findMany({
       where: {
         conversationId,
@@ -145,6 +165,7 @@ export class ConversationsRepository {
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take,
+      include: MESSAGE_MEDIA_INCLUDE,
     });
   }
 

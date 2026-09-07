@@ -113,7 +113,7 @@ media pipeline (secure serving).
 - **Testing:** component tests (bubbles, day separators, optimistic flow), thread hook tests.
 - **DoD:** suites green; used by QA-001.
 
-### CHT-007 — Media messages (image/video)
+### CHT-007 ✅ — Media messages (image/video)
 
 **P0 · Phase 5 · Chat · M** — Deps: CHT-006, MEDIA-001 (secure serving), MEDIA-003, MEDIA-004
 

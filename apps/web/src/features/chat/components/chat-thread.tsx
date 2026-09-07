@@ -6,6 +6,7 @@ import type { MessageResponseDto } from '@monorepo/shared-types';
 import { formatJalali } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/providers/auth-provider';
+import { useAttachmentSend } from '../hooks/use-attachment-send';
 import { useConversationChannel } from '../hooks/use-conversation-channel';
 import { useConversationContext } from '../hooks/use-conversation-context';
 import { useMarkRead } from '../hooks/use-mark-read';
@@ -14,6 +15,8 @@ import { useSendMessage } from '../hooks/use-send-message';
 import { useTypingEmitter, useTypingIndicator } from '../hooks/use-typing';
 import { Composer } from './composer';
 import { LotContextHeader } from './lot-context-header';
+import { MediaBubble } from './media-bubble';
+import { MediaBubblePending } from './media-bubble-pending';
 import { MessageBubble } from './message-bubble';
 
 /**
@@ -26,6 +29,13 @@ import { MessageBubble } from './message-bubble';
  * - typing dots with the 3 s TTL (use-typing) and the throttled composer emit;
  * - WS fallback: while `pollingActive` the history query polls every 15 s and
  *   an amber status badge explains the degraded mode (never an error).
+ *
+ * CHT-007 — media: the composer's picked files flow through
+ * use-attachment-send (XHR upload with progress + caps); a committed upload
+ * becomes an optimistic media bubble (use-send-message.sendMedia). The list
+ * renders IMAGE/VIDEO server rows through MediaBubble (authed fetch → blob
+ * URL), and in-flight upload tiles sit with the optimistic sends at the
+ * bottom.
  *
  * Scroll management (the card's "without jump" acceptance):
  * - first load snaps to the newest message instantly;
@@ -45,6 +55,10 @@ export function ChatThread({ conversationId }: { conversationId: string }) {
   const context = useConversationContext(conversationId);
   const thread = useMessages(conversationId);
   const send = useSendMessage(conversationId);
+  const attachments = useAttachmentSend({
+    onReady: ({ kind, mediaAssetId, localPreviewUrl }) =>
+      send.sendMedia(kind, mediaAssetId, localPreviewUrl),
+  });
   const notifyTyping = useTypingEmitter(conversationId);
   const counterpartTyping = useTypingIndicator(conversationId);
 
@@ -103,6 +117,10 @@ export function ChatThread({ conversationId }: { conversationId: string }) {
   const myId = user?.id;
 
   const rows = buildRows(thread.messages, send.pending, myId, send.retry);
+  // CHT-007 — optimistic MEDIA bubbles (upload committed, POST in flight):
+  // rendered as preview tiles (the authed-fetch bubble needs the server keys
+  // first); buildRows only maps TEXT pendings.
+  const mediaPendings = send.pending.filter((item) => item.media !== undefined);
 
   return (
     <section
@@ -159,15 +177,31 @@ export function ChatThread({ conversationId }: { conversationId: string }) {
               </div>
             ) : null}
 
-            {rows.map((row) =>
-              row.kind === 'day' ? (
-                <div
-                  key={row.key}
-                  className="mx-auto w-fit rounded-full bg-zinc-100 px-3 py-1 text-center text-[11px] text-zinc-500"
-                >
-                  {row.label}
-                </div>
-              ) : (
+            {rows.map((row) => {
+              if (row.kind === 'day') {
+                return (
+                  <div
+                    key={row.key}
+                    className="mx-auto w-fit rounded-full bg-zinc-100 px-3 py-1 text-center text-[11px] text-zinc-500"
+                  >
+                    {row.label}
+                  </div>
+                );
+              }
+              if (row.kind === 'media') {
+                return (
+                  <MediaBubble
+                    key={row.key}
+                    mediaType={row.mediaType}
+                    storageKey={row.storageKey}
+                    previewKey={row.previewKey}
+                    createdAt={row.createdAt}
+                    variant={row.variant}
+                    readAt={row.readAt}
+                  />
+                );
+              }
+              return (
                 <MessageBubble
                   key={row.key}
                   body={row.body}
@@ -177,8 +211,37 @@ export function ChatThread({ conversationId }: { conversationId: string }) {
                   status={row.status}
                   onRetry={row.onRetry}
                 />
-              ),
-            )}
+              );
+            })}
+
+            {attachments.pendingUploads.map((upload) => (
+              <MediaBubblePending
+                key={upload.uploadId}
+                kind={upload.kind}
+                localPreviewUrl={upload.localPreviewUrl}
+                status={upload.status}
+                progress={upload.progress}
+                error={upload.error}
+                onRetry={
+                  upload.status === 'failed' ? () => attachments.retry(upload.uploadId) : undefined
+                }
+                onRemove={
+                  upload.status === 'failed' ? () => attachments.remove(upload.uploadId) : undefined
+                }
+              />
+            ))}
+
+            {mediaPendings.map((item) => (
+              <MediaBubblePending
+                key={`temp-${item.tempId}`}
+                kind={item.media?.type ?? 'IMAGE'}
+                localPreviewUrl={item.media?.localPreviewUrl ?? ''}
+                status={item.status === 'failed' ? 'failed' : 'uploading'}
+                error={item.status === 'failed' ? 'ارسال ناموفق بود' : undefined}
+                onRetry={item.status === 'failed' ? () => send.retry(item.tempId) : undefined}
+                onRemove={item.status === 'failed' ? () => send.discard(item.tempId) : undefined}
+              />
+            ))}
 
             {counterpartTyping ? (
               <div className="flex justify-start">
@@ -194,7 +257,7 @@ export function ChatThread({ conversationId }: { conversationId: string }) {
               </div>
             ) : null}
 
-            {!thread.isLoading && rows.length === 0 ? (
+            {!thread.isLoading && rows.length === 0 && attachments.pendingUploads.length === 0 ? (
               <p className="text-muted-foreground mx-auto my-auto text-center text-sm">
                 هنوز پیامی نیست — اولین پیام را بفرستید.
               </p>
@@ -203,26 +266,56 @@ export function ChatThread({ conversationId }: { conversationId: string }) {
         )}
       </div>
 
+      {attachments.notice ? (
+        <p
+          role="status"
+          className="text-muted-foreground border-t border-amber-200 bg-amber-50 px-3 py-1.5 text-center text-xs text-amber-700"
+        >
+          {attachments.notice}
+          <button
+            type="button"
+            onClick={attachments.dismissNotice}
+            aria-label="بستن اعلان"
+            className="ms-2 cursor-pointer font-medium underline underline-offset-2"
+          >
+            بستن
+          </button>
+        </p>
+      ) : null}
+
       <Composer
         conversationId={conversationId}
         disabled={thread.isLoading}
         onSend={send.send}
         onTyping={notifyTyping}
+        onAttachImage={attachments.attachImage}
+        onAttachVideo={attachments.attachVideo}
       />
     </section>
   );
 }
 
-interface MessageRow {
-  kind: 'message';
-  key: string;
-  body: string;
-  createdAt: string;
-  variant: 'own' | 'other' | 'system';
-  readAt?: string | null;
-  status?: 'sending' | 'failed';
-  onRetry?: () => void;
-}
+type MessageRow =
+  | {
+      kind: 'media';
+      key: string;
+      mediaType: 'IMAGE' | 'VIDEO';
+      storageKey: string;
+      previewKey: string | null;
+      createdAt: string;
+      variant: 'own' | 'other';
+      readAt?: string | null;
+    }
+  | {
+      kind: 'message';
+      key: string;
+      body: string;
+      createdAt: string;
+      variant: 'own' | 'other' | 'system';
+      readAt?: string | null;
+      status?: 'sending' | 'failed';
+      onRetry?: () => void;
+    };
 
 interface DayRow {
   kind: 'day';
@@ -233,7 +326,9 @@ interface DayRow {
 /**
  * Interleaves Jalali day separators between date changes (formatJalali — the
  * card's separator format) and maps server + optimistic rows to bubble props.
- * SYSTEM rows (server-written welcome/notice) become centered gray pills.
+ * SYSTEM rows (server-written welcome/notice) become centered gray pills;
+ * IMAGE/VIDEO rows become MediaBubble rows (CHT-007 — WS `message:new`
+ * arrivals render through the same mapping).
  */
 function buildRows(
   messages: MessageResponseDto[],
@@ -244,37 +339,60 @@ function buildRows(
   const rows: Array<MessageRow | DayRow> = [];
   let lastDay: string | undefined;
 
-  const pushMessage = (
-    key: string,
-    body: string,
-    createdAt: string,
-    variant: MessageRow['variant'],
-    extra: Partial<MessageRow> = {},
-  ) => {
+  const pushDay = (createdAt: string) => {
     const day = formatJalali(createdAt);
     if (day !== lastDay) {
       lastDay = day;
       rows.push({ kind: 'day', key: `day-${day}`, label: day });
     }
-    rows.push({ kind: 'message', key, body, createdAt, variant, ...extra });
   };
 
   for (const message of messages) {
     const isSystem = message.type === 'SYSTEM' || message.senderId === null;
     const isOwn = !isSystem && message.senderId === myId;
-    pushMessage(
-      message.id,
-      message.body ?? '',
-      message.createdAt,
-      isSystem ? 'system' : isOwn ? 'own' : 'other',
-      isOwn ? { readAt: message.readAt } : {},
-    );
+    pushDay(message.createdAt);
+    if (
+      !isSystem &&
+      (message.type === 'IMAGE' || message.type === 'VIDEO') &&
+      message.mediaStorageKey !== null
+    ) {
+      rows.push({
+        kind: 'media',
+        key: message.id,
+        mediaType: message.type,
+        storageKey: message.mediaStorageKey,
+        previewKey: message.mediaPreviewKey,
+        createdAt: message.createdAt,
+        variant: isOwn ? 'own' : 'other',
+        ...(isOwn ? { readAt: message.readAt } : {}),
+      });
+      continue;
+    }
+    rows.push({
+      kind: 'message',
+      key: message.id,
+      body: message.body ?? '',
+      createdAt: message.createdAt,
+      variant: isSystem ? 'system' : isOwn ? 'own' : 'other',
+      ...(isOwn ? { readAt: message.readAt } : {}),
+    });
   }
 
   for (const item of pending) {
-    pushMessage(`temp-${item.tempId}`, item.body, item.createdAt, 'own', {
+    if (item.media) {
+      // CHT-007 — optimistic MEDIA bubbles render as preview tiles in the
+      // thread body (see mediaPendings there), not as text bubbles.
+      continue;
+    }
+    pushDay(item.createdAt);
+    rows.push({
+      kind: 'message',
+      key: `temp-${item.tempId}`,
+      body: item.body,
+      createdAt: item.createdAt,
+      variant: 'own',
       status: item.status,
-      onRetry: item.status === 'failed' ? () => retry(item.tempId) : undefined,
+      ...(item.status === 'failed' ? { onRetry: () => retry(item.tempId) } : {}),
     });
   }
 

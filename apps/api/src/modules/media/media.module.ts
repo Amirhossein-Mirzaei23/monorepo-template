@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ChatMediaAccessService } from './chat-media-access.service';
 import { ImageVariantService } from './images/variant.service';
 import { MediaController } from './media.controller';
 import { MediaRepository } from './media.repository';
@@ -16,6 +17,9 @@ import { VideoService } from './video/video.service';
  * poster thumb). MEDIA-005 (LotMedia) builds on this module — MediaService,
  * the repository and the StorageService driver are exported so sibling
  * modules inject the configured driver, never the filesystem directly.
+ * CHT-007 adds ChatMediaAccessService: the read-only message-reference /
+ * conversation-participation probes behind the secure route's participant
+ * gate (see that file for the deliberate placement rationale).
  */
 @Module({
   controllers: [MediaController],
@@ -24,6 +28,7 @@ import { VideoService } from './video/video.service';
     VideoService,
     ImageVariantService,
     MediaRepository,
+    ChatMediaAccessService,
     // Driver swap point (MEDIA-006 S3Driver + STORAGE_DRIVER switch).
     { provide: StorageService, useClass: LocalDiskDriver },
   ],

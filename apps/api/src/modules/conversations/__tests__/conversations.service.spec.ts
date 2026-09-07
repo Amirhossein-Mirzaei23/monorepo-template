@@ -33,6 +33,7 @@ import type {
   MessageNewEvent,
   MessageReadEvent,
 } from '../chat.events';
+import { MediaRepository } from '../../media/media.repository';
 import { ConversationsRepository } from '../conversations.repository';
 import { ConversationsService } from '../conversations.service';
 import { ConversationListQueryDto } from '../dto/conversation-list.dto';
@@ -121,6 +122,7 @@ describe('ConversationsService', () => {
       repository,
       users,
       lots,
+      new MediaRepository(fake as unknown as PrismaService),
       fake as unknown as PrismaService,
       config,
       emitter,
@@ -651,8 +653,23 @@ describe('ConversationsService', () => {
         const response = await service.sendMessage(buyerId, conversation.id, textDto('سلام'));
 
         expect(Object.keys(response).sort()).toEqual(
-          ['body', 'conversationId', 'createdAt', 'id', 'readAt', 'senderId', 'type'].sort(),
+          [
+            'body',
+            'conversationId',
+            'createdAt',
+            'id',
+            'mediaAssetId',
+            'mediaPreviewKey',
+            'mediaStorageKey',
+            'readAt',
+            'senderId',
+            'type',
+          ].sort(),
         );
+        // TEXT rows carry no media block (CHT-007 keys null).
+        expect(response.mediaAssetId).toBeNull();
+        expect(response.mediaStorageKey).toBeNull();
+        expect(response.mediaPreviewKey).toBeNull();
         expect(response.senderId).toBe(buyerId);
         expect(response.type).toBe(MessageType.TEXT);
         expect(response.readAt).toBeNull();
@@ -698,6 +715,171 @@ describe('ConversationsService', () => {
             MESSAGE_ERROR_CODES.CONVERSATION_BLOCKED,
           );
         }
+        expect(await fake.message.count({ where: { conversationId: conversation.id } })).toBe(1);
+      });
+    });
+
+    /**
+     * CHT-007 — media sends. {type: IMAGE|VIDEO, mediaAssetId} with an EMPTY
+     * body: the service validates the payload invariants (400 codes), asset
+     * ownership (uniform 403 MEDIA_NOT_OWNED — missing and foreign answer
+     * alike, MEDIA-005's precedent) and the asset/message type match, then
+     * stores the row with the fa preview placeholders.
+     */
+    describe('CHT-007 — media sends', () => {
+      const mediaDto = (fields: {
+        type: MessageType;
+        mediaAssetId?: string;
+        body?: string;
+      }): SendMessageDto => {
+        const dto = new SendMessageDto();
+        dto.type = fields.type;
+        if (fields.mediaAssetId !== undefined) {
+          dto.mediaAssetId = fields.mediaAssetId;
+        }
+        if (fields.body !== undefined) {
+          dto.body = fields.body;
+        }
+        return dto;
+      };
+
+      const seedAsset = (owner: string, type: MediaType, key = '2026/09/asset.png') =>
+        fake.seedMediaAsset({
+          ownerId: owner,
+          type,
+          storageKey: key,
+          thumbKey: type === MediaType.IMAGE ? '2026/09/assetc.webp' : '2026/09/assetpt.webp',
+          mime: type === MediaType.IMAGE ? 'image/png' : 'video/mp4',
+          sizeBytes: 128,
+        });
+
+      it('stores an IMAGE row with body null + media keys in the response, and the «📷 تصویر» preview', async () => {
+        const { conversation } = seedThread();
+        const asset = seedAsset(buyerId, MediaType.IMAGE);
+
+        const response = await service.sendMessage(
+          buyerId,
+          conversation.id,
+          mediaDto({ type: MessageType.IMAGE, mediaAssetId: asset.id }),
+        );
+
+        expect(response.type).toBe(MessageType.IMAGE);
+        expect(response.body).toBeNull();
+        expect(response.mediaAssetId).toBe(asset.id);
+        expect(response.mediaStorageKey).toBe(asset.storageKey);
+        expect(response.mediaPreviewKey).toBe('2026/09/assetc.webp'); // the cover variant
+        const row = await fake.conversation.findUnique({ where: { id: conversation.id } });
+        expect(row?.lastMessagePreview).toBe('📷 تصویر');
+      });
+
+      it('stores a VIDEO row and previews it «🎬 ویدیو» with the poster thumb as the preview key', async () => {
+        const { conversation } = seedThread();
+        const asset = seedAsset(sellerId, MediaType.VIDEO, '2026/09/clip.mp4');
+
+        const response = await service.sendMessage(
+          sellerId,
+          conversation.id,
+          mediaDto({ type: MessageType.VIDEO, mediaAssetId: asset.id }),
+        );
+
+        expect(response.type).toBe(MessageType.VIDEO);
+        expect(response.mediaPreviewKey).toBe('2026/09/assetpt.webp'); // the poster thumb
+        const row = await fake.conversation.findUnique({ where: { id: conversation.id } });
+        expect(row?.lastMessagePreview).toBe('🎬 ویدیو');
+        // Seller send → the BUYER counter increments (lockstep unchanged).
+        expect(row?.buyerUnreadCount).toBe(1);
+      });
+
+      it('400 MESSAGE_BODY_REQUIRED for a TEXT send without a body', async () => {
+        const { conversation } = seedThread();
+        const error = await rejectionOf(
+          service.sendMessage(buyerId, conversation.id, mediaDto({ type: MessageType.TEXT })),
+        );
+        expect((error.getResponse() as { code?: string }).code).toBe(
+          MESSAGE_ERROR_CODES.MESSAGE_BODY_REQUIRED,
+        );
+      });
+
+      it('400 MEDIA_ASSET_REQUIRED for an IMAGE send without mediaAssetId / MEDIA_BODY_FORBIDDEN with one', async () => {
+        const { conversation } = seedThread();
+
+        const missing = await rejectionOf(
+          service.sendMessage(buyerId, conversation.id, mediaDto({ type: MessageType.IMAGE })),
+        );
+        expect((missing.getResponse() as { code?: string }).code).toBe(
+          MESSAGE_ERROR_CODES.MEDIA_ASSET_REQUIRED,
+        );
+
+        const withBody = await rejectionOf(
+          service.sendMessage(
+            buyerId,
+            conversation.id,
+            mediaDto({ type: MessageType.IMAGE, mediaAssetId: 'a-1', body: 'نگاه کن' }),
+          ),
+        );
+        expect((withBody.getResponse() as { code?: string }).code).toBe(
+          MESSAGE_ERROR_CODES.MEDIA_BODY_FORBIDDEN,
+        );
+      });
+
+      it('400 MEDIA_ASSET_WITH_TEXT for a TEXT send carrying a mediaAssetId', async () => {
+        const { conversation } = seedThread();
+        const error = await rejectionOf(
+          service.sendMessage(
+            buyerId,
+            conversation.id,
+            mediaDto({ type: MessageType.TEXT, body: 'سلام', mediaAssetId: 'a-1' }),
+          ),
+        );
+        expect((error.getResponse() as { code?: string }).code).toBe(
+          MESSAGE_ERROR_CODES.MEDIA_ASSET_WITH_TEXT,
+        );
+      });
+
+      it('403 MEDIA_NOT_OWNED uniformly for a foreign AND a missing asset (no existence oracle)', async () => {
+        const { conversation } = seedThread();
+        const foreignAsset = seedAsset(sellerId, MediaType.IMAGE); // buyer does NOT own it
+
+        for (const mediaAssetId of [foreignAsset.id, 'no-such-asset-id']) {
+          const error = await rejectionOf(
+            service.sendMessage(
+              buyerId,
+              conversation.id,
+              mediaDto({ type: MessageType.IMAGE, mediaAssetId }),
+            ),
+          );
+          expect(error).toBeInstanceOf(ForbiddenException);
+          expect((error.getResponse() as { code?: string }).code).toBe(
+            MESSAGE_ERROR_CODES.MEDIA_NOT_OWNED,
+          );
+        }
+        expect(await fake.message.count({ where: { conversationId: conversation.id } })).toBe(1);
+      });
+
+      it('400 MEDIA_TYPE_MISMATCH when the owned asset type does not match the message type', async () => {
+        const { conversation } = seedThread();
+        const videoAsset = seedAsset(buyerId, MediaType.VIDEO, '2026/09/clip.mp4');
+
+        const error = await rejectionOf(
+          service.sendMessage(
+            buyerId,
+            conversation.id,
+            mediaDto({ type: MessageType.IMAGE, mediaAssetId: videoAsset.id }),
+          ),
+        );
+        expect((error.getResponse() as { code?: string }).code).toBe(
+          MESSAGE_ERROR_CODES.MEDIA_TYPE_MISMATCH,
+        );
+      });
+
+      it('rejected media sends emit nothing and write nothing (validation precedes the transaction)', async () => {
+        const { conversation } = seedThread();
+
+        await expect(
+          service.sendMessage(buyerId, conversation.id, mediaDto({ type: MessageType.IMAGE })),
+        ).rejects.toBeInstanceOf(BadRequestException);
+
+        expect(emitter.messageNew).toHaveLength(0);
         expect(await fake.message.count({ where: { conversationId: conversation.id } })).toBe(1);
       });
     });
@@ -855,7 +1037,18 @@ describe('ConversationsService', () => {
         ]);
         expect(page.items[0]?.type).toBe(MessageType.SYSTEM); // system rows visible in history
         expect(Object.keys(page.items[0] ?? {}).sort()).toEqual(
-          ['body', 'conversationId', 'createdAt', 'id', 'readAt', 'senderId', 'type'].sort(),
+          [
+            'body',
+            'conversationId',
+            'createdAt',
+            'id',
+            'mediaAssetId',
+            'mediaPreviewKey',
+            'mediaStorageKey',
+            'readAt',
+            'senderId',
+            'type',
+          ].sort(),
         );
       });
 

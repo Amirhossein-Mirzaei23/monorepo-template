@@ -23,8 +23,10 @@ import { UsersRepository } from '../users/users.repository';
 import {
   CONVERSATION_ERROR_CODES,
   MESSAGE_ERROR_CODES,
+  mediaMessagePreview,
   truncatePreview,
   welcomeMessageBody,
+  MESSAGE_BODY_MAX_LENGTH,
 } from './conversations.constants';
 import {
   toConversationResponse,
@@ -41,12 +43,14 @@ import {
   MessagePageDto,
   MessageResponseDto,
   SendMessageDto,
+  messageTypeForMedia,
   toMessageResponse,
   type MessageListQueryDto,
 } from './dto/message.dto';
 import type { Paginated } from '../../common/dto/pagination-query.dto';
 import { CHAT_EMITTER, type ChatEmitter, type ConversationUpdatedEvent } from './chat.events';
 import { ConversationsRepository } from './conversations.repository';
+import { MediaRepository } from '../media/media.repository';
 import type { CreateConversationDto } from './dto/create-conversation.dto';
 
 /** Prisma unique-violation probe (works on real client errors and plain fakes). */
@@ -83,6 +87,12 @@ export class ConversationsService {
     private readonly repository: ConversationsRepository,
     private readonly users: UsersRepository,
     private readonly lots: LotsRepository,
+    /**
+     * CHT-007 — media asset lookups for media sends (exists + owned by the
+     * sender + type match). MediaModule is a leaf dependency (it imports
+     * nothing back), so the plain repository is safe to inject here.
+     */
+    private readonly media: MediaRepository,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     /**
@@ -175,15 +185,24 @@ export class ConversationsService {
    * 4. conversation not BLOCKED (403 CONVERSATION_BLOCKED — no side can send;
    *    CHT-009 introduces the endpoint that sets the status, the gate is
    *    honored here already)
+   * 5. CHT-007 payload/type invariants (400 — client bugs, documented on the
+   *    DTO): TEXT requires a 1..2000 body and rejects mediaAssetId;
+   *    IMAGE/VIDEO require a mediaAssetId and an EMPTY body.
+   * 6. CHT-007 asset checks: the referenced MediaAsset must exist AND be
+   *    owned by the sender (uniform 403 MEDIA_NOT_OWNED — no existence oracle
+   *    for unguessable asset ids, MEDIA-005's documented precedent) and its
+   *    MediaType must match the message type (400 MEDIA_TYPE_MISMATCH).
    *
-   * The transaction writes BOTH halves atomically: the TEXT message row
-   * (sender = me) AND the conversation lockstep (lastMessageAt = now,
-   * lastMessagePreview = truncate(body, 80) — the invariant CHT-002's derived
-   * system flag relies on) + the COUNTERPART unread counter via one atomic
-   * { increment } (buyer sends → sellerUnreadCount+1, seller sends →
-   * buyerUnreadCount+1; my own counter never moves on my own send).
+   * The transaction writes BOTH halves atomically: the message row
+   * (sender = me, mediaAssetId on media sends) AND the conversation lockstep
+   * (lastMessageAt = now, lastMessagePreview = truncate(body, 80) for TEXT or
+   * the fa placeholders «📷 تصویر» / «🎬 ویدیو» for media — the invariant
+   * CHT-002's derived system flag relies on) + the COUNTERPART unread counter
+   * via one atomic { increment } (buyer sends → sellerUnreadCount+1, seller
+   * sends → buyerUnreadCount+1; my own counter never moves on my own send).
    *
-   * Returns the created row as MessageResponseDto. CHT-004: AFTER the
+   * Returns the created row as MessageResponseDto (media rows carry their
+   * storage/preview keys for the secure route). CHT-004: AFTER the
    * transaction commits, the realtime announcements go through the injected
    * emitter — `message:new` to the conversation room and
    * `conversation:updated` to the OTHER participant's user room (carrying the
@@ -204,15 +223,63 @@ export class ConversationsService {
     this.assertParticipant(conversation, userId);
     this.assertNotBlocked(conversation);
 
-    const body = dto.body; // trimmed by the DTO transform — the service trusts the boundary
+    const type = dto.type ?? MessageType.TEXT;
+    const body = dto.body ?? ''; // trimmed by the DTO transform — the service trusts the boundary
+    let mediaAssetId: string | undefined;
+
+    if (type === MessageType.TEXT) {
+      if (body.length < 1 || body.length > MESSAGE_BODY_MAX_LENGTH) {
+        throw new BadRequestException({
+          code: MESSAGE_ERROR_CODES.MESSAGE_BODY_REQUIRED,
+          message: `TEXT messages require a body of 1..${MESSAGE_BODY_MAX_LENGTH} characters`,
+        });
+      }
+      if (dto.mediaAssetId !== undefined) {
+        throw new BadRequestException({
+          code: MESSAGE_ERROR_CODES.MEDIA_ASSET_WITH_TEXT,
+          message: 'mediaAssetId is only valid with an IMAGE or VIDEO message',
+        });
+      }
+    } else {
+      if (!dto.mediaAssetId) {
+        throw new BadRequestException({
+          code: MESSAGE_ERROR_CODES.MEDIA_ASSET_REQUIRED,
+          message: `${type} messages require a mediaAssetId`,
+        });
+      }
+      if (body.length > 0) {
+        throw new BadRequestException({
+          code: MESSAGE_ERROR_CODES.MEDIA_BODY_FORBIDDEN,
+          message: 'Media messages cannot carry a text body',
+        });
+      }
+      const asset = await this.media.findById(dto.mediaAssetId);
+      if (!asset || asset.ownerId !== userId) {
+        // Uniform 403 for missing AND foreign assets (no existence oracle).
+        throw new ForbiddenException({
+          code: MESSAGE_ERROR_CODES.MEDIA_NOT_OWNED,
+          message: 'This media asset does not exist or is not yours',
+        });
+      }
+      if (messageTypeForMedia(asset.type) !== type) {
+        throw new BadRequestException({
+          code: MESSAGE_ERROR_CODES.MEDIA_TYPE_MISMATCH,
+          message: 'The asset type does not match the message type',
+        });
+      }
+      mediaAssetId = dto.mediaAssetId;
+    }
+
+    const preview = type === MessageType.TEXT ? truncatePreview(body) : mediaMessagePreview(type);
     const sentAt = new Date();
     const { message, updated } = await this.prisma.$transaction(async (tx) => {
       const message = await this.repository.createMessage(
         {
           conversationId: conversation.id,
           senderId: userId,
-          type: dto.type,
-          body,
+          type,
+          body: type === MessageType.TEXT ? body : null,
+          ...(mediaAssetId !== undefined ? { mediaAssetId } : {}),
         },
         tx,
       );
@@ -222,7 +289,7 @@ export class ConversationsService {
         conversation.id,
         {
           lastMessageAt: sentAt,
-          lastMessagePreview: truncatePreview(body),
+          lastMessagePreview: preview,
           ...(conversation.buyerId === userId
             ? { sellerUnreadCount: { increment: 1 } }
             : { buyerUnreadCount: { increment: 1 } }),
