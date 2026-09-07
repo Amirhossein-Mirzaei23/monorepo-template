@@ -12,6 +12,8 @@ import {
   MediaType,
   type Message,
   MessageType,
+  type Offer,
+  OfferStatus,
   type OtpCode,
   OtpPurpose,
   type Prisma,
@@ -295,6 +297,43 @@ type MessageWhere = {
 };
 type MessageOrderBy = Record<string, 'asc' | 'desc'>;
 
+/** Exactly the surface OffersRepository composes (OFR-001): plain row reads by
+ * id, the sibling-pending predicate (lot + buyer + PENDING + `id.not`) and the
+ * chain walk (parentId lookups). `null` equality arms mean Prisma's IS NULL. */
+type OfferIdFilter = string | { not?: string };
+type OfferWhere = {
+  id?: OfferIdFilter;
+  lotId?: string;
+  buyerId?: string;
+  sellerId?: string;
+  conversationId?: string | null;
+  parentId?: string | null;
+  status?: OfferStatus;
+};
+type OfferOrderBy = Record<string, 'asc' | 'desc'>;
+/** Create payload: required scalars; status/decidedAt take the DB defaults. */
+type OfferCreateData = {
+  lotId: string;
+  buyerId: string;
+  sellerId: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  expiresAt: Date;
+  conversationId?: string | null;
+  parentId?: string | null;
+  note?: string | null;
+  status?: OfferStatus;
+  decidedAt?: Date | null;
+  createdAt?: Date;
+};
+/** Writable scalar subset for the status-transition path (OFR-001 service). */
+type OfferUpdateData = Partial<{
+  status: OfferStatus;
+  decidedAt: Date | null;
+  note: string | null;
+}>;
+
 /** Writable scalar subset for the CHT-003 send/read transactions (unread
  * counters also take the { increment } atomic form, like LotUpdateData). */
 type ConversationUpdateData = Partial<{
@@ -323,6 +362,7 @@ export class FakePrisma {
   private readonly mediaAssets = new Map<string, MediaAsset>();
   private readonly conversations = new Map<string, Conversation>();
   private readonly messages = new Map<string, Message>();
+  private readonly offers = new Map<string, Offer>();
 
   readonly user = {
     findMany: async ({
@@ -1189,6 +1229,86 @@ export class FakePrisma {
     return { ...cloneMessage(row), mediaAsset: asset ? cloneMediaAsset(asset) : null };
   }
 
+  /** Exactly the surface OffersRepository uses (OFR-001). Bare-row reads and
+   * writes; create mirrors the FKs the service path relies on (the lot must
+   * exist — Cascade owner — plus an explicit conversation/parent row). */
+  readonly offer = {
+    findMany: async ({
+      where,
+      orderBy,
+      skip = 0,
+      take,
+    }: {
+      where?: OfferWhere;
+      orderBy?: OfferOrderBy;
+      skip?: number;
+      take?: number;
+    }): Promise<Offer[]> =>
+      sortRows([...this.offers.values()].filter(matchesOfferWhere(where)), orderBy)
+        .slice(skip, take !== undefined ? skip + take : undefined)
+        .map(cloneOffer),
+    count: async ({ where }: { where?: OfferWhere } = {}): Promise<number> =>
+      [...this.offers.values()].filter(matchesOfferWhere(where)).length,
+    findUnique: async ({ where }: { where: { id: string } }): Promise<Offer | null> => {
+      const found = this.offers.get(where.id);
+      return found ? cloneOffer(found) : null;
+    },
+    findFirst: async ({ where }: { where?: OfferWhere }): Promise<Offer | null> => {
+      const found = [...this.offers.values()].find(matchesOfferWhere(where));
+      return found ? cloneOffer(found) : null;
+    },
+    create: async ({ data }: { data: OfferCreateData }): Promise<Offer> => {
+      if (!this.lots.get(data.lotId)) {
+        throw new Error(`FakePrisma: offer references missing lot ${data.lotId}`);
+      }
+      if (data.conversationId != null && !this.conversations.get(data.conversationId)) {
+        throw new Error(`FakePrisma: offer references missing conversation ${data.conversationId}`);
+      }
+      if (data.parentId != null && !this.offers.get(data.parentId)) {
+        throw new Error(`FakePrisma: offer references missing parent offer ${data.parentId}`);
+      }
+      const row = buildOfferRow(data);
+      this.offers.set(row.id, row);
+      return cloneOffer(row);
+    },
+    /** Status-transition write (OFR-001 service): partial scalar update —
+     * undefined keys stay untouched, updatedAt moves like Prisma's. */
+    update: async ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: OfferUpdateData;
+    }): Promise<Offer> => {
+      const row = this.offers.get(where.id);
+      if (!row) {
+        throw new Error(`FakePrisma: offer ${where.id} not found`);
+      }
+      const next = applyOfferUpdate(row, data);
+      this.offers.set(row.id, next);
+      return cloneOffer(next);
+    },
+    /** Batch variant over the same predicate shapes (id `in`/`not`, status):
+     * unmatched rows contribute 0 to the count, matched rows mutate in place. */
+    updateMany: async ({
+      where,
+      data,
+    }: {
+      where?: OfferWhere;
+      data: OfferUpdateData;
+    }): Promise<{ count: number }> => {
+      let count = 0;
+      for (const row of this.offers.values()) {
+        if (!matchesOfferWhere(where)(row)) {
+          continue;
+        }
+        this.offers.set(row.id, applyOfferUpdate(row, data));
+        count += 1;
+      }
+      return { count };
+    },
+  };
+
   /**
    * Conversation list/findFirst predicate: the pure participant matcher plus
    * the CHT-007 `messages.some({ mediaAssetId })` arm (an absent arm never
@@ -1594,6 +1714,27 @@ export class FakePrisma {
     return cloneMessage(row);
   }
 
+  /** Test helper: seeded offers with controlled status/expiry/chain links
+   * (OFR-001 suites). The lot must be seeded first (the create path throws on
+   * a missing lot, mirroring the FK); conversationId/parentId must reference
+   * seeded rows when provided. */
+  seedOffer(offer: OfferCreateData): Offer {
+    const row = buildOfferRow(offer);
+    if (!this.lots.get(row.lotId)) {
+      throw new Error(`FakePrisma: seedOffer references missing lot ${row.lotId}`);
+    }
+    if (row.conversationId !== null && !this.conversations.get(row.conversationId)) {
+      throw new Error(
+        `FakePrisma: seedOffer references missing conversation ${row.conversationId}`,
+      );
+    }
+    if (row.parentId !== null && !this.offers.get(row.parentId)) {
+      throw new Error(`FakePrisma: seedOffer references missing parent offer ${row.parentId}`);
+    }
+    this.offers.set(row.id, row);
+    return cloneOffer(row);
+  }
+
   /** Lot row with its relations joined (seller summary + gallery sorted by
    * sortOrder + category NAME rows), mirroring the production includes
    * (LOT_MEDIA_INCLUDE / LOT_CARD_INCLUDE / LOT_PUBLIC_DETAIL_INCLUDE).
@@ -1712,7 +1853,7 @@ function matchesCategoryWhere(where: CategoryWhere | undefined): (row: Category)
 }
 
 /** Multi-key stable sort (orderBy is a single object or an array of them). */
-function sortRows<T extends Category | User | Lot | Conversation | OtpCode | Message>(
+function sortRows<T extends Category | User | Lot | Conversation | OtpCode | Message | Offer>(
   rows: T[],
   orderBy: Record<string, 'asc' | 'desc'> | Record<string, 'asc' | 'desc'>[] | undefined,
 ): T[] {
@@ -1999,6 +2140,74 @@ function cloneMessage(row: Message): Message {
     ...row,
     readAt: row.readAt === null ? null : new Date(row.readAt),
     createdAt: new Date(row.createdAt),
+  };
+}
+
+/** Full Offer row from the create payload, applying DB defaults (OFR-001). */
+function buildOfferRow(data: OfferCreateData): Offer {
+  const now = nowIso();
+  return {
+    id: randomUUID(),
+    lotId: data.lotId,
+    buyerId: data.buyerId,
+    sellerId: data.sellerId,
+    conversationId: data.conversationId ?? null,
+    parentId: data.parentId ?? null,
+    quantity: data.quantity,
+    unitPrice: data.unitPrice,
+    totalPrice: data.totalPrice,
+    note: data.note ?? null,
+    status: data.status ?? OfferStatus.PENDING,
+    expiresAt: data.expiresAt,
+    decidedAt: data.decidedAt ?? null,
+    createdAt: data.createdAt ?? now,
+    updatedAt: now,
+  };
+}
+
+/** Offer matcher (OFR-001): id (equality or `not`), sibling predicates, and
+ * IS NULL semantics for the nullable links (null matches null rows only). */
+function matchesOfferWhere(where: OfferWhere | undefined): (row: Offer) => boolean {
+  const matchesId = (row: Offer): boolean => {
+    const id = where?.id;
+    if (id === undefined) {
+      return true;
+    }
+    return typeof id === 'string' ? row.id === id : id.not === undefined || row.id !== id.not;
+  };
+  return (row) =>
+    matchesId(row) &&
+    (where?.lotId === undefined || row.lotId === where.lotId) &&
+    (where?.buyerId === undefined || row.buyerId === where.buyerId) &&
+    (where?.sellerId === undefined || row.sellerId === where.sellerId) &&
+    (where?.conversationId === undefined || row.conversationId === where.conversationId) &&
+    (where?.parentId === undefined || row.parentId === where.parentId) &&
+    (where?.status === undefined || row.status === where.status);
+}
+
+/** Partial offer update: undefined keys stay untouched (Prisma semantics). */
+function applyOfferUpdate(row: Offer, data: OfferUpdateData): Offer {
+  const next: Offer = { ...row };
+  if (data.status !== undefined) {
+    next.status = data.status;
+  }
+  if (data.decidedAt !== undefined) {
+    next.decidedAt = data.decidedAt;
+  }
+  if (data.note !== undefined) {
+    next.note = data.note;
+  }
+  next.updatedAt = nowIso();
+  return next;
+}
+
+function cloneOffer(row: Offer): Offer {
+  return {
+    ...row,
+    expiresAt: new Date(row.expiresAt),
+    decidedAt: row.decidedAt === null ? null : new Date(row.decidedAt),
+    createdAt: new Date(row.createdAt),
+    updatedAt: new Date(row.updatedAt),
   };
 }
 

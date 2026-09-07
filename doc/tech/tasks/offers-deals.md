@@ -6,7 +6,7 @@ principles 7, 12; decision D9 flags the legal review).
 
 ---
 
-### OFR-001 — Offer domain + state machine
+### OFR-001 ✅ — Offer domain + state machine
 
 **P0 · Phase 6 · Offers · M** — Deps: LOT-002, CHT-001
 

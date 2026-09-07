@@ -118,6 +118,19 @@ enum MessageType {
   ACTION
 }
 
+/// Offer lifecycle (plan §3). PENDING is the only live state; every decision
+/// (COUNTERED | ACCEPTED | REJECTED | CANCELLED | EXPIRED) is terminal — the
+/// transition table lives in the offers module (OFR-001,
+/// offers.constants.ts); fa labels in the same file.
+enum OfferStatus {
+  PENDING
+  COUNTERED
+  ACCEPTED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
 model User {
   id            String         @id @default(cuid())
   /// Iranian mobile number, normalized and stored as `09xxxxxxxxx`.
@@ -147,6 +160,10 @@ model User {
   sellerConversations Conversation[] @relation("ConversationSeller")
   /// Messages this account sent (null senderId = SYSTEM rows, never in here).
   sentMessages  Message[]
+  /// Offers this account made as the buyer (OFR-001).
+  buyerOffers   Offer[]   @relation("OfferBuyer")
+  /// Offers on this account's lots as the seller (OFR-001).
+  sellerOffers  Offer[]   @relation("OfferSeller")
 
   @@index([status])
 }
@@ -346,6 +363,8 @@ model Lot {
   /// Buyer threads opened on this lot — at most one per buyer
   /// (unique(lotId, buyerId), CHT-001).
   conversations Conversation[]
+  /// Negotiation offers on this lot (OFR-001).
+  offers        Offer[]
 }
 
 /// An uploaded binary and its storage metadata (MEDIA-001, plan §3). The bytes
@@ -458,6 +477,10 @@ model Conversation {
 
   messages Message[]
 
+  /// Offers optionally tied to this thread (OFR-001) — SetNull on thread
+  /// deletion, offers outlive conversations (see the Offer model doc).
+  offers Offer[]
+
   /// The product's one-thread-per-buyer-per-lot rule (CHT-001).
   @@unique([lotId, buyerId])
   /// Participant inbox feeds (CHT-002): newest-activity first per side.
@@ -499,4 +522,80 @@ model Message {
 
   /// Thread history reads (CHT-003 cursor pagination walks this index).
   @@index([conversationId, createdAt])
+}
+
+/// A buyer's price/quantity proposal on a lot (OFR-001, plan §3) — the
+/// negotiation atom. Counter-offers create a NEW row linked through `parentId`
+/// while the countered row flips to COUNTERED, so every row is immutable
+/// negotiation history: the status only ever moves forward from PENDING (the
+/// transition table + fa labels live in offers.constants.ts, OFR-001).
+/// sellerId is copied from the lot at create (denormalized exactly like
+/// Conversation.sellerId — the (sellerId, status) plan index serves the
+/// seller's action inbox without a join; the service derives it, never the
+/// client). Money is positive Toman Int (plan §12): `unitPrice` is the
+/// negotiated per-unit price (1..2B, the input the buyer controls) and
+/// `totalPrice` is DERIVED on write = unitPrice × quantity — the same
+/// derive-on-write convention as Lot, mirrored (lots negotiate the total and
+/// derive the unit price; offers negotiate the unit price and derive the
+/// total). `decidedAt` is stamped by every legal transition (all leave
+/// PENDING); `expiresAt` defaults to +72h (OFFER_EXPIRY_DAYS = 3) and the
+/// OFR-003 sweep flips past-due PENDING rows to EXPIRED.
+model Offer {
+  id             String      @id @default(cuid())
+  lotId          String
+  /// onDelete: Cascade — mirrors Conversation.lot: lots are soft-deleted in
+  /// practice (REMOVED + deletedAt, LOT-003), so this fires only on explicit
+  /// row cleanup.
+  lot            Lot         @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  buyerId        String
+  /// onDelete: Restrict — users are soft-deleted (plan §12); offers must stay
+  /// resolvable as a buyer's negotiation history (same rule as Conversation
+  /// participants).
+  buyer          User        @relation("OfferBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  /// Copied from Lot.sellerId at create — the service derives it, never the
+  /// client; onDelete: Restrict for the same soft-delete reason as buyer.
+  sellerId       String
+  seller         User        @relation("OfferSeller", fields: [sellerId], references: [id], onDelete: Restrict)
+  /// Optional negotiation thread the offer was made in. onDelete: SetNull —
+  /// DOCUMENTED DECISION: an offer is a binding commercial record that may
+  /// outlive its thread (conversations can be blocked/removed, CHT-009);
+  /// losing the link must neither delete the offer nor corrupt its chain, so
+  /// the link simply nulls out.
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  /// Counter chain: the offer THIS row counters (null = a fresh root offer).
+  /// onDelete: Cascade — DOCUMENTED DECISION: a counter offer is meaningless
+  /// without the offer it answers; SetNull would rewrite history by turning
+  /// counters into fake root offers. Cleanup removes the whole descendant
+  /// chain instead. Only ever fires on explicit row cleanup — no API deletes
+  /// offers (statuses are the lifecycle).
+  parentId       String?
+  parent         Offer?      @relation("OfferCounterChain", fields: [parentId], references: [id], onDelete: Cascade)
+  /// The counters this offer received (the chain's forward links).
+  children       Offer[]     @relation("OfferCounterChain")
+  /// Offered piece count — must be within lot.minOrderQuantity..lot
+  /// .availableQuantity AT OFFER TIME (validated on write; OFR-002 re-checks
+  /// availability at accept).
+  quantity       Int
+  /// Negotiated per-unit Toman, 1..2,000,000,000 (offers.constants bounds).
+  unitPrice      Int
+  /// Derived on write: unitPrice × quantity (never client-supplied).
+  totalPrice     Int
+  /// Optional free-text note from the buyer, ≤ 500 chars (offers.constants).
+  note           String?
+  status         OfferStatus @default(PENDING)
+  /// Expiry deadline (default +72h). Acceptance must happen before it
+  /// (OFR-002); the OFR-003 hourly sweep stamps EXPIRED past due.
+  expiresAt      DateTime
+  /// Decision stamp — set by every legal transition (they all leave PENDING).
+  decidedAt      DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  /// Buyer's offer history per lot (plan §3).
+  @@index([lotId, buyerId, createdAt])
+  /// Seller action inbox (plan §3).
+  @@index([sellerId, status])
+  /// Expiry sweep + "live offers" reads (plan §3) — serves the OFR-003 batch.
+  @@index([status, expiresAt])
 }
