@@ -39,6 +39,11 @@ export type LotPublicResponseDto = components['schemas']['LotPublicResponseDto']
 export type LotOwnerResponseDto = components['schemas']['LotOwnerResponseDto'];
 /** PUT /lots/:id/media body — the complete ordered gallery (MEDIA-005). */
 export type PutLotMediaDto = components['schemas']['PutLotMediaDto'];
+// --- lot card (MKT-001) ---
+/** The public CARD payload — the atomic shape of every list surface (MKT-005). */
+export type LotCardResponseDto = components['schemas']['LotCardResponseDto'];
+/** Minimal seller summary embedded in the card (display precedence: businessName ?? name). */
+export type LotCardSellerDto = components['schemas']['LotCardSellerDto'];
 export type LotStatus = LotPublicResponseDto['status'];
 export type LotUnit = LotPublicResponseDto['unit'];
 export type LotCondition = LotPublicResponseDto['condition'];
@@ -81,6 +86,16 @@ export const categoryTreeNodeSchema = apiSchemas.CategoryTreeNodeDto;
 export const lotOwnerResponseSchema = apiSchemas.LotOwnerResponseDto;
 export const lotMediaResponseSchema = apiSchemas.LotMediaResponseDto;
 export const putLotMediaSchema = apiSchemas.PutLotMediaDto;
+/**
+ * Same Nest quirk as `metrics` above: the card's `seller` block serializes as
+ * `allOf: [{$ref: LotCardSellerDto}]`, so the generated schema renders it as a
+ * lossy `z.object({})` that would silently strip the seller fields on parse.
+ * Recompose the real seller shape so the runtime schema validates (and keeps)
+ * what the TS contract (LotCardResponseDto['seller']) already promises.
+ */
+export const lotCardResponseSchema = apiSchemas.LotCardResponseDto.extend({
+  seller: apiSchemas.LotCardSellerDto,
+});
 
 // --- shared helpers ---
 

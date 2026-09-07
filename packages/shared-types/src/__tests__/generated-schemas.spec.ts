@@ -2,6 +2,7 @@ import { apiSchemas } from '../generated/schema.zod';
 import {
   loginResponseSchema,
   loginSchema,
+  lotCardResponseSchema,
   otpVerifyResponseSchema,
   otpRequestSchema,
   otpVerifySchema,
@@ -81,6 +82,35 @@ describe('generated zod schemas', () => {
     expect(
       otpVerifyResponseSchema.safeParse({ accessToken: 'a.b.c', user: sampleUser }).success,
     ).toBe(false);
+  });
+
+  it('validates lot card payloads keeping the recomposed seller block (MKT-001/005)', () => {
+    const payload = {
+      id: 'clxsamplecuid',
+      code: '7Kd2Qm9x',
+      title: 'عمده پیراهن مردانه — ۵۰ عدد',
+      unitPrice: 2_250_000,
+      totalPrice: 112_500_000,
+      quantity: 50,
+      availableQuantity: 50,
+      unit: 'PIECE',
+      condition: 'GRADE_A',
+      city: 'tehran',
+      province: 'tehran',
+      coverThumbUrl: null,
+      seller: { id: 'clxseller01', name: 'مینا رضایی', businessName: null },
+      verifiedSeller: false,
+      updatedAt: '2026-09-05T00:00:00.000Z',
+      createdAt: '2026-09-05T00:00:00.000Z',
+      expiresAt: '2026-10-05T00:00:00.000Z',
+    };
+    // The seller fields survive the parse (the raw generated schema strips them).
+    const parsed = lotCardResponseSchema.parse(payload);
+    expect(parsed.seller).toEqual({ id: 'clxseller01', name: 'مینا رضایی', businessName: null });
+    expect(lotCardResponseSchema.safeParse({ ...payload, seller: {} }).success).toBe(false);
+    expect(lotCardResponseSchema.safeParse({ ...payload, updatedAt: 'yesterday' }).success).toBe(
+      false,
+    );
   });
 
   it('exposes every component schema in the registry', () => {

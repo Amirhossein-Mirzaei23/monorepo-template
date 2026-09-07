@@ -24,3 +24,33 @@ export function formatFaDigits(input: string | number): string {
 export function formatJalali(date: Date | string | number): string {
   return jalaliFormat.format(date instanceof Date ? date : new Date(date));
 }
+
+// --- relative time (MKT-005 lot cards, conversation lists) ---
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+/** Past this horizon «X روز پیش» stops being useful — a Jalali date reads better. */
+const RELATIVE_DAY_LIMIT = 7 * DAY_MS;
+
+/**
+ * Persian relative time for card/list timestamps: «چند لحظه پیش», «X دقیقه پیش»,
+ * «X ساعت پیش», «X روز پیش» — then a Jalali date («۱۴۰۵/۶/۱۴») beyond the 7-day
+ * horizon. Future timestamps (clock skew) read as «چند لحظه پیش».
+ */
+export function formatRelativeTimeFa(date: Date | string | number): string {
+  const value = date instanceof Date ? date : new Date(date);
+  const elapsedMs = Date.now() - value.getTime();
+  if (elapsedMs < MINUTE_MS) {
+    return 'چند لحظه پیش';
+  }
+  if (elapsedMs < HOUR_MS) {
+    return `${formatFaDigits(Math.floor(elapsedMs / MINUTE_MS))} دقیقه پیش`;
+  }
+  if (elapsedMs < DAY_MS) {
+    return `${formatFaDigits(Math.floor(elapsedMs / HOUR_MS))} ساعت پیش`;
+  }
+  if (elapsedMs < RELATIVE_DAY_LIMIT) {
+    return `${formatFaDigits(Math.floor(elapsedMs / DAY_MS))} روز پیش`;
+  }
+  return formatJalali(value);
+}

@@ -78,7 +78,7 @@ discovery. Exact seller addresses never appear in public payloads.
 - **Testing:** page render test w/ mocked fetches; section empty-state tests.
 - **DoD:** lint/typecheck/test green.
 
-### MKT-005 — Lot card component
+### MKT-005 ✅ — Lot card component
 
 **P0 · Phase 4 · Marketplace · M** — Deps: MKT-001, PLAT-001 (verified badge renders once TRS-002 lands)
 
