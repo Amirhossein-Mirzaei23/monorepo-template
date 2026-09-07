@@ -279,6 +279,25 @@ export const conversationLotSummaryDtoSchema = z.object({
   status: z.enum(['DRAFT', 'PENDING_REVIEW', 'ACTIVE', 'PAUSED', 'REJECTED', 'EXPIRED', 'SOLD', 'REMOVED']),
 });
 
+export const sendMessageDtoSchema = z.object({
+  type: z.enum(['TEXT']).optional(),
+  body: z.string(),
+});
+
+export const messageResponseDtoSchema = z.object({
+  id: z.string(),
+  conversationId: z.string(),
+  senderId: z.string().nullable(),
+  type: z.enum(['TEXT', 'IMAGE', 'VIDEO', 'SYSTEM', 'ACTION']),
+  body: z.string().nullable(),
+  createdAt: z.iso.datetime(),
+  readAt: z.iso.datetime().nullable(),
+});
+
+export const markConversationReadResponseDtoSchema = z.object({
+  readCount: z.number(),
+});
+
 export const otpVerifyResponseDtoSchema = z.object({
   accessToken: z.string(),
   user: userResponseDtoSchema,
@@ -436,6 +455,12 @@ export const conversationResponseDtoSchema = z.object({
   lot: conversationLotSummaryDtoSchema,
 });
 
+export const messagePageDtoSchema = z.object({
+  items: z.array(messageResponseDtoSchema),
+  hasMore: z.boolean(),
+  nextCursor: z.string().nullable().optional(),
+});
+
 export const publicSellerProfileDtoSchema = z.object({
   id: z.string(),
   displayName: z.string(),
@@ -544,4 +569,8 @@ export const apiSchemas = {
   CreateConversationDto: createConversationDtoSchema,
   ConversationLotSummaryDto: conversationLotSummaryDtoSchema,
   ConversationResponseDto: conversationResponseDtoSchema,
+  SendMessageDto: sendMessageDtoSchema,
+  MessageResponseDto: messageResponseDtoSchema,
+  MessagePageDto: messagePageDtoSchema,
+  MarkConversationReadResponseDto: markConversationReadResponseDtoSchema,
 } as const;

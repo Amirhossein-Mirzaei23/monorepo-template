@@ -87,12 +87,78 @@ export class ConversationsRepository {
     return this.client(tx).conversation.create({ data, include: CONVERSATION_LOT_INCLUDE });
   }
 
+  /**
+   * CHT-003 — the by-id existence/participant lookup behind send/list/read.
+   * Scalars only: the thread's sides (participant + unread-counter decisions)
+   * and its status (the BLOCKED gate); no lot join is needed this deep in the
+   * thread surface.
+   */
+  async findById(id: string, tx: Tx = undefined): Promise<Conversation | null> {
+    return this.client(tx).conversation.findUnique({ where: { id } });
+  }
+
+  /**
+   * CHT-003 — the other half of every message transaction: the send moves
+   * lastMessageAt/lastMessagePreview + the COUNTERPART unread counter
+   * ({ increment } — the atomic form the schema comment pins), the read path
+   * zeroes MY counter. Partial data — undefined keys stay untouched.
+   */
+  async updateConversation(
+    id: string,
+    data: Prisma.ConversationUncheckedUpdateInput,
+    tx: Tx = undefined,
+  ): Promise<Conversation> {
+    return this.client(tx).conversation.update({ where: { id }, data });
+  }
+
   /** Insert one message (the SYSTEM welcome on CHT-001; sends land CHT-003). */
   async createMessage(
     data: Prisma.MessageUncheckedCreateInput,
     tx: Tx = undefined,
   ): Promise<Message> {
     return this.client(tx).message.create({ data });
+  }
+
+  /** CHT-003 — the `before` cursor resolution (message id → its createdAt). */
+  async findMessageById(id: string, tx: Tx = undefined): Promise<Message | null> {
+    return this.client(tx).message.findUnique({ where: { id } });
+  }
+
+  /**
+   * CHT-003 — one history page, read BACKWARDS: rows strictly OLDER than
+   * `beforeCreatedAt` (null = the newest page), newest first with id desc as
+   * the deterministic tiebreak, and `take` = limit + 1 so the service derives
+   * `hasMore` from this single read (no count query — chat history has no
+   * meaningful total anyway). The (conversationId, createdAt) index from
+   * CHT-001 covers the range scan. The SERVICE reverses to ASC.
+   */
+  async findMessagesBefore(
+    conversationId: string,
+    beforeCreatedAt: Date | null,
+    take: number,
+    tx: Tx = undefined,
+  ): Promise<Message[]> {
+    return this.client(tx).message.findMany({
+      where: {
+        conversationId,
+        ...(beforeCreatedAt !== null ? { createdAt: { lt: beforeCreatedAt } } : {}),
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take,
+    });
+  }
+
+  /**
+   * CHT-003 — the read-marking batch: stamp readAt over the counterpart's
+   * still-unread rows in ONE updateMany (the card's "batch update where
+   * readAt null"); returns Prisma's { count } — the endpoint's readCount.
+   */
+  async updateManyMessages(
+    where: Prisma.MessageWhereInput,
+    data: Prisma.MessageUncheckedUpdateManyInput,
+    tx: Tx = undefined,
+  ): Promise<{ count: number }> {
+    return this.client(tx).message.updateMany({ where, data });
   }
 
   /**

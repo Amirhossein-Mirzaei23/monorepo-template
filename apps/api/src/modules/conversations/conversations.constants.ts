@@ -37,6 +37,43 @@ export function truncatePreview(body: string): string {
 }
 
 /**
+ * CHT-003 — machine-readable error codes carried on 403/400 bodies. Persian
+ * user-facing copy is web-side (same discipline as CONVERSATION_ERROR_CODES).
+ */
+export const MESSAGE_ERROR_CODES = {
+  /** Known conversation the requester takes no side of (403). The card pins
+   * 404 for UNKNOWN conversations and 403 for known-but-foreign ones — that
+   * does leak existence by id, accepted deliberately: ids are unguessable
+   * cuids, never sequential (documented on the card). */
+  NOT_PARTICIPANT: 'NOT_PARTICIPANT',
+  /** Conversation status BLOCKED (403) — no side can send (CHT-009 sets it). */
+  CONVERSATION_BLOCKED: 'CONVERSATION_BLOCKED',
+  /** `before` is not a message of THIS conversation (400) — a foreign/garbage
+   * cursor is a client bug, not a probeable resource. */
+  INVALID_CURSOR: 'INVALID_CURSOR',
+} as const;
+
+/** Hard cap of a TEXT message body (post-trim characters) — CHT-003 card. */
+export const MESSAGE_BODY_MAX_LENGTH = 2000;
+
+/**
+ * Per-route throttle on `POST /conversations/:id/messages` (card CHT-003:
+ * 30/min/user). Mirrors OTP_REQUEST_THROTTLE: static values feeding the
+ * `@Throttle` decorator (evaluated once at boot). The global ThrottlerGuard
+ * tracks by client IP (X-Forwarded-For behind the proxy) — the per-user card
+ * wording is enforced through the authenticated-session-IP tracker, the same
+ * approximation every other throttled route in this app uses.
+ */
+export const MESSAGE_SEND_THROTTLE = {
+  limit: 30,
+  ttlMs: 60_000,
+} as const;
+
+/** Chat-history page size (CHT-003): default 30, hard cap 50. */
+export const MESSAGES_DEFAULT_LIMIT = 30;
+export const MESSAGES_MAX_LIMIT = 50;
+
+/**
  * The SYSTEM welcome message body stored on conversation creation:
  * «گفتگو درباره: {title} — {unitPrice formatted} تومان». CONTENT copy in fa
  * by design (see the file header) — the price shown is the lot's unitPrice

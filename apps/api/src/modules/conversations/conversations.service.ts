@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -6,13 +7,21 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AccountRole, LotStatus, MessageType, type User } from '@prisma/client';
+import {
+  AccountRole,
+  ConversationStatus,
+  LotStatus,
+  MessageType,
+  type Conversation,
+  type User,
+} from '@prisma/client';
 import { requireAppConfig } from '../../config/configuration';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LotsRepository } from '../lots/lots.repository';
 import { UsersRepository } from '../users/users.repository';
 import {
   CONVERSATION_ERROR_CODES,
+  MESSAGE_ERROR_CODES,
   truncatePreview,
   welcomeMessageBody,
 } from './conversations.constants';
@@ -26,6 +35,14 @@ import {
   type ConversationListItemDto,
   type ConversationListQueryDto,
 } from './dto/conversation-list.dto';
+import {
+  MarkConversationReadResponseDto,
+  MessagePageDto,
+  MessageResponseDto,
+  SendMessageDto,
+  toMessageResponse,
+  type MessageListQueryDto,
+} from './dto/message.dto';
 import type { Paginated } from '../../common/dto/pagination-query.dto';
 import { ConversationsRepository } from './conversations.repository';
 import type { CreateConversationDto } from './dto/create-conversation.dto';
@@ -38,8 +55,9 @@ function isUniqueViolation(error: unknown): boolean {
 }
 
 /**
- * Conversation business rules (CHT-001) — the get-or-create behind
- * POST /conversations. Precondition order mirrors the lots module's owner
+ * Conversation business rules — CHT-001's get-or-create behind
+ * POST /conversations plus CHT-003's messages send/list/read under the same
+ * module. Precondition order mirrors the lots module's owner
  * chain (hats before probing):
  *
  * 1. authenticated (401 by the global guard) + user row still exists (401)
@@ -131,6 +149,161 @@ export class ConversationsService {
     }
   }
 
+  // --- CHT-003 — messages: send / history / read ---
+
+  /**
+   * The send transaction (POST /conversations/:id/messages). Precondition
+   * order follows the module chain — identity before probing, then the card's
+   * "404 unknown conversation first, 403 non-participant":
+   *
+   * 1. authenticated (401 by the global guard) + user row still exists (401)
+   * 2. conversation exists (404 — unknown ids answer uniformly)
+   * 3. requester is buyer OR seller (403 NOT_PARTICIPANT). The card pins 403
+   *    (not 404) for known-but-foreign conversations, which leaks existence
+   *    by id — accepted deliberately: ids are unguessable cuids, never
+   *    sequential, so there is nothing to enumerate.
+   * 4. conversation not BLOCKED (403 CONVERSATION_BLOCKED — no side can send;
+   *    CHT-009 introduces the endpoint that sets the status, the gate is
+   *    honored here already)
+   *
+   * The transaction writes BOTH halves atomically: the TEXT message row
+   * (sender = me) AND the conversation lockstep (lastMessageAt = now,
+   * lastMessagePreview = truncate(body, 80) — the invariant CHT-002's derived
+   * system flag relies on) + the COUNTERPART unread counter via one atomic
+   * { increment } (buyer sends → sellerUnreadCount+1, seller sends →
+   * buyerUnreadCount+1; my own counter never moves on my own send).
+   *
+   * Returns the created row as MessageResponseDto — the seam CHT-004's
+   * gateway emits through after the service resolves (no emitter yet).
+   */
+  async sendMessage(
+    userId: string,
+    conversationId: string,
+    dto: SendMessageDto,
+  ): Promise<MessageResponseDto> {
+    await this.requireUser(userId);
+    const conversation = await this.repository.findById(conversationId);
+    if (!conversation) {
+      throw new NotFoundException('Conversation not found');
+    }
+    this.assertParticipant(conversation, userId);
+    this.assertNotBlocked(conversation);
+
+    const body = dto.body; // trimmed by the DTO transform — the service trusts the boundary
+    const sentAt = new Date();
+    const created = await this.prisma.$transaction(async (tx) => {
+      const message = await this.repository.createMessage(
+        {
+          conversationId: conversation.id,
+          senderId: userId,
+          type: dto.type,
+          body,
+        },
+        tx,
+      );
+      await this.repository.updateConversation(
+        conversation.id,
+        {
+          lastMessageAt: sentAt,
+          lastMessagePreview: truncatePreview(body),
+          ...(conversation.buyerId === userId
+            ? { sellerUnreadCount: { increment: 1 } }
+            : { buyerUnreadCount: { increment: 1 } }),
+        },
+        tx,
+      );
+      return message;
+    });
+    return toMessageResponse(created);
+  }
+
+  /**
+   * The thread history (GET /conversations/:id/messages) — cursor pagination
+   * walking BACKWARDS (chat history loads oldest-at-top; the card mandates
+   * this shape over the Paginated envelope: a growing thread has no stable
+   * total). One read per page: findMessagesBefore fetches limit + 1 rows
+   * strictly older than the cursor (newest-first + id tiebreak), the extra
+   * row answers hasMore without a count query, then the service reverses to
+   * ASC. `before` must be a message OF THIS conversation — anything else is a
+   * client bug (400 INVALID_CURSOR), not a probeable resource. No BLOCKED
+   * gate: a blocked thread stays READABLE (CHT-009 renders its banner over
+   * history) — only sends are rejected. SYSTEM rows are visible.
+   */
+  async listMessages(
+    userId: string,
+    conversationId: string,
+    query: MessageListQueryDto,
+  ): Promise<MessagePageDto> {
+    await this.requireUser(userId);
+    const conversation = await this.repository.findById(conversationId);
+    if (!conversation) {
+      throw new NotFoundException('Conversation not found');
+    }
+    this.assertParticipant(conversation, userId);
+
+    const cursorMessage = query.before ? await this.repository.findMessageById(query.before) : null;
+    if (query.before !== undefined && cursorMessage?.conversationId !== conversationId) {
+      throw new BadRequestException({
+        code: MESSAGE_ERROR_CODES.INVALID_CURSOR,
+        message: 'The before cursor is not a message of this conversation',
+      });
+    }
+
+    const rows = await this.repository.findMessagesBefore(
+      conversation.id,
+      cursorMessage?.createdAt ?? null,
+      query.limit + 1,
+    );
+    const hasMore = rows.length > query.limit;
+    const items = (hasMore ? rows.slice(0, query.limit) : rows)
+      .slice()
+      .reverse()
+      .map(toMessageResponse);
+    return {
+      items,
+      hasMore,
+      // The next (older) page's cursor: the OLDEST id of THIS page; null once
+      // history is exhausted so the client stops walking.
+      nextCursor: hasMore ? (items[0]?.id ?? null) : null,
+    };
+  }
+
+  /**
+   * Mark my side read (POST /conversations/:id/read). One transaction with
+   * BOTH halves of the read state: my unread counter zeroes (buyer →
+   * buyerUnreadCount, seller → sellerUnreadCount) and ONE batch updateMany
+   * stamps readAt = now over the COUNTERPART's still-unread messages (my own
+   * rows are read by definition; SYSTEM rows — sender null — are purely
+   * informational and never carry read state). Answers the simple
+   * { readCount } shape (documented decision on the card): how many rows this
+   * call actually stamped — 0 on an idempotent re-read.
+   */
+  async markRead(userId: string, conversationId: string): Promise<MarkConversationReadResponseDto> {
+    await this.requireUser(userId);
+    const conversation = await this.repository.findById(conversationId);
+    if (!conversation) {
+      throw new NotFoundException('Conversation not found');
+    }
+    this.assertParticipant(conversation, userId);
+
+    const iAmBuyer = conversation.buyerId === userId;
+    const counterpartId = iAmBuyer ? conversation.sellerId : conversation.buyerId;
+    const readAt = new Date();
+    const { count } = await this.prisma.$transaction(async (tx) => {
+      await this.repository.updateConversation(
+        conversation.id,
+        iAmBuyer ? { buyerUnreadCount: 0 } : { sellerUnreadCount: 0 },
+        tx,
+      );
+      return this.repository.updateManyMessages(
+        { conversationId: conversation.id, senderId: counterpartId, readAt: null },
+        { readAt },
+        tx,
+      );
+    });
+    return { readCount: count };
+  }
+
   // --- precondition helpers (order documented in the class doc) ---
 
   /**
@@ -175,6 +348,26 @@ export class ConversationsService {
       throw new ForbiddenException({
         code: CONVERSATION_ERROR_CODES.BUYER_REQUIRED,
         message: 'Only buyer accounts can start conversations',
+      });
+    }
+  }
+
+  /** Takes either side of the thread — else 403 + NOT_PARTICIPANT (CHT-003). */
+  private assertParticipant(conversation: Conversation, userId: string): void {
+    if (conversation.buyerId !== userId && conversation.sellerId !== userId) {
+      throw new ForbiddenException({
+        code: MESSAGE_ERROR_CODES.NOT_PARTICIPANT,
+        message: 'You are not a participant of this conversation',
+      });
+    }
+  }
+
+  /** BLOCKED threads reject sends from BOTH sides (403) — list/read stay open. */
+  private assertNotBlocked(conversation: Conversation): void {
+    if (conversation.status === ConversationStatus.BLOCKED) {
+      throw new ForbiddenException({
+        code: MESSAGE_ERROR_CODES.CONVERSATION_BLOCKED,
+        message: 'This conversation is blocked',
       });
     }
   }

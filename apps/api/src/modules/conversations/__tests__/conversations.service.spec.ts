@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   HttpException,
@@ -24,10 +25,12 @@ import { UsersRepository } from '../../users/users.repository';
 import {
   CONVERSATION_ERROR_CODES,
   CONVERSATION_PREVIEW_MAX_LENGTH,
+  MESSAGE_ERROR_CODES,
 } from '../conversations.constants';
 import { ConversationsRepository } from '../conversations.repository';
 import { ConversationsService } from '../conversations.service';
 import { ConversationListQueryDto } from '../dto/conversation-list.dto';
+import { MessageListQueryDto, SendMessageDto } from '../dto/message.dto';
 
 const MEDIA_BASE_URL = 'http://media.test';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -503,6 +506,404 @@ describe('ConversationsService', () => {
       const response = await service.getOrCreate(sellerId, { lotId: lot.id });
       expect(response.buyerId).toBe(sellerId);
       expect(response.sellerId).toBe(otherSellerId);
+    });
+  });
+
+  /**
+   * CHT-003 shared fixture: an ACTIVE thread with its SYSTEM welcome message
+   * (the state a thread reaches right after CHT-001) — the send/list/read
+   * suites branch from here.
+   */
+  describe('CHT-003 — messages', () => {
+    const WELCOME_BODY = 'گفتگو درباره: عمده پیراهن مردانه — ۲٬۲۵۰٬۰۰۰ تومان';
+
+    const seedThread = (overrides?: {
+      status?: ConversationStatus;
+      buyerUnreadCount?: number;
+      sellerUnreadCount?: number;
+    }) => {
+      const lot = seedActiveLot();
+      const lastMessageAt = new Date('2026-09-01T10:00:00.000Z');
+      const conversation = fake.seedConversation({
+        lotId: lot.id,
+        buyerId,
+        sellerId,
+        lastMessageAt,
+        lastMessagePreview: WELCOME_BODY,
+        status: overrides?.status,
+        buyerUnreadCount: overrides?.buyerUnreadCount,
+        sellerUnreadCount: overrides?.sellerUnreadCount,
+      });
+      const welcome = fake.seedMessage({
+        conversationId: conversation.id,
+        senderId: null,
+        type: MessageType.SYSTEM,
+        body: WELCOME_BODY,
+        createdAt: lastMessageAt,
+      });
+      return { lot, conversation, welcome };
+    };
+
+    const textDto = (body: string): SendMessageDto => {
+      const dto = new SendMessageDto();
+      dto.body = body;
+      return dto;
+    };
+
+    /** Timestamps spaced a minute apart so cursor pages are deterministic. */
+    const at = (minutes: number): Date => new Date(Date.UTC(2026, 8, 2, 10, minutes));
+
+    describe('sendMessage — the send transaction', () => {
+      it('inserts the TEXT row (sender = me) and moves lastMessageAt/preview in lockstep — the CHT-002 system-flag invariant', async () => {
+        const { conversation } = seedThread();
+        const before = Date.now();
+
+        const response = await service.sendMessage(buyerId, conversation.id, textDto('سلام'));
+
+        expect(response.id).toBeDefined();
+        const row = await fake.conversation.findUnique({ where: { id: conversation.id } });
+        expect(row?.lastMessageAt.getTime()).toBeGreaterThanOrEqual(before - 1_000);
+        expect(row?.lastMessagePreview).toBe('سلام');
+
+        const messages = await fake.message.findMany({
+          where: { conversationId: conversation.id },
+          orderBy: { createdAt: 'asc' },
+        });
+        expect(messages).toHaveLength(2);
+        const sent = messages[1];
+        expect(sent?.type).toBe(MessageType.TEXT);
+        expect(sent?.senderId).toBe(buyerId);
+        expect(sent?.body).toBe('سلام');
+        expect(sent?.readAt).toBeNull();
+      });
+
+      it('increments the COUNTERPART unread atomically: buyer sends → sellerUnreadCount+1, buyer side untouched', async () => {
+        const { conversation } = seedThread({ sellerUnreadCount: 2, buyerUnreadCount: 5 });
+
+        await service.sendMessage(buyerId, conversation.id, textDto('سلام'));
+
+        const row = await fake.conversation.findUnique({ where: { id: conversation.id } });
+        expect(row?.sellerUnreadCount).toBe(3);
+        expect(row?.buyerUnreadCount).toBe(5); // my own counter never moves on my send
+      });
+
+      it('mirrors the increments for the seller side: seller sends → buyerUnreadCount+1', async () => {
+        const { conversation } = seedThread({ buyerUnreadCount: 0 });
+
+        await service.sendMessage(sellerId, conversation.id, textDto('بله موجود است'));
+
+        const row = await fake.conversation.findUnique({ where: { id: conversation.id } });
+        expect(row?.buyerUnreadCount).toBe(1);
+        expect(row?.sellerUnreadCount).toBe(0);
+      });
+
+      it('truncates lastMessagePreview to the 80-char bound (+ ellipsis) while the row keeps the full body', async () => {
+        const { conversation } = seedThread();
+        const body = 'خ'.repeat(2000); // the exact boundary the DTO allows
+
+        await service.sendMessage(buyerId, conversation.id, textDto(body));
+
+        const row = await fake.conversation.findUnique({ where: { id: conversation.id } });
+        expect(row?.lastMessagePreview?.length).toBe(CONVERSATION_PREVIEW_MAX_LENGTH + 1);
+        expect(row?.lastMessagePreview?.endsWith('…')).toBe(true);
+        const messages = await fake.message.findMany({
+          where: { conversationId: conversation.id },
+        });
+        expect(messages.find((message) => message.senderId === buyerId)?.body).toHaveLength(2000);
+      });
+
+      it('answers EXACTLY the MessageResponseDto keys with readAt null (the CHT-004 emit seam)', async () => {
+        const { conversation } = seedThread();
+
+        const response = await service.sendMessage(buyerId, conversation.id, textDto('سلام'));
+
+        expect(Object.keys(response).sort()).toEqual(
+          ['body', 'conversationId', 'createdAt', 'id', 'readAt', 'senderId', 'type'].sort(),
+        );
+        expect(response.senderId).toBe(buyerId);
+        expect(response.type).toBe(MessageType.TEXT);
+        expect(response.readAt).toBeNull();
+      });
+
+      it('404 for an unknown conversation id — nothing written', async () => {
+        await expect(
+          service.sendMessage(buyerId, 'missing-conversation', textDto('سلام')),
+        ).rejects.toBeInstanceOf(NotFoundException);
+        expect(await fake.message.count({})).toBe(0);
+      });
+
+      it('401 when the token user no longer exists — before any probing', async () => {
+        const { conversation } = seedThread();
+        await expect(
+          service.sendMessage('ghost-id', conversation.id, textDto('سلام')),
+        ).rejects.toBeInstanceOf(UnauthorizedException);
+      });
+
+      it('403 NOT_PARTICIPANT for a known thread the caller takes no side of (after the 404 check)', async () => {
+        const { conversation } = seedThread();
+        const outsiderId = fake.seedUser({ phone: '09125550000', name: 'بی‌ربط' }).id;
+
+        const error = await rejectionOf(
+          service.sendMessage(outsiderId, conversation.id, textDto('سلام')),
+        );
+        expect(error).toBeInstanceOf(ForbiddenException);
+        expect((error.getResponse() as { code?: string }).code).toBe(
+          MESSAGE_ERROR_CODES.NOT_PARTICIPANT,
+        );
+        expect(await fake.message.count({ where: { conversationId: conversation.id } })).toBe(1);
+      });
+
+      it('403 CONVERSATION_BLOCKED on a BLOCKED thread — both sides rejected, nothing written', async () => {
+        const { conversation } = seedThread({ status: ConversationStatus.BLOCKED });
+
+        for (const participantId of [buyerId, sellerId]) {
+          const error = await rejectionOf(
+            service.sendMessage(participantId, conversation.id, textDto('سلام')),
+          );
+          expect(error).toBeInstanceOf(ForbiddenException);
+          expect((error.getResponse() as { code?: string }).code).toBe(
+            MESSAGE_ERROR_CODES.CONVERSATION_BLOCKED,
+          );
+        }
+        expect(await fake.message.count({ where: { conversationId: conversation.id } })).toBe(1);
+      });
+    });
+
+    describe('listMessages — backwards cursor history', () => {
+      it('returns the newest page ASC with the SYSTEM welcome visible, exact per-item keys', async () => {
+        const { conversation, welcome } = seedThread();
+        fake.seedMessage({
+          conversationId: conversation.id,
+          senderId: buyerId,
+          type: MessageType.TEXT,
+          body: 'سلام',
+          createdAt: at(1),
+        });
+        fake.seedMessage({
+          conversationId: conversation.id,
+          senderId: sellerId,
+          type: MessageType.TEXT,
+          body: 'بله موجود است',
+          createdAt: at(2),
+        });
+
+        const page = await service.listMessages(
+          buyerId,
+          conversation.id,
+          new MessageListQueryDto(),
+        );
+
+        expect(page.hasMore).toBe(false);
+        expect(page.nextCursor).toBeNull();
+        expect(page.items[0]?.id).toBe(welcome.id); // the SYSTEM welcome is history's first row
+        expect(page.items.map((item) => item.body)).toEqual([
+          WELCOME_BODY,
+          'سلام',
+          'بله موجود است',
+        ]);
+        expect(page.items[0]?.type).toBe(MessageType.SYSTEM); // system rows visible in history
+        expect(Object.keys(page.items[0] ?? {}).sort()).toEqual(
+          ['body', 'conversationId', 'createdAt', 'id', 'readAt', 'senderId', 'type'].sort(),
+        );
+      });
+
+      it('walks the FULL history backwards across pages: each page ends at the cursor, hasMore/nextCursor drain to null', async () => {
+        const { conversation, welcome } = seedThread();
+        const sentIds: string[] = [];
+        for (let index = 0; index < 5; index += 1) {
+          sentIds.push(
+            fake.seedMessage({
+              conversationId: conversation.id,
+              senderId: index % 2 === 0 ? buyerId : sellerId,
+              body: `پیام ${index + 1}`,
+              createdAt: at(index + 1),
+            }).id,
+          );
+        }
+        const fullHistoryAsc = [welcome.id, ...sentIds];
+
+        const query = (before?: string, limit = 2): MessageListQueryDto => {
+          const dto = new MessageListQueryDto();
+          dto.limit = limit;
+          dto.before = before;
+          return dto;
+        };
+
+        const page1 = await service.listMessages(buyerId, conversation.id, query());
+        expect(page1.items.map((item) => item.id)).toEqual(fullHistoryAsc.slice(-2));
+        expect(page1.hasMore).toBe(true);
+        expect(page1.nextCursor).toBe(page1.items[0]?.id);
+
+        const page2 = await service.listMessages(
+          buyerId,
+          conversation.id,
+          query(page1.nextCursor ?? undefined),
+        );
+        expect(page2.items.map((item) => item.id)).toEqual(fullHistoryAsc.slice(2, 4));
+        expect(page2.hasMore).toBe(true);
+
+        const page3 = await service.listMessages(
+          buyerId,
+          conversation.id,
+          query(page2.nextCursor ?? undefined),
+        );
+        expect(page3.items.map((item) => item.id)).toEqual(fullHistoryAsc.slice(0, 2));
+        expect(page3.hasMore).toBe(false);
+        expect(page3.nextCursor).toBeNull(); // history exhausted — the client stops walking
+      });
+
+      it('treats the cursor STRICTLY: the cursor message itself is not repeated', async () => {
+        const { conversation, welcome } = seedThread();
+        const second = fake.seedMessage({
+          conversationId: conversation.id,
+          senderId: buyerId,
+          body: 'سلام',
+          createdAt: at(1),
+        });
+
+        const page = await service.listMessages(sellerId, conversation.id, {
+          before: second.id,
+          limit: 30,
+        } as MessageListQueryDto);
+
+        expect(page.items.map((item) => item.id)).toEqual([welcome.id]);
+        expect(page.hasMore).toBe(false);
+      });
+
+      it('400 INVALID_CURSOR for a cursor that is not a message of THIS conversation', async () => {
+        const { conversation } = seedThread();
+        const other = seedThread(); // a second thread — its ids must not work here
+
+        const unknown = await rejectionOf(
+          service.listMessages(buyerId, conversation.id, {
+            before: 'no-such-message',
+            limit: 30,
+          } as MessageListQueryDto),
+        );
+        expect(unknown).toBeInstanceOf(BadRequestException);
+        expect((unknown.getResponse() as { code?: string }).code).toBe(
+          MESSAGE_ERROR_CODES.INVALID_CURSOR,
+        );
+
+        const foreign = await rejectionOf(
+          service.listMessages(buyerId, conversation.id, {
+            before: other.welcome.id,
+            limit: 30,
+          } as MessageListQueryDto),
+        );
+        expect(foreign).toBeInstanceOf(BadRequestException);
+      });
+
+      it('404 unknown conversation / 403 non-participant (a BLOCKED thread stays READABLE)', async () => {
+        const { conversation } = seedThread({ status: ConversationStatus.BLOCKED });
+        const outsiderId = fake.seedUser({ phone: '09125550000', name: 'بی‌ربط' }).id;
+
+        await expect(
+          service.listMessages(buyerId, 'missing-conversation', new MessageListQueryDto()),
+        ).rejects.toBeInstanceOf(NotFoundException);
+        await expect(
+          service.listMessages(outsiderId, conversation.id, new MessageListQueryDto()),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+        // Blocked threads stay readable — only sends are gated (CHT-009 banner).
+        const page = await service.listMessages(
+          buyerId,
+          conversation.id,
+          new MessageListQueryDto(),
+        );
+        expect(page.items).toHaveLength(1);
+      });
+    });
+
+    describe('markRead — read state', () => {
+      it('zeroes MY counter, stamps ONLY the counterpart unread rows, answers readCount', async () => {
+        const { conversation } = seedThread({ buyerUnreadCount: 3, sellerUnreadCount: 7 });
+        const fromSeller1 = fake.seedMessage({
+          conversationId: conversation.id,
+          senderId: sellerId,
+          body: 'پیام ۱',
+          createdAt: at(1),
+        });
+        const fromSeller2 = fake.seedMessage({
+          conversationId: conversation.id,
+          senderId: sellerId,
+          body: 'پیام ۲',
+          createdAt: at(2),
+        });
+        const fromBuyer = fake.seedMessage({
+          conversationId: conversation.id,
+          senderId: buyerId,
+          body: 'سلام',
+          createdAt: at(3),
+        });
+        const before = Date.now();
+
+        const response = await service.markRead(buyerId, conversation.id);
+
+        expect(response.readCount).toBe(2); // the two seller rows — nothing else
+        const row = await fake.conversation.findUnique({ where: { id: conversation.id } });
+        expect(row?.buyerUnreadCount).toBe(0); // MY counter zeroed
+        expect(row?.sellerUnreadCount).toBe(7); // the COUNTERPART's counter untouched
+
+        const stamped = await fake.message.findUnique({ where: { id: fromSeller1.id } });
+        const stamped2 = await fake.message.findUnique({ where: { id: fromSeller2.id } });
+        expect(stamped?.readAt?.getTime()).toBeGreaterThanOrEqual(before - 1_000);
+        expect(stamped2?.readAt).not.toBeNull();
+        expect((await fake.message.findUnique({ where: { id: fromBuyer.id } }))?.readAt).toBeNull();
+      });
+
+      it('mirrors for the seller side: sellerUnreadCount → 0, buyer rows stamped', async () => {
+        const { conversation } = seedThread({ sellerUnreadCount: 4 });
+        const fromBuyer = fake.seedMessage({
+          conversationId: conversation.id,
+          senderId: buyerId,
+          body: 'سلام',
+          createdAt: at(1),
+        });
+        fake.seedMessage({
+          conversationId: conversation.id,
+          senderId: sellerId,
+          body: 'پیام فروشنده',
+          createdAt: at(2),
+        });
+
+        const response = await service.markRead(sellerId, conversation.id);
+
+        expect(response.readCount).toBe(1);
+        const row = await fake.conversation.findUnique({ where: { id: conversation.id } });
+        expect(row?.sellerUnreadCount).toBe(0);
+        expect(row?.buyerUnreadCount).toBe(0);
+        expect(
+          (await fake.message.findUnique({ where: { id: fromBuyer.id } }))?.readAt,
+        ).not.toBeNull();
+      });
+
+      it('is idempotent: a second read stamps nothing (readCount 0)', async () => {
+        const { conversation } = seedThread({ buyerUnreadCount: 1 });
+        fake.seedMessage({
+          conversationId: conversation.id,
+          senderId: sellerId,
+          body: 'پیام ۱',
+          createdAt: at(1),
+        });
+
+        const first = await service.markRead(buyerId, conversation.id);
+        const second = await service.markRead(buyerId, conversation.id);
+
+        expect(first.readCount).toBe(1);
+        expect(second.readCount).toBe(0);
+      });
+
+      it('404 unknown conversation / 403 non-participant', async () => {
+        const { conversation } = seedThread();
+        const outsiderId = fake.seedUser({ phone: '09125550000', name: 'بی‌ربط' }).id;
+
+        await expect(service.markRead(buyerId, 'missing-conversation')).rejects.toBeInstanceOf(
+          NotFoundException,
+        );
+        await expect(service.markRead(outsiderId, conversation.id)).rejects.toBeInstanceOf(
+          ForbiddenException,
+        );
+      });
     });
   });
 });

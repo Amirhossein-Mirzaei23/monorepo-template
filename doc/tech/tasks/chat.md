@@ -43,7 +43,7 @@ media pipeline (secure serving).
 - **Testing:** repository unit; e2e listing both roles.
 - **DoD:** suites green.
 
-### CHT-003 — Messages API (send/list/read)
+### CHT-003 ✅ — Messages API (send/list/read)
 
 **P0 · Phase 5 · Chat · M** — Deps: CHT-001
 

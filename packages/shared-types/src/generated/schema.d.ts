@@ -589,6 +589,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/conversations/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Walk a thread history backwards: ?before=<messageId>&limit≤50 (default 30) — ASC page of strictly older messages */
+        get: operations["MessagesController_list"];
+        put?: never;
+        /** Send a TEXT message to a thread I participate in (403 non-participant/blocked, 404 unknown, 400 validation, 429 over 30/min) */
+        post: operations["MessagesController_send"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/conversations/{id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark my side of the thread read: zero my unread counter and batch-stamp the counterpart unread messages */
+        post: operations["MessagesController_markRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1988,6 +2023,73 @@ export interface components {
             lastMessageAt: string;
             lot: components["schemas"]["ConversationLotSummaryDto"];
         };
+        SendMessageDto: {
+            /**
+             * @description Message type — only TEXT is open for sends; IMAGE/VIDEO arrive with CHT-007 and anything else (incl. SYSTEM) answers 400
+             * @default TEXT
+             * @enum {string}
+             */
+            type: "TEXT";
+            /**
+             * @description Trimmed message text — required for TEXT, 1..2000 chars (validated AFTER trimming)
+             * @example قیمت برای ۵ ستون چقدر می‌شود؟
+             */
+            body: string;
+        };
+        MessageResponseDto: {
+            /**
+             * @description Message id — also the list `before` cursor
+             * @example clx…cuid
+             */
+            id: string;
+            /** @example clx…cuid */
+            conversationId: string;
+            /**
+             * @description Author — null exactly for SYSTEM rows
+             * @example clx…cuid
+             */
+            senderId: string | null;
+            /**
+             * @example TEXT
+             * @enum {string}
+             */
+            type: "TEXT" | "IMAGE" | "VIDEO" | "SYSTEM" | "ACTION";
+            /** @example سلام، موجود است؟ */
+            body: string | null;
+            /**
+             * Format: date-time
+             * @description ASC history sort key
+             * @example 2026-09-05T00:00:00.000Z
+             */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @description Read stamp set when the COUNTERPART calls POST /conversations/:id/read; null = unread
+             * @example null
+             */
+            readAt: string | null;
+        };
+        MessagePageDto: {
+            /** @description ASC order, ending at the cursor */
+            items: components["schemas"]["MessageResponseDto"][];
+            /**
+             * @description True when older messages exist beyond this page
+             * @example true
+             */
+            hasMore: boolean;
+            /**
+             * @description Oldest returned id — the next page `before` cursor; null when hasMore is false
+             * @example clx…cuid
+             */
+            nextCursor?: string | null;
+        };
+        MarkConversationReadResponseDto: {
+            /**
+             * @description Counterpart messages marked read by this call
+             * @example 4
+             */
+            readCount: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -2994,6 +3096,81 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationResponseDto"];
+                };
+            };
+        };
+    };
+    MessagesController_list: {
+        parameters: {
+            query?: {
+                /** @description Cursor — return messages strictly OLDER than this message id; omit for the newest page */
+                before?: string;
+                /** @description Page size — capped at 50 */
+                limit?: components["schemas"]["Object"];
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description NOT Paginated — backwards cursor history: { items ASC ending at the cursor, hasMore (older exist?), nextCursor (oldest returned id, null when exhausted) } */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessagePageDto"];
+                };
+            };
+        };
+    };
+    MessagesController_send: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendMessageDto"];
+            };
+        };
+        responses: {
+            /** @description The created TEXT message (readAt null) — the conversation lockstep (lastMessageAt/preview + counterpart unread increment) committed in the same transaction */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageResponseDto"];
+                };
+            };
+        };
+    };
+    MessagesController_markRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description { readCount } — my unread counter zeroed + that many counterpart messages stamped readAt = now (0 on an idempotent re-read) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarkConversationReadResponseDto"];
                 };
             };
         };

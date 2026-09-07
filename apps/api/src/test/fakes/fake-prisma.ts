@@ -274,8 +274,27 @@ type MessageCreateData = {
   replyToId?: string | null;
   readAt?: Date | null;
 };
-type MessageWhere = { conversationId?: string; senderId?: string | null };
+/** Exactly the surface ConversationsRepository composes (CHT-003): thread +
+ * sender scoping (null matches SYSTEM rows), the cursor page's createdAt
+ * `lt` arm, the read-marking `readAt: null` arm and plain id equality. */
+type MessageWhere = {
+  conversationId?: string;
+  senderId?: string | null;
+  id?: string;
+  readAt?: null;
+  createdAt?: { lt?: Date; lte?: Date };
+};
 type MessageOrderBy = Record<string, 'asc' | 'desc'>;
+
+/** Writable scalar subset for the CHT-003 send/read transactions (unread
+ * counters also take the { increment } atomic form, like LotUpdateData). */
+type ConversationUpdateData = Partial<{
+  status: ConversationStatus;
+  lastMessageAt: Date;
+  lastMessagePreview: string | null;
+  buyerUnreadCount: number | { increment: number };
+  sellerUnreadCount: number | { increment: number };
+}>;
 
 /**
  * Deterministic in-memory Prisma stand-in covering exactly the surface this app
@@ -1007,6 +1026,36 @@ export class FakePrisma {
       this.conversations.set(row.id, row);
       return this.withConversationLot(row);
     },
+    /** CHT-003 send/read transactions: partial scalar update — undefined keys
+     * stay untouched, unread counters accept the atomic { increment } form
+     * (same semantics as lot.update). */
+    update: async ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: ConversationUpdateData;
+    }): Promise<ConversationJoinedRow> => {
+      const row = this.conversations.get(where.id);
+      if (!row) {
+        throw new Error(`FakePrisma: conversation ${where.id} not found`);
+      }
+      const next: Conversation = { ...row };
+      if (data.status !== undefined) {
+        next.status = data.status;
+      }
+      if (data.lastMessageAt !== undefined) {
+        next.lastMessageAt = data.lastMessageAt;
+      }
+      if (data.lastMessagePreview !== undefined) {
+        next.lastMessagePreview = data.lastMessagePreview;
+      }
+      next.buyerUnreadCount = applyUnreadCounter(row.buyerUnreadCount, data.buyerUnreadCount);
+      next.sellerUnreadCount = applyUnreadCounter(row.sellerUnreadCount, data.sellerUnreadCount);
+      next.updatedAt = nowIso();
+      this.conversations.set(row.id, next);
+      return this.withConversationLot(next);
+    },
     /** CHT-002 inbox page: participant-union filter, multi-key orderBy
      * (lastMessageAt desc, id desc), skip/take — rows always read back with
      * the full list join (lot/cover + participants + latest message). */
@@ -1026,7 +1075,8 @@ export class FakePrisma {
       [...this.conversations.values()].filter(matchesConversationListWhere(where)).length,
   };
 
-  /** Exactly the surface CHT-001 (welcome message) + spec assertions use. */
+  /** Exactly the surface CHT-001 (welcome message), CHT-003 (sends, the
+   * before-cursor history page, read-marking) + spec assertions use. */
   readonly message = {
     create: async ({ data }: { data: MessageCreateData }): Promise<Message> => {
       const conversation = this.conversations.get(data.conversationId);
@@ -1049,23 +1099,44 @@ export class FakePrisma {
       this.messages.set(row.id, row);
       return cloneMessage(row);
     },
+    /** CHT-003 cursor resolution: the `before` message id lookup. */
+    findUnique: async ({ where }: { where: { id: string } }): Promise<Message | null> => {
+      const found = this.messages.get(where.id);
+      return found ? cloneMessage(found) : null;
+    },
     findMany: async ({
       where,
       orderBy,
+      take,
     }: {
       where?: MessageWhere;
-      orderBy?: MessageOrderBy;
-    } = {}): Promise<Message[]> => {
-      let rows = [...this.messages.values()].filter(matchesMessageWhere(where));
-      if (orderBy?.createdAt === 'desc') {
-        rows = rows.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-      } else if (orderBy?.createdAt === 'asc') {
-        rows = rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-      }
-      return rows.map(cloneMessage);
-    },
+      orderBy?: MessageOrderBy | MessageOrderBy[];
+      take?: number;
+    } = {}): Promise<Message[]> =>
+      sortRows([...this.messages.values()].filter(matchesMessageWhere(where)), orderBy)
+        .slice(0, take)
+        .map(cloneMessage),
     count: async ({ where }: { where?: MessageWhere } = {}): Promise<number> =>
       [...this.messages.values()].filter(matchesMessageWhere(where)).length,
+    /** CHT-003 read-marking: batch readAt stamp over the matched rows (a row
+     * already stamped stays stamped — readAt null arm never matches it). */
+    updateMany: async ({
+      where,
+      data,
+    }: {
+      where?: MessageWhere;
+      data: { readAt: Date };
+    }): Promise<{ count: number }> => {
+      let count = 0;
+      for (const row of this.messages.values()) {
+        if (!matchesMessageWhere(where)(row)) {
+          continue;
+        }
+        row.readAt = data.readAt;
+        count += 1;
+      }
+      return { count };
+    },
   };
 
   /** Exactly the surface MediaRepository uses (MEDIA-001 + MEDIA-002 quota +
@@ -1563,7 +1634,7 @@ function matchesCategoryWhere(where: CategoryWhere | undefined): (row: Category)
 }
 
 /** Multi-key stable sort (orderBy is a single object or an array of them). */
-function sortRows<T extends Category | User | Lot | Conversation | OtpCode>(
+function sortRows<T extends Category | User | Lot | Conversation | OtpCode | Message>(
   rows: T[],
   orderBy: Record<string, 'asc' | 'desc'> | Record<string, 'asc' | 'desc'>[] | undefined,
 ): T[] {
@@ -1813,11 +1884,32 @@ function cloneConversation(row: Conversation): Conversation {
   };
 }
 
-/** Message matcher: thread scoping + optional sender (null matches SYSTEM rows). */
+/** Message matcher (CHT-001/003): thread scoping + optional sender (null
+ * matches SYSTEM rows) + the cursor page's strict `createdAt` bounds + the
+ * read-marking arm (`readAt: null` — only the unset form is ever queried). */
 function matchesMessageWhere(where: MessageWhere | undefined): (row: Message) => boolean {
   return (row) =>
     (where?.conversationId === undefined || row.conversationId === where.conversationId) &&
-    (where?.senderId === undefined || row.senderId === where.senderId);
+    (where?.senderId === undefined || row.senderId === where.senderId) &&
+    (where?.id === undefined || row.id === where.id) &&
+    (where?.readAt === undefined || row.readAt === null) &&
+    (where?.createdAt === undefined ||
+      ((where.createdAt.lt === undefined || row.createdAt < where.createdAt.lt) &&
+        (where.createdAt.lte === undefined || row.createdAt <= where.createdAt.lte)));
+}
+
+/** Atomic unread-counter write: `number` sets, `{ increment }` bumps. */
+function applyUnreadCounter(
+  current: number,
+  value: number | { increment: number } | undefined,
+): number {
+  if (value === undefined) {
+    return current;
+  }
+  if (typeof value === 'object') {
+    return current + value.increment;
+  }
+  return value;
 }
 
 function cloneMessage(row: Message): Message {
