@@ -1,23 +1,21 @@
-import Link from 'next/link';
 import type { Metadata } from 'next';
+import { ChatThread } from '@/features/chat';
 
 export const metadata: Metadata = { title: 'گفتگو' };
 
+interface ChatThreadRouteProps {
+  params: Promise<{ id: string }>;
+}
+
 /**
- * CHT-005 PLACEHOLDER — the inbox links every row to /chat/{id}; the real
- * thread UI (message bubbles, composer, lot-context header) lands with
- * CHT-006, which REPLACES this file.
+ * CHT-006 — the chat thread route (replaces the CHT-005 placeholder).
+ * Authenticated realtime data (react-query + socket through the hooks the
+ * feature owns; see doc/CONVENTIONS.md decision table), so the route stays a
+ * thin composition over the feature. The conversation id is unguessable and
+ * every endpoint is participant-guarded server-side — a foreign id just
+ * renders the thread's error/empty states behind a 403.
  */
-export default function ChatThreadRoute() {
-  return (
-    <section className="grid place-items-center gap-3 py-16 text-center">
-      <p className="text-lg font-semibold">این گفتگو به‌زودی فعال می‌شود</p>
-      <p className="text-muted-foreground max-w-sm text-sm">
-        نمایش و ارسال پیام در نسخه بعدی اضافه می‌شود.
-      </p>
-      <Link href="/chat" className="text-primary text-sm font-medium hover:underline">
-        بازگشت به گفتگوها
-      </Link>
-    </section>
-  );
+export default async function ChatThreadRoute({ params }: ChatThreadRouteProps) {
+  const { id } = await params;
+  return <ChatThread conversationId={id} />;
 }

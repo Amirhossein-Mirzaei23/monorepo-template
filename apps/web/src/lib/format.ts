@@ -9,6 +9,12 @@ const FA_DIGITS = '۰۱۲۳۴۵۶۷۸۹';
 
 const faNumberFormat = new Intl.NumberFormat('fa-IR');
 const jalaliFormat = new Intl.DateTimeFormat('fa-IR', { calendar: 'persian' });
+/** Per-bubble chat timestamps (CHT-006): «۱۴:۰۵» — 24h clock, Persian digits. */
+const timeFormat = new Intl.DateTimeFormat('fa-IR', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
 
 /** Formats an amount in Toman: 180000000 → «۱۸۰٬۰۰۰٬۰۰۰ تومان». */
 export function formatToman(amount: number): string {
@@ -23,6 +29,11 @@ export function formatFaDigits(input: string | number): string {
 /** Formats a date on the Jalali (persian) calendar: 2026-01-01 → «۱۴۰۴/۱۰/۱۱». */
 export function formatJalali(date: Date | string | number): string {
   return jalaliFormat.format(date instanceof Date ? date : new Date(date));
+}
+
+/** Formats a wall-clock time with Persian digits: 14:05 → «۱۴:۰۵» (chat bubbles). */
+export function formatTimeFa(date: Date | string | number): string {
+  return timeFormat.format(date instanceof Date ? date : new Date(date));
 }
 
 // --- relative time (MKT-005 lot cards, conversation lists) ---

@@ -27,6 +27,11 @@ export type SaveOnboardingDto = components['schemas']['SaveOnboardingDto'];
 export type ProfileResponseDto = components['schemas']['ProfileResponseDto'];
 // --- conversations / messages (CHT-003; CHT-004 embeds it in WS payloads) ---
 export type MessageResponseDto = components['schemas']['MessageResponseDto'];
+/** The backwards-cursor history envelope of GET /conversations/:id/messages (CHT-003). */
+export type MessagePageDto = components['schemas']['MessagePageDto'];
+/** POST /conversations/:id/read response — { readCount } (CHT-003). */
+export type MarkConversationReadResponseDto =
+  components['schemas']['MarkConversationReadResponseDto'];
 // --- conversations inbox (CHT-002/005) ---
 export type ConversationResponseDto = components['schemas']['ConversationResponseDto'];
 export type ConversationLotSummaryDto = components['schemas']['ConversationLotSummaryDto'];
@@ -155,6 +160,11 @@ export const publicSellerSummarySchema = apiSchemas.PublicSellerSummaryDto;
 export const publicSellerListSchema = apiSchemas.PublicSellerListDto;
 // --- conversations inbox (CHT-002) ---
 export const conversationResponseSchema = apiSchemas.ConversationResponseDto;
+// --- messages (CHT-003; consumed by the CHT-006 thread through the BFF) ---
+export const sendMessageSchema = apiSchemas.SendMessageDto;
+export const messageResponseSchema = apiSchemas.MessageResponseDto;
+export const messagePageSchema = apiSchemas.MessagePageDto;
+export const markConversationReadResponseSchema = apiSchemas.MarkConversationReadResponseDto;
 export const conversationLotSummarySchema = apiSchemas.ConversationLotSummaryDto;
 /** Conversation status — derived from the generated schema (compile-time synced). */
 export const conversationStatusSchema = conversationResponseSchema.shape.status;

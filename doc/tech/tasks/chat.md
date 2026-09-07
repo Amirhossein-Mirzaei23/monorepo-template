@@ -96,7 +96,7 @@ media pipeline (secure serving).
 - **Testing:** component tests (render, unread, lot-context block), list hook tests.
 - **DoD:** suites green.
 
-### CHT-006 — Chat thread UI
+### CHT-006 ✅ — Chat thread UI
 
 **P0 · Phase 5 · Chat · L** — Deps: CHT-003, CHT-004, CHT-005
 
