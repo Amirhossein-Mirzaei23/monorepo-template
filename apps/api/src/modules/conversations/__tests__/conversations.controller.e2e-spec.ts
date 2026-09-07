@@ -261,4 +261,212 @@ describe('ConversationsController (e2e)', () => {
       );
     });
   });
+
+  describe('GET /conversations', () => {
+    /** Fresh client IP per request keeps the global throttle buckets isolated. */
+    const getConversations = (token: string | undefined, query = '') =>
+      request(app.getHttpServer())
+        .get(`/conversations${query}`)
+        .set('Authorization', token === undefined ? '' : `Bearer ${token}`)
+        .set('X-Forwarded-For', nextIp());
+
+    /** Direct row seed (controlled lastMessageAt/unreads — the inbox suites). */
+    const seedThread = (overrides: {
+      lotId: string;
+      buyerId: string;
+      sellerId: string;
+      lastMessageAt: Date;
+      lastMessagePreview?: string;
+      buyerUnreadCount?: number;
+      sellerUnreadCount?: number;
+    }) => prisma.seedConversation(overrides);
+
+    it('requires authentication (401 without a token)', async () => {
+      await getConversations(undefined).expect(401);
+    });
+
+    it("lists the buyer's threads: lot context, seller counterpart, role, welcome preview with the system flag", async () => {
+      const seller = await loginAsSeller();
+      const lot = seedLot(seller.user.id);
+      const asset = prisma.seedMediaAsset({
+        ownerId: seller.user.id,
+        type: MediaType.IMAGE,
+        mime: 'image/jpeg',
+        sizeBytes: 1024,
+        storageKey: '2026/09/cover-original.jpg',
+        thumbKey: '2026/09/cover-thumb.webp',
+      });
+      prisma.seedLotMedia({ lotId: lot.id, mediaAssetId: asset.id, sortOrder: 0, isCover: true });
+      await prisma.user.update({
+        where: { id: seller.user.id },
+        data: { name: 'فروشنده اول' },
+      });
+      const buyer = await loginAsBuyer();
+      await postConversation(buyer.token, lot.id).expect(200);
+
+      const response = await getConversations(buyer.token).expect(200);
+
+      expect(response.body.total).toBe(1);
+      const item = response.body.items[0];
+      expect(item.role).toBe('buyer');
+      expect(item.status).toBe('ACTIVE');
+      expect(item.lastMessagePreview).toMatch(/^گفتگو درباره: /);
+      expect(item.isLastMessageSystem).toBe(true); // the welcome message is the newest
+      expect(item.myUnreadCount).toBe(0); // nothing sent yet (CHT-003 moves counters)
+      expect(item.counterpart).toEqual({
+        id: seller.user.id,
+        name: 'فروشنده اول',
+        avatarUrl: null, // avatars do not exist yet — placeholder
+        verified: false, // TRS-001 placeholder
+      });
+      expect(item.lot).toEqual({
+        code: lot.code,
+        title: lot.title,
+        coverThumbUrl: 'http://localhost:3001/media/2026/09/cover-thumb.webp',
+        unitPrice: 2_250_000,
+        status: 'ACTIVE',
+      });
+      // Strict payload allowlist — envelope AND item.
+      expect(Object.keys(response.body).sort()).toEqual(['items', 'limit', 'page', 'total'].sort());
+      expect(Object.keys(item).sort()).toEqual(
+        [
+          'counterpart',
+          'id',
+          'isLastMessageSystem',
+          'lastMessageAt',
+          'lastMessagePreview',
+          'lot',
+          'myUnreadCount',
+          'role',
+          'status',
+        ].sort(),
+      );
+    });
+
+    it('mirrors the SAME thread for the seller: role seller, buyer counterpart, SELLER unread count', async () => {
+      const seller = await loginAsSeller();
+      const lot = seedLot(seller.user.id);
+      const buyer = await loginAsBuyer();
+      // Seeded thread with activity: counterpart messages await the seller, none the buyer.
+      const thread = seedThread({
+        lotId: lot.id,
+        buyerId: buyer.user.id,
+        sellerId: seller.user.id,
+        lastMessageAt: new Date(Date.now() - 60_000),
+        lastMessagePreview: 'قیمت برای ۵ ستون چقدر می‌شود؟',
+        buyerUnreadCount: 0,
+        sellerUnreadCount: 4,
+      });
+
+      const buyerView = await getConversations(buyer.token).expect(200);
+      const sellerView = await getConversations(seller.token).expect(200);
+
+      expect(buyerView.body.total).toBe(1);
+      expect(buyerView.body.items[0].role).toBe('buyer');
+      expect(buyerView.body.items[0].myUnreadCount).toBe(0);
+      expect(sellerView.body.total).toBe(1);
+      expect(sellerView.body.items[0].role).toBe('seller');
+      expect(sellerView.body.items[0].myUnreadCount).toBe(4);
+      expect(sellerView.body.items[0].lastMessagePreview).toBe('قیمت برای ۵ ستون چقدر می‌شود؟');
+      expect(sellerView.body.items[0].counterpart.id).toBe(buyer.user.id);
+      expect(sellerView.body.items[0].id).toBe(thread.id);
+    });
+
+    it('orders threads by newest activity first (lastMessageAt desc), across lots', async () => {
+      const seller = await loginAsSeller();
+      const oldest = seedLot(seller.user.id);
+      const newest = seedLot(seller.user.id);
+      const middle = seedLot(seller.user.id);
+      const buyer = await loginAsBuyer();
+      const hourAgo = (hours: number): Date => new Date(Date.now() - hours * 3_600_000);
+      seedThread({
+        lotId: oldest.id,
+        buyerId: buyer.user.id,
+        sellerId: seller.user.id,
+        lastMessageAt: hourAgo(3),
+      });
+      seedThread({
+        lotId: newest.id,
+        buyerId: buyer.user.id,
+        sellerId: seller.user.id,
+        lastMessageAt: hourAgo(1),
+      });
+      seedThread({
+        lotId: middle.id,
+        buyerId: buyer.user.id,
+        sellerId: seller.user.id,
+        lastMessageAt: hourAgo(2),
+      });
+
+      const response = await getConversations(buyer.token).expect(200);
+
+      expect(response.body.items.map((item: { lot: { code: string } }) => item.lot.code)).toEqual([
+        newest.code,
+        middle.code,
+        oldest.code,
+      ]);
+    });
+
+    it('paginates: ?page&limit slice with the full total in the envelope', async () => {
+      const seller = await loginAsSeller();
+      const buyer = await loginAsBuyer();
+      for (let index = 0; index < 3; index += 1) {
+        const lot = seedLot(seller.user.id);
+        seedThread({
+          lotId: lot.id,
+          buyerId: buyer.user.id,
+          sellerId: seller.user.id,
+          lastMessageAt: new Date(Date.now() - (index + 1) * 60_000),
+        });
+      }
+
+      const page2 = await getConversations(buyer.token, '?page=2&limit=2').expect(200);
+
+      expect(page2.body.page).toBe(2);
+      expect(page2.body.limit).toBe(2);
+      expect(page2.body.total).toBe(3);
+      expect(page2.body.items).toHaveLength(1); // the oldest thread alone
+    });
+
+    it('caps the page size at 50 (400 above it — the chat inbox is not a directory)', async () => {
+      const { token } = await loginAsBuyer();
+      await getConversations(token, '?limit=51').expect(400);
+    });
+
+    it('shows a non-participant NOTHING (other people inboxes are invisible)', async () => {
+      const seller = await loginAsSeller();
+      const lot = seedLot(seller.user.id);
+      const buyer = await loginAsBuyer();
+      seedThread({
+        lotId: lot.id,
+        buyerId: buyer.user.id,
+        sellerId: seller.user.id,
+        lastMessageAt: new Date(),
+      });
+      const outsider = await loginAsBuyer();
+
+      const response = await getConversations(outsider.token).expect(200);
+
+      expect(response.body.items).toEqual([]);
+      expect(response.body.total).toBe(0);
+    });
+
+    it('reflects lot status changes (SOLD badge) while the thread itself stays ACTIVE', async () => {
+      const seller = await loginAsSeller();
+      const lot = seedLot(seller.user.id);
+      const buyer = await loginAsBuyer();
+      seedThread({
+        lotId: lot.id,
+        buyerId: buyer.user.id,
+        sellerId: seller.user.id,
+        lastMessageAt: new Date(),
+      });
+      await prisma.lot.update({ where: { id: lot.id }, data: { status: LotStatus.SOLD } });
+
+      const response = await getConversations(buyer.token).expect(200);
+
+      expect(response.body.items[0].lot.status).toBe('SOLD');
+      expect(response.body.items[0].status).toBe('ACTIVE');
+    });
+  });
 });

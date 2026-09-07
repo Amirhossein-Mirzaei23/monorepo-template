@@ -21,6 +21,12 @@ import {
   type ConversationRepositoryRow,
   type ConversationResponseDto,
 } from './dto/conversation-response.dto';
+import {
+  toConversationListItemDto,
+  type ConversationListItemDto,
+  type ConversationListQueryDto,
+} from './dto/conversation-list.dto';
+import type { Paginated } from '../../common/dto/pagination-query.dto';
 import { ConversationsRepository } from './conversations.repository';
 import type { CreateConversationDto } from './dto/create-conversation.dto';
 
@@ -126,6 +132,34 @@ export class ConversationsService {
   }
 
   // --- precondition helpers (order documented in the class doc) ---
+
+  /**
+   * The participant inbox (GET /conversations, CHT-002): every thread where
+   * buyerId = me OR sellerId = me — both hats share the one endpoint, no role
+   * gate (unlike getOrCreate's BUYER requirement: reading your own inbox is
+   * not an action on someone else's lot). One existence check (401 when the
+   * token user is gone — same rule as getOrCreate), then the repository's
+   * 2-query page read; each row maps through the strict allowlist with
+   * role/counterpart/myUnreadCount resolved against the CALLER, so the two
+   * sides of the same thread see mirrored payloads.
+   */
+  async findMine(
+    userId: string,
+    query: ConversationListQueryDto,
+  ): Promise<Paginated<ConversationListItemDto>> {
+    await this.requireUser(userId);
+    const { items, total, page, limit } = await this.repository.findForUser(userId, {
+      page: query.page,
+      limit: query.limit,
+    });
+    const mediaBaseUrl = requireAppConfig(this.config).storage.publicMediaBaseUrl;
+    return {
+      items: items.map((row) => toConversationListItemDto(row, userId, mediaBaseUrl)),
+      total,
+      page,
+      limit,
+    };
+  }
 
   private async requireUser(userId: string): Promise<User> {
     const user = await this.users.findById(userId);

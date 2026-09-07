@@ -225,6 +225,22 @@ type ConversationFindUniqueArgs = {
   where: { id?: string; lotId_buyerId?: { lotId: string; buyerId: string } };
   include?: { lot?: unknown };
 };
+/** Exactly the surface ConversationsRepository composes (CHT-002 list): the
+ * participant-union page read (OR of the two participant arms) + count. */
+type ConversationListWhere = {
+  buyerId?: string;
+  sellerId?: string;
+  OR?: Array<{ buyerId?: string; sellerId?: string }>;
+};
+type ConversationListOrderBy =
+  Record<string, 'asc' | 'desc'> | Array<Record<string, 'asc' | 'desc'>>;
+type ConversationFindManyArgs = {
+  where?: ConversationListWhere;
+  orderBy?: ConversationListOrderBy;
+  skip?: number;
+  take?: number;
+  include?: unknown;
+};
 /** Create payload: required scalars; status/unreads take the DB defaults. */
 type ConversationCreateData = {
   lotId: string;
@@ -238,6 +254,14 @@ type ConversationCreateData = {
 };
 /** A Conversation row as the repository reads produce it (lot + cover joined). */
 type ConversationJoinedRow = Conversation & { lot: LotRowWithMedia };
+/** A Conversation row as the CHT-002 list read produces it: the lot join PLUS
+ * both participant summaries and the latest message (the isLastMessageSystem
+ * flag's source). */
+type ConversationListRow = ConversationJoinedRow & {
+  buyer: { id: string; name: string };
+  seller: { id: string; name: string };
+  messages: Message[];
+};
 
 /** Exactly the surface ConversationsRepository/CHT-001 tests use: welcome-message
  * create + direct row assertions in specs. */
@@ -983,6 +1007,23 @@ export class FakePrisma {
       this.conversations.set(row.id, row);
       return this.withConversationLot(row);
     },
+    /** CHT-002 inbox page: participant-union filter, multi-key orderBy
+     * (lastMessageAt desc, id desc), skip/take — rows always read back with
+     * the full list join (lot/cover + participants + latest message). */
+    findMany: async ({
+      where,
+      orderBy,
+      skip = 0,
+      take,
+    }: ConversationFindManyArgs): Promise<ConversationListRow[]> =>
+      sortRows(
+        [...this.conversations.values()].filter(matchesConversationListWhere(where)),
+        orderBy,
+      )
+        .slice(skip, take !== undefined ? skip + take : undefined)
+        .map((row) => this.withConversationListJoins(row)),
+    count: async ({ where }: { where?: ConversationListWhere } = {}): Promise<number> =>
+      [...this.conversations.values()].filter(matchesConversationListWhere(where)).length,
   };
 
   /** Exactly the surface CHT-001 (welcome message) + spec assertions use. */
@@ -1349,6 +1390,61 @@ export class FakePrisma {
     return cloneLotMedia(row);
   }
 
+  /** Test helper: seeded conversations with controlled lastMessageAt/unreads
+   * (CHT-002 suites — the CHT-001 path only creates via the service). The lot
+   * must be seeded first (the join throws otherwise, mirroring the FK). */
+  seedConversation(
+    conversation: ConversationCreateData & { createdAt?: Date },
+  ): ConversationListRow {
+    const row: Conversation = {
+      id: randomUUID(),
+      lotId: conversation.lotId,
+      buyerId: conversation.buyerId,
+      sellerId: conversation.sellerId,
+      status: conversation.status ?? ConversationStatus.ACTIVE,
+      lastMessageAt: conversation.lastMessageAt,
+      lastMessagePreview: conversation.lastMessagePreview ?? null,
+      buyerUnreadCount: conversation.buyerUnreadCount ?? 0,
+      sellerUnreadCount: conversation.sellerUnreadCount ?? 0,
+      createdAt: conversation.createdAt ?? nowIso(),
+      updatedAt: nowIso(),
+    };
+    this.conversations.set(row.id, row);
+    return this.withConversationListJoins(row);
+  }
+
+  /** Test helper: seeded messages with controlled createdAt/type (CHT-002
+   * system-flag + list-join suites). Seeding does NOT touch the conversation's
+   * lastMessageAt/lastMessagePreview — keeping those in lockstep is the
+   * write-path service's job (CHT-003); tests control both sides explicitly. */
+  seedMessage(message: {
+    conversationId: string;
+    senderId?: string | null;
+    type?: MessageType;
+    body?: string | null;
+    createdAt?: Date;
+  }): Message {
+    const conversation = this.conversations.get(message.conversationId);
+    if (!conversation) {
+      throw new Error(
+        `FakePrisma: message references missing conversation ${message.conversationId}`,
+      );
+    }
+    const row: Message = {
+      id: randomUUID(),
+      conversationId: message.conversationId,
+      senderId: message.senderId ?? null,
+      type: message.type ?? MessageType.TEXT,
+      body: message.body ?? null,
+      mediaAssetId: null,
+      replyToId: null,
+      readAt: null,
+      createdAt: message.createdAt ?? nowIso(),
+    };
+    this.messages.set(row.id, row);
+    return cloneMessage(row);
+  }
+
   /** Lot row with its relations joined (seller summary + gallery sorted by
    * sortOrder + category NAME rows), mirroring the production includes
    * (LOT_MEDIA_INCLUDE / LOT_CARD_INCLUDE / LOT_PUBLIC_DETAIL_INCLUDE).
@@ -1402,6 +1498,29 @@ export class FakePrisma {
     }
     return { ...cloneConversation(row), lot: this.withMedia(lot) };
   }
+
+  /** Participant summary join (the CHT-002 list include's {id, name}). Lenient
+   * by design like LotSellerRow: FK Restrict makes a missing participant
+   * impossible in production; specs may seed bare participant ids. */
+  private conversationSummary(userId: string): { id: string; name: string } {
+    const user = [...this.users.values()].find((candidate) => candidate.id === userId);
+    return { id: userId, name: user?.name ?? '' };
+  }
+
+  /** Conversation row with the full CHT-002 list join: lot/cover + both
+   * participant summaries + the LATEST message (createdAt desc, take 1 — the
+   * isLastMessageSystem flag's source). */
+  private withConversationListJoins(row: Conversation): ConversationListRow {
+    const latest = [...this.messages.values()]
+      .filter((message) => message.conversationId === row.id)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    return {
+      ...this.withConversationLot(row),
+      buyer: this.conversationSummary(row.buyerId),
+      seller: this.conversationSummary(row.sellerId),
+      messages: latest.length > 0 ? [cloneMessage(latest[0] as Message)] : [],
+    };
+  }
 }
 
 function matchesWhere(where: UserWhere | undefined): (user: User) => boolean {
@@ -1444,7 +1563,7 @@ function matchesCategoryWhere(where: CategoryWhere | undefined): (row: Category)
 }
 
 /** Multi-key stable sort (orderBy is a single object or an array of them). */
-function sortRows<T extends Category | User | Lot>(
+function sortRows<T extends Category | User | Lot | Conversation | OtpCode>(
   rows: T[],
   orderBy: Record<string, 'asc' | 'desc'> | Record<string, 'asc' | 'desc'>[] | undefined,
 ): T[] {
@@ -1663,6 +1782,26 @@ function matchesConversationWhere(
     (where?.id === undefined || row.id === where.id) &&
     (where?.lotId_buyerId === undefined ||
       (row.lotId === where.lotId_buyerId.lotId && row.buyerId === where.lotId_buyerId.buyerId));
+}
+
+/** CHT-002 list matcher: the participant union — an arm matches when EVERY
+ * field it carries equals the row (an absent field never matches vacuously). */
+function matchesConversationListWhere(
+  where: ConversationListWhere | undefined,
+): (row: Conversation) => boolean {
+  return (row) => {
+    if (where?.OR !== undefined) {
+      return where.OR.some(
+        (arm) =>
+          (arm.buyerId === undefined || row.buyerId === arm.buyerId) &&
+          (arm.sellerId === undefined || row.sellerId === arm.sellerId),
+      );
+    }
+    return (
+      (where?.buyerId === undefined || row.buyerId === where.buyerId) &&
+      (where?.sellerId === undefined || row.sellerId === where.sellerId)
+    );
+  };
 }
 
 function cloneConversation(row: Conversation): Conversation {

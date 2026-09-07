@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, type Conversation, type Message } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { Paginated } from '../../common/dto/pagination-query.dto';
 
 type Tx = Prisma.TransactionClient | undefined;
 
@@ -26,6 +27,28 @@ export const CONVERSATION_LOT_INCLUDE = {
 /** The get-or-create read/create row shape (Conversation + lot + cover link). */
 export type ConversationWithLot = Prisma.ConversationGetPayload<{
   include: typeof CONVERSATION_LOT_INCLUDE;
+}>;
+
+/**
+ * The inbox page join (CHT-002): the CHT-001 lot arm PLUS both participant
+ * summaries ({id, name} — the mapper resolves the counterpart against the
+ * viewer) PLUS the latest message (type only — the isLastMessageSystem flag's
+ * source). SYSTEM-flag decision (documented on the card): the flag is derived
+ * from the latest-message RELATION instead of a stored lastMessageType column
+ * — no migration, and CHT-003's send transaction keeps
+ * lastMessageAt/lastMessagePreview and the newest message row in lockstep, so
+ * the derived flag can never disagree with the stored preview.
+ */
+export const CONVERSATION_LIST_INCLUDE = {
+  ...CONVERSATION_LOT_INCLUDE,
+  buyer: { select: { id: true, name: true } },
+  seller: { select: { id: true, name: true } },
+  messages: { orderBy: { createdAt: 'desc' as const }, take: 1, select: { type: true } },
+} satisfies Prisma.ConversationInclude;
+
+/** The inbox page row shape (Conversation + lot/cover + participants + latest message). */
+export type ConversationListRepositoryRow = Prisma.ConversationGetPayload<{
+  include: typeof CONVERSATION_LIST_INCLUDE;
 }>;
 
 /**
@@ -70,6 +93,37 @@ export class ConversationsRepository {
     tx: Tx = undefined,
   ): Promise<Message> {
     return this.client(tx).message.create({ data });
+  }
+
+  /**
+   * The participant inbox page (CHT-002): union scope `buyerId = me OR
+   * sellerId = me`, newest-activity first (lastMessageAt desc, id desc as the
+   * deterministic tiebreak — lastMessageAt can tie across threads, and pages
+   * must never duplicate/skip rows). ONE findMany + ONE count (2-query-max per
+   * page); every relation (lot/cover, participants, latest message) rides the
+   * same findMany as batched includes — no N+1. The (buyerId, lastMessageAt) /
+   * (sellerId, lastMessageAt) indexes from CHT-001 cover both scan arms.
+   */
+  async findForUser(
+    userId: string,
+    { page, limit }: { page: number; limit: number },
+    tx: Tx = undefined,
+  ): Promise<Paginated<ConversationListRepositoryRow>> {
+    const where: Prisma.ConversationWhereInput = {
+      OR: [{ buyerId: userId }, { sellerId: userId }],
+    };
+    const client = this.client(tx);
+    const [items, total] = await Promise.all([
+      client.conversation.findMany({
+        where,
+        orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
+        include: CONVERSATION_LIST_INCLUDE,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      client.conversation.count({ where }),
+    ]);
+    return { items, total, page, limit };
   }
 }
 

@@ -27,6 +27,7 @@ import {
 } from '../conversations.constants';
 import { ConversationsRepository } from '../conversations.repository';
 import { ConversationsService } from '../conversations.service';
+import { ConversationListQueryDto } from '../dto/conversation-list.dto';
 
 const MEDIA_BASE_URL = 'http://media.test';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -287,6 +288,173 @@ describe('ConversationsService', () => {
         CONVERSATION_ERROR_CODES.INACTIVE_LOT,
       );
       expect(await fake.message.count({})).toBe(0);
+    });
+  });
+
+  describe('findMine — the participant inbox (CHT-002)', () => {
+    /** Conversation + its welcome SYSTEM message (the CHT-001 write shape). */
+    const seedThread = (overrides: {
+      buyerId: string;
+      sellerId: string;
+      lastMessageAt?: Date;
+      buyerUnreadCount?: number;
+      sellerUnreadCount?: number;
+    }) => {
+      const lot = seedActiveLot(overrides.sellerId);
+      const lastMessageAt = overrides.lastMessageAt ?? new Date('2026-09-01T10:00:00.000Z');
+      const conversation = fake.seedConversation({
+        lotId: lot.id,
+        buyerId: overrides.buyerId,
+        sellerId: overrides.sellerId,
+        lastMessageAt,
+        lastMessagePreview: 'گفتگو درباره: عمده پیراهن مردانه — ۲٬۲۵۰٬۰۰۰ تومان',
+        buyerUnreadCount: overrides.buyerUnreadCount,
+        sellerUnreadCount: overrides.sellerUnreadCount,
+      });
+      fake.seedMessage({
+        conversationId: conversation.id,
+        senderId: null,
+        type: MessageType.SYSTEM,
+        body: 'گفتگو درباره: عمده پیراهن مردانه — ۲٬۲۵۰٬۰۰۰ تومان',
+        createdAt: lastMessageAt,
+      });
+      return { lot, conversation };
+    };
+
+    it('rejects a token user that no longer exists (401) before any read', async () => {
+      await expect(
+        service.findMine('ghost-id', new ConversationListQueryDto()),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(await fake.conversation.count({})).toBe(0);
+    });
+
+    it('maps the BUYER side: role buyer, my unread = buyerUnreadCount, counterpart = seller, system flag true', async () => {
+      const { lot, conversation } = seedThread({ buyerId, sellerId, buyerUnreadCount: 3 });
+
+      const page = await service.findMine(buyerId, new ConversationListQueryDto());
+
+      expect(page.total).toBe(1);
+      const item = page.items[0];
+      expect(item?.id).toBe(conversation.id);
+      expect(item?.role).toBe('buyer');
+      expect(item?.myUnreadCount).toBe(3);
+      expect(item?.status).toBe(ConversationStatus.ACTIVE);
+      expect(item?.lastMessagePreview).toBe('گفتگو درباره: عمده پیراهن مردانه — ۲٬۲۵۰٬۰۰۰ تومان');
+      expect(item?.isLastMessageSystem).toBe(true); // welcome message is the newest
+      expect(item?.counterpart).toEqual({
+        id: sellerId,
+        name: 'فروشنده',
+        avatarUrl: null, // TRS/MEDIA placeholder
+        verified: false, // TRS-001 placeholder
+      });
+      expect(item?.lot).toEqual({
+        code: lot.code,
+        title: lot.title,
+        coverThumbUrl: null,
+        unitPrice: 2_250_000,
+        status: LotStatus.ACTIVE,
+      });
+    });
+
+    it('maps the SELLER side of the SAME thread mirrored: role seller, counterpart = buyer, seller unread', async () => {
+      seedThread({ buyerId, sellerId, sellerUnreadCount: 5 });
+
+      const page = await service.findMine(sellerId, new ConversationListQueryDto());
+
+      const item = page.items[0];
+      expect(item?.role).toBe('seller');
+      expect(item?.myUnreadCount).toBe(5);
+      expect(item?.counterpart).toEqual({
+        id: buyerId,
+        name: 'خریدار',
+        avatarUrl: null,
+        verified: false,
+      });
+    });
+
+    it('flips the system flag OFF once the newest message is a user TEXT (preview + latest stay in lockstep)', async () => {
+      const lastMessageAt = new Date('2026-09-01T11:00:00.000Z');
+      const { conversation } = seedThread({ buyerId, sellerId, lastMessageAt });
+      fake.seedMessage({
+        conversationId: conversation.id,
+        senderId: buyerId,
+        type: MessageType.TEXT,
+        body: 'قیمت برای ۵ ستون چقدر می‌شود؟',
+        createdAt: new Date(lastMessageAt.getTime() + 3_600_000), // one hour AFTER the welcome
+      });
+      // Note: the stored lastMessagePreview is only moved by the write path
+      // (CHT-003's send transaction); the flag itself derives from the latest
+      // MESSAGE row, which is what this thread now has as a TEXT.
+
+      const page = await service.findMine(buyerId, new ConversationListQueryDto());
+      expect(page.items[0]?.isLastMessageSystem).toBe(false);
+    });
+
+    it('orders by lastMessageAt desc across both roles and resolves the cover thumb', async () => {
+      const otherSellerId = fake.seedUser({
+        phone: '09124440000',
+        name: 'فروشنده دیگر',
+        accountRoles: [AccountRole.SELLER],
+      }).id;
+      const older = seedThread({
+        buyerId,
+        sellerId,
+        lastMessageAt: new Date('2026-09-01T09:00:00.000Z'),
+      });
+      const newer = seedThread({
+        buyerId,
+        sellerId: otherSellerId,
+        lastMessageAt: new Date('2026-09-01T12:00:00.000Z'),
+      });
+      const asset = fake.seedMediaAsset({
+        ownerId: otherSellerId,
+        type: MediaType.IMAGE,
+        mime: 'image/jpeg',
+        sizeBytes: 10,
+        storageKey: '2026/09/original.jpg',
+        thumbKey: '2026/09/thumb.webp',
+      });
+      fake.seedLotMedia({
+        lotId: newer.lot.id,
+        mediaAssetId: asset.id,
+        sortOrder: 0,
+        isCover: true,
+      });
+
+      const page = await service.findMine(buyerId, new ConversationListQueryDto());
+
+      expect(page.items.map((item) => item.id)).toEqual([
+        newer.conversation.id,
+        older.conversation.id,
+      ]);
+      expect(page.items[0]?.lot.coverThumbUrl).toBe(`${MEDIA_BASE_URL}/2026/09/thumb.webp`);
+    });
+
+    it('exposes EXACTLY the contracted list-item keys (no raw participant ids, no counterpart unread)', async () => {
+      seedThread({ buyerId, sellerId, buyerUnreadCount: 1, sellerUnreadCount: 2 });
+
+      const page = await service.findMine(buyerId, new ConversationListQueryDto());
+      const item = page.items[0];
+
+      expect(Object.keys(item ?? {}).sort()).toEqual(
+        [
+          'counterpart',
+          'id',
+          'isLastMessageSystem',
+          'lastMessageAt',
+          'lastMessagePreview',
+          'lot',
+          'myUnreadCount',
+          'role',
+          'status',
+        ].sort(),
+      );
+      expect(Object.keys(item?.lot ?? {}).sort()).toEqual(
+        ['code', 'coverThumbUrl', 'status', 'title', 'unitPrice'].sort(),
+      );
+      expect(Object.keys(item?.counterpart ?? {}).sort()).toEqual(
+        ['avatarUrl', 'id', 'name', 'verified'].sort(),
+      );
     });
   });
 

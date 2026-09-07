@@ -25,7 +25,7 @@ media pipeline (secure serving).
 - **Testing:** service unit (idempotent create, guards), controller e2e.
 - **DoD:** suites green.
 
-### CHT-002 — Conversations list API
+### CHT-002 ✅ — Conversations list API
 
 **P0 · Phase 5 · Chat · M** — Deps: CHT-001
 

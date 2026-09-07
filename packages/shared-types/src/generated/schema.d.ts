@@ -578,7 +578,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List the authenticated participant's conversations (buyer OR seller side) — newest activity first, page size capped at 50 */
+        get: operations["ConversationsController_list"];
         put?: never;
         /** Get-or-create the authenticated buyer's conversation about a lot (403 self/non-buyer, 404 unknown lot, 409 inactive lot) */
         post: operations["ConversationsController_create"];
@@ -2947,6 +2948,29 @@ export interface operations {
                 content: {
                     "application/json": string;
                 };
+            };
+        };
+    };
+    ConversationsController_list: {
+        parameters: {
+            query?: {
+                page?: components["schemas"]["Object"];
+                /** @description Page size — capped at 50 for the chat inbox */
+                limit?: components["schemas"]["Object"];
+                sort?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated<ConversationListItemDto>: { items, total, page, limit } — newest activity (lastMessageAt desc) first; each item carries the lot context, the counterpart (avatar/verified placeholders), the ≤ 80-char preview with its system flag and MY unread count + role */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
