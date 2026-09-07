@@ -18,6 +18,7 @@ import { LotContextHeader } from './lot-context-header';
 import { MediaBubble } from './media-bubble';
 import { MediaBubblePending } from './media-bubble-pending';
 import { MessageBubble } from './message-bubble';
+import { QuickActions } from './quick-actions';
 
 /**
  * CHT-006 — the /chat/:id thread body: lot-context header + message list +
@@ -36,6 +37,11 @@ import { MessageBubble } from './message-bubble';
  * renders IMAGE/VIDEO server rows through MediaBubble (authed fetch → blob
  * URL), and in-flight upload tiles sit with the optimistic sends at the
  * bottom.
+ *
+ * CHT-008 — quick-action chips sit above the composer (role-scoped set;
+ * collapsed to a «…» overflow once MY first message exists). Rendered only
+ * after the history loads — the collapse rule reads the committed rows — and
+ * only when the conversation role is known (chips are role-scoped).
  *
  * Scroll management (the card's "without jump" acceptance):
  * - first load snaps to the newest message instantly;
@@ -281,6 +287,15 @@ export function ChatThread({ conversationId }: { conversationId: string }) {
             بستن
           </button>
         </p>
+      ) : null}
+
+      {!thread.isLoading && context.conversation ? (
+        <QuickActions
+          role={context.conversation.role}
+          messages={thread.messages}
+          myId={myId}
+          onSend={send.send}
+        />
       ) : null}
 
       <Composer

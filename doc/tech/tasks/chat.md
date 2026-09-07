@@ -131,7 +131,7 @@ media pipeline (secure serving).
 - **Testing:** e2e secure-serve authz; component tests for bubble states.
 - **DoD:** suites green.
 
-### CHT-008 — Quick actions in chat
+### CHT-008 ✅ — Quick actions in chat
 
 **P0 · Phase 5 · Chat · S** — Deps: CHT-006, OFR-004 (offer deep-link)
 
@@ -146,6 +146,13 @@ media pipeline (secure serving).
 - **Acceptance:** tap → message sent instantly; offer chip opens pre-filled offer sheet.
 - **Testing:** component test.
 - **DoD:** suites green.
+
+> Implemented (Phase 5): chips send the fa templates as TEXT via the CHT-006
+> optimistic flow; buyer set = قیمت بپرس / عکس بیشتری بفرست / ویدیو بفرست /
+> هماهنگی بازدید, seller set = ارسال عکس بیشتر (promise) / هماهنگی بازدید.
+> The «پیشنهاد قیمت» chip is HIDDEN until OFR-004 (Phase 6) — it must open the
+> offer sheet, not send text; re-add it with sheet-opening behavior then.
+> `MessageType.ACTION` stays reserved for future structured payloads.
 
 ### CHT-009 — Block user & report conversation
 

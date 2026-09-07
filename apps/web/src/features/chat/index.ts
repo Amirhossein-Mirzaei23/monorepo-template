@@ -75,3 +75,11 @@ export {
   useConversationContext,
   type ConversationContextState,
 } from './hooks/use-conversation-context';
+// --- CHT-008 quick actions ---
+export {
+  QuickActions,
+  QUICK_ACTIONS_BY_ROLE,
+  hasOwnUserMessage,
+  type QuickAction,
+  type QuickActionsProps,
+} from './components/quick-actions';

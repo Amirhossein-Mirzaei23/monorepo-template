@@ -2,7 +2,8 @@
 
 CHT-004 scope: the realtime transport (socket singleton + hook). CHT-005 added
 the inbox (data + UI); CHT-006 added the thread surface under
-`app/(app)/chat/[id]` (bubbles, composer, lot-context header, optimistic send).
+`app/(app)/chat/[id]` (bubbles, composer, lot-context header, optimistic send);
+CHT-008 added the role-scoped quick-action chips above the composer.
 
 ## Layout
 
@@ -26,6 +27,7 @@ features/chat/
 ├── components/message-bubble.tsx   # CHT-006 bubbles (own/other/system pill, ticks, failed retry)
 ├── components/composer.tsx         # CHT-006 auto-grow textarea, Enter-to-send, validation
 ├── components/lot-context-header.tsx # CHT-006 pinned lot header + «مشاهده لات» link
+├── components/quick-actions.tsx    # CHT-008 role-scoped quick-action chips + fa templates
 ├── testing/fixtures.ts      # contract-exact fixtures shared by the suites
 └── __tests__/               # hook tests (fake socket, fake timers) + component tests
 ```
