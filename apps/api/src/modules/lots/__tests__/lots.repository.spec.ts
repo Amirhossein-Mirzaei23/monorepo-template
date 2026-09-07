@@ -9,8 +9,13 @@ import {
 } from '@prisma/client';
 import type { PrismaService } from '../../../prisma/prisma.service';
 import { FakePrisma } from '../../../test/fakes/fake-prisma';
-import { generateLotCode } from '../lots.constants';
-import { LotsRepository, LOT_CARD_INCLUDE } from '../lots.repository';
+import { FA_QUERY_REPLACEMENTS, LOT_SEARCH_SQL_MARKER, generateLotCode } from '../lots.constants';
+import {
+  buildLotSearchSql,
+  escapeLikePattern,
+  LotsRepository,
+  LOT_CARD_INCLUDE,
+} from '../lots.repository';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BASE_TIME = new Date('2026-09-01T10:00:00.000Z');
@@ -315,6 +320,198 @@ describe('LotsRepository', () => {
       });
 
       expect(result.items.map((lot) => lot.title)).toEqual(['iphone karaj']);
+    });
+
+    // --- MKT-003 search (normalized fa matching + relevance) ---
+
+    it('finds «تی‌شرت مردانه» with the ZWNJ-free query «تیشرت» and vice versa (MKT-003)', async () => {
+      seedLot({ title: 'تی‌شرت مردانه' });
+      seedLot({ title: 'شلاغ بی‌ربط' });
+
+      const withoutZwnj = await repository.findPublic({ filters: { query: 'تیشرت' } });
+      const withZwnj = await repository.findPublic({ filters: { query: 'تی‌شرت' } });
+
+      expect(withoutZwnj.items.map((lot) => lot.title)).toEqual(['تی‌شرت مردانه']);
+      expect(withZwnj.items.map((lot) => lot.title)).toEqual(['تی‌شرت مردانه']);
+    });
+
+    it('normalizes STORED text too: Arabic ي/ك in the title matches Persian query chars', async () => {
+      seedLot({ title: 'كفش ورزشي اصلي' }); // Arabic keyboard output
+      seedLot({ title: 'ساک بی‌ربط' });
+
+      const result = await repository.findPublic({ filters: { query: 'کفش ورزشی' } });
+
+      expect(result.items.map((lot) => lot.title)).toEqual(['كفش ورزشي اصلي']);
+    });
+
+    it('normalizes fa digits on BOTH sides: «۵۰» finds a title written with Latin digits', async () => {
+      seedLot({ title: 'پیراهن 50 عددی' });
+      seedLot({ title: 'شلوار 100 عددی' });
+
+      const result = await repository.findPublic({ filters: { query: 'پیراهن ۵۰' } });
+      const reverse = await repository.findPublic({ filters: { query: 'پیراهن 50' } });
+
+      expect(result.items.map((lot) => lot.title)).toEqual(['پیراهن 50 عددی']);
+      expect(reverse.items.map((lot) => lot.title)).toEqual(['پیراهن 50 عددی']);
+    });
+
+    it('matches the seller profile businessName (relation arm) — not lots of profile-less sellers', async () => {
+      const seller = fake.seedUser({ phone: '09361112233', name: 'مینا' });
+      fake.seedProfile({
+        userId: seller.id,
+        displayName: 'مینا',
+        businessName: 'تولیدی تیشرت مینا',
+      });
+      seedLot({ sellerId: seller.id, title: 'لات بی‌کلیدواژه' });
+      seedLot({ title: 'لات فروشنده دیگر' });
+
+      const result = await repository.findPublic({ filters: { query: 'تیشرت مینا' } });
+
+      expect(result.items.map((lot) => lot.title)).toEqual(['لات بی‌کلیدواژه']);
+    });
+
+    it('matches category nameFa and subcategory nameFa (the lot text itself is clean)', async () => {
+      const parent = fake.seedCategory({ nameFa: 'کفش ورزشی', slug: 'mkt3-sport', sortOrder: 1 });
+      const sub = fake.seedCategory({
+        nameFa: 'تی‌شرت مردانه',
+        slug: 'mkt3-tshirt',
+        parentId: parent.id,
+        sortOrder: 1,
+      });
+      seedLot({ categoryId: parent.id, title: 'لات بی‌نام' });
+      seedLot({ subcategoryId: sub.id, title: 'لات دیگر' });
+      seedLot({ title: 'لات خارج از دسته' });
+
+      const byParentName = await repository.findPublic({ filters: { query: 'ورزشی' } });
+      const bySubName = await repository.findPublic({ filters: { query: 'تیشرت' } });
+
+      expect(byParentName.items.map((lot) => lot.title)).toEqual(['لات بی‌نام']);
+      expect(bySubName.items.map((lot) => lot.title)).toEqual(['لات دیگر']);
+    });
+
+    it('matches the city slug raw (ASCII slugs need no normalization)', async () => {
+      seedLot({ title: 'لات قزوین', city: 'qazvin', province: 'qazvin' });
+      seedLot({ title: 'لات تهران' });
+
+      const result = await repository.findPublic({ filters: { query: 'qazvin' } });
+
+      expect(result.items.map((lot) => lot.title)).toEqual(['لات قزوین']);
+    });
+
+    it('treats LIKE wildcards in q literally (no regex/pattern semantics)', async () => {
+      seedLot({ title: 'پیراهن ابریشم' });
+      seedLot({ title: 'مدل a_b کلاسیک' });
+
+      const percent = await repository.findPublic({ filters: { query: 'ابر%' } });
+      const underscore = await repository.findPublic({ filters: { query: 'a_b' } });
+      const underscoreMiss = await repository.findPublic({ filters: { query: 'aXb' } });
+
+      expect(percent.items).toEqual([]);
+      expect(underscore.items.map((lot) => lot.title)).toEqual(['مدل a_b کلاسیک']);
+      expect(underscoreMiss.items).toEqual([]);
+    });
+
+    it('returns an empty page for a query matching nothing', async () => {
+      seedLot({ title: 'کفش ورزشی' });
+
+      const result = await repository.findPublic({ filters: { query: 'قلم‌جو' } });
+
+      expect(result.items).toEqual([]);
+      expect(result.total).toBe(0);
+    });
+
+    it('orders relevance first (title prefix) then recency when NO explicit sort is given', async () => {
+      seedLot({
+        title: 'تیشرت آراسته', // prefix hit, OLDEST
+        createdAt: new Date(BASE_TIME.getTime() - 3 * DAY_MS),
+      });
+      seedLot({
+        title: 'مجموعه پوشاک',
+        description: 'تیشرت تن‌پوش ارزان', // contains hit, NEWEST
+        createdAt: new Date(BASE_TIME.getTime() - 1 * DAY_MS),
+      });
+      seedLot({
+        title: 'جین کلاسیک',
+        description: 'فروش تیشرت عمده', // contains hit, middle
+        createdAt: new Date(BASE_TIME.getTime() - 2 * DAY_MS),
+      });
+
+      const result = await repository.findPublic({ filters: { query: 'تیشرت' } });
+
+      expect(result.items.map((lot) => lot.title)).toEqual([
+        'تیشرت آراسته',
+        'مجموعه پوشاک',
+        'جین کلاسیک',
+      ]);
+    });
+
+    it('honors an EXPLICIT sort over relevance (card: relevance is default-only)', async () => {
+      seedLot({
+        title: 'تیشرت آراسته',
+        unitPrice: 900_000,
+        createdAt: new Date(BASE_TIME.getTime() - 3 * DAY_MS),
+      });
+      seedLot({
+        title: 'مجموعه پوشاک',
+        description: 'تیشرت ارزان',
+        unitPrice: 100_000,
+        createdAt: new Date(BASE_TIME.getTime() - 1 * DAY_MS),
+      });
+
+      const result = await repository.findPublic({
+        filters: { query: 'تیشرت' },
+        sort: 'priceAsc',
+      });
+
+      expect(result.items.map((lot) => lot.title)).toEqual(['مجموعه پوشاک', 'تیشرت آراسته']);
+    });
+
+    it('composes search with filters and reports the FILTERED total; pages slice the relevance order', async () => {
+      const inCity = (n: number, createdAt: Date): void => {
+        seedLot({ title: `کفش ورزشی ${n}`, city: 'qazvin', province: 'qazvin', createdAt });
+      };
+      inCity(1, new Date(BASE_TIME.getTime() - 1 * DAY_MS));
+      inCity(2, new Date(BASE_TIME.getTime() - 2 * DAY_MS));
+      seedLot({
+        title: 'کفش ورزشی 3',
+        city: 'shiraz',
+        province: 'fars',
+        createdAt: new Date(BASE_TIME.getTime() - DAY_MS),
+      });
+
+      const page1 = await repository.findPublic({
+        filters: { query: 'ورزشی', city: 'qazvin' },
+        page: 1,
+        limit: 2,
+      });
+      const page2 = await repository.findPublic({
+        filters: { query: 'ورزشی', city: 'qazvin' },
+        page: 2,
+        limit: 2,
+      });
+
+      expect(page1.total).toBe(2);
+      expect(page1.items.map((lot) => lot.title)).toEqual(['کفش ورزشی 1', 'کفش ورزشی 2']);
+      expect(page2.items).toEqual([]);
+    });
+
+    it('still applies the card include on both search paths (explicit sort + relevance)', async () => {
+      seedLot({ title: 'تیشرت اول' });
+      seedLot({ title: 'تیشرت دوم' });
+
+      const findManySpy = jest.spyOn(fake.lot, 'findMany');
+      await repository.findPublic({ filters: { query: 'تیشرت' }, sort: 'priceAsc' });
+      await repository.findPublic({ filters: { query: 'تیشرت' } });
+
+      // The relevance path also issues a bare select({id}) page-resolution
+      // call — every CARD fetch must still request exactly the card include.
+      const cardFetches = findManySpy.mock.calls.filter(
+        (call) => (call[0] as { include?: unknown } | undefined)?.include !== undefined,
+      );
+      expect(cardFetches.length).toBeGreaterThanOrEqual(2);
+      for (const call of cardFetches) {
+        expect((call[0] as { include: unknown }).include).toEqual(LOT_CARD_INCLUDE);
+      }
     });
 
     it('sorts by newest (createdAt desc) by default', async () => {
@@ -651,6 +848,58 @@ describe('LotsRepository', () => {
       expect(count).toBe(0);
       expect(await fake.lot.count()).toBe(0);
     });
+  });
+});
+
+describe('escapeLikePattern', () => {
+  it('escapes backslash, percent and underscore; leaves everything else', () => {
+    expect(escapeLikePattern('تیشرت')).toBe('تیشرت');
+    expect(escapeLikePattern('a%b_c')).toBe('a\\%b\\_c');
+    expect(escapeLikePattern('a\\b')).toBe('a\\\\b');
+  });
+});
+
+/**
+ * MKT-003 — the raw search prequery is the one piece the FakePrisma cannot
+ * execute literally, so its emulation leans on a pinned CONTRACT: values[0..2]
+ * are [now, containsPattern, prefixPattern] (bound via the scalar CTE) and the
+ * SQL text carries the marker + one replace() pair per shared-table entry per
+ * normalized arm. These tests fail loudly if the SQL shape drifts out from
+ * under the fake.
+ */
+describe('buildLotSearchSql contract', () => {
+  it('binds [now, contains, prefix] as the first three values with escaped wildcards', () => {
+    const now = new Date(BASE_TIME);
+    const sql = buildLotSearchSql(now, 'تی%ش_رت\\');
+
+    expect(sql.values[0]).toBe(now);
+    expect(sql.values[1]).toBe('%تی\\%ش\\_رت\\\\%');
+    expect(sql.values[2]).toBe('تی\\%ش\\_رت\\\\%');
+    expect(sql.text).toContain(LOT_SEARCH_SQL_MARKER);
+  });
+
+  it('mirrors the JS normalizer: one replace() pair per FA_QUERY_REPLACEMENTS entry per normalized arm', () => {
+    const sql = buildLotSearchSql(new Date(BASE_TIME), 'تیشرت');
+    const replacePairs = (sql.text.match(/replace\(/g) ?? []).length;
+    // Six normalized expressions: title, description, businessName, category
+    // nameFa, subcategory nameFa — plus the titlePrefix relevance flag.
+    expect(replacePairs).toBe(FA_QUERY_REPLACEMENTS.length * 6);
+  });
+
+  it('covers every search arm (text, businessName, category names, city slug) and relevance order', () => {
+    const sql = buildLotSearchSql(new Date(BASE_TIME), 'تیشرت');
+
+    expect(sql.text).toContain('LEFT JOIN "Profile"');
+    expect(sql.text).toContain('JOIN "Category" c');
+    expect(sql.text).toContain('LEFT JOIN "Category" s');
+    expect(sql.text).toContain('p."businessName"');
+    expect(sql.text).toContain('c."nameFa"');
+    expect(sql.text).toContain('s."nameFa"');
+    expect(sql.text).toContain('l."city"');
+    expect(sql.text).toContain(`l."status" = 'ACTIVE'`);
+    expect(sql.text).toContain('l."expiresAt" >');
+    expect(sql.text).toContain('l."deletedAt" IS NULL');
+    expect(sql.text).toContain('ORDER BY "titlePrefix" DESC, l."createdAt" DESC, l."id" ASC');
   });
 });
 

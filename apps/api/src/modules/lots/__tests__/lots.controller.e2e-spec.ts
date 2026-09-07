@@ -32,6 +32,11 @@ const soonExpiry = (): Date => new Date(Date.now() + 2 * DAY_MS);
  * invalid enum members and out-of-bounds numbers are 400, inverted bounds are
  * ignored-safe (200, empty), and `verifiedSeller` is rejected (deferred to
  * TRS-001).
+ * MKT-003: the `q` search param — «تیشرت» finds «تی‌شرت» (ZWNJ/digit/char
+ * normalization on both sides), businessName and category-nameFa relation
+ * arms, search+filter+sort composition, relevance (title-prefix first) on the
+ * default sort with explicit sort overriding, honest empty pages, and the
+ * length bounds (400, SEARCH_QUERY_TOO_SHORT below 2 chars).
  */
 describe('LotsController (e2e)', () => {
   let app: INestApplication;
@@ -951,6 +956,194 @@ describe('LotsController (e2e)', () => {
       const response = await getLots(queryString).expect(400);
       // ApiErrorBody carries the exception class name in `error`.
       expect(response.body.error).toBe('BadRequestException');
+    });
+  });
+
+  // ==========================================================================
+  // MKT-003 — public search: GET /lots?q=… (normalized fa matching, relevance,
+  // composition with filters/sort, validation bounds)
+  // ==========================================================================
+
+  describe('GET /lots search (MKT-003)', () => {
+    let searchSeller: { token: string; userId: string };
+    let brandSeller: { token: string; userId: string };
+    let searchCategory: { id: string };
+    let searchSub: { id: string };
+
+    /** Every public GET gets its own per-IP throttle bucket. */
+    const searchLots = (query: string) =>
+      request(app.getHttpServer()).get(`/lots?${query}`).set('X-Forwarded-For', nextIp());
+
+    /** ACTIVE fixture; marker values the other suites never use. */
+    const seedSearchLot = (
+      overrides: Partial<Parameters<FakePrisma['seedLot']>[0]> = {},
+    ): { id: string } => {
+      const lot = prisma.seedLot({
+        sellerId: searchSeller.userId,
+        categoryId: searchCategory.id,
+        title: 'لات جستجو',
+        quantity: 10,
+        availableQuantity: 10,
+        minOrderQuantity: 1,
+        pricingType: PricingType.FIXED,
+        totalPrice: 10_000_000,
+        unitPrice: 100_000,
+        condition: LotCondition.GRADE_A,
+        liquidationReason: LiquidationReason.OVERSTOCK,
+        province: 'qazvin',
+        city: 'qazvin',
+        status: LotStatus.ACTIVE,
+        publishedAt: new Date(),
+        expiresAt: new Date(Date.now() + 30 * DAY_MS),
+        ...overrides,
+      });
+      return { id: lot.id };
+    };
+
+    beforeAll(async () => {
+      searchSeller = await loginAsSeller();
+      brandSeller = await loginAsSeller();
+      // One seller carries a businessName containing the shared keyword —
+      // their lots are findable through the RELATION arm alone.
+      prisma.seedProfile({
+        userId: brandSeller.userId,
+        displayName: 'برند',
+        businessName: 'فروشگاه تیشرت پارس',
+      });
+      searchCategory = prisma.seedCategory({
+        nameFa: 'پوشاک جستجو',
+        slug: 'mkt3-parent',
+        sortOrder: 95,
+      });
+      searchSub = prisma.seedCategory({
+        nameFa: 'تی‌شرت فرزند',
+        slug: 'mkt3-child',
+        parentId: searchCategory.id,
+        sortOrder: 1,
+      });
+    });
+
+    it('finds «تی‌شرت مردانه» with the ZWNJ-free query «تیشرت» (the card acceptance)', async () => {
+      const zwnj = seedSearchLot({ title: 'تی‌شرت مردانه' });
+      seedSearchLot({ title: 'مجموعه بی‌ربط' });
+
+      const response = await searchLots(`q=${encodeURIComponent('تیشرت')}`).expect(200);
+
+      const ids = response.body.items.map((lot: { id: string }) => lot.id);
+      expect(ids).toContain(zwnj.id);
+      // The normalizer is symmetric — the ZWNJ'd query finds it too.
+      const zwnjQuery = await searchLots(`q=${encodeURIComponent('تی‌شرت')}`).expect(200);
+      expect(zwnjQuery.body.items.map((lot: { id: string }) => lot.id)).toContain(zwnj.id);
+    });
+
+    it('finds lots through the seller businessName relation (lot text is clean)', async () => {
+      const branded = seedSearchLot({
+        sellerId: brandSeller.userId,
+        title: 'لات بی‌کلیدواژه',
+        description: 'توضیح بدون کلیدواژه',
+      });
+      const plain = seedSearchLot({ title: 'لات فروشنده دیگر' });
+
+      const response = await searchLots(`q=${encodeURIComponent('تیشرت پارس')}`).expect(200);
+
+      const ids = response.body.items.map((lot: { id: string }) => lot.id);
+      expect(ids).toContain(branded.id);
+      expect(ids).not.toContain(plain.id);
+    });
+
+    it('finds lots through the category / subcategory Persian names', async () => {
+      const inCategory = seedSearchLot({ title: 'لات دسته‌ای' });
+      const inSub = seedSearchLot({
+        subcategoryId: searchSub.id,
+        title: 'لات زیر‌دسته‌ای',
+      });
+
+      const byParent = await searchLots(`q=${encodeURIComponent('پوشاک جستجو')}`).expect(200);
+      expect(byParent.body.items.map((lot: { id: string }) => lot.id)).toContain(inCategory.id);
+
+      const bySub = await searchLots(`q=${encodeURIComponent('تیشرت')}`).expect(200);
+      expect(bySub.body.items.map((lot: { id: string }) => lot.id)).toContain(inSub.id);
+    });
+
+    it('composes with filters AND an explicit sort (search + city + priceAsc)', async () => {
+      const cheap = seedSearchLot({
+        title: 'تی‌شرت ساده',
+        city: 'qazvin',
+        unitPrice: 300_000,
+        totalPrice: 15_000_000,
+      });
+      const pricey = seedSearchLot({
+        title: 'تی‌شرت درجه‌یک',
+        city: 'qazvin',
+        unitPrice: 900_000,
+        totalPrice: 45_000_000,
+      });
+      const otherCity = seedSearchLot({
+        title: 'تیشرت شهرستان',
+        city: 'shiraz',
+        province: 'fars',
+      });
+
+      const response = await searchLots(
+        `q=${encodeURIComponent('تیشرت')}&city=qazvin&sort=priceAsc`,
+      ).expect(200);
+
+      const cards = response.body.items as Array<{ id: string; unitPrice: number }>;
+      const ids = cards.map((lot) => lot.id);
+      expect(ids).toContain(cheap.id);
+      expect(ids).toContain(pricey.id);
+      expect(ids).not.toContain(otherCity.id);
+      for (let i = 1; i < cards.length; i += 1) {
+        expect(cards[i]!.unitPrice).toBeGreaterThanOrEqual(cards[i - 1]!.unitPrice);
+      }
+    });
+
+    it('puts exact-title-prefix matches first on the DEFAULT sort (relevance), explicit sort overrides', async () => {
+      const prefix = seedSearchLot({
+        title: 'تیشرت آراسته', // prefix hit — but the OLDEST seed
+        createdAt: new Date(Date.now() - 3 * DAY_MS),
+      });
+      const descriptionOnly = seedSearchLot({
+        title: 'مجموعه پوشاک',
+        description: 'فروش تیشرت عمده', // contains hit — NEWER
+        createdAt: new Date(Date.now() - 1 * DAY_MS),
+      });
+
+      const byRelevance = await searchLots(`q=${encodeURIComponent('تیشرت')}`).expect(200);
+      const relevanceIds = byRelevance.body.items.map((lot: { id: string }) => lot.id);
+      expect(relevanceIds).toContain(prefix.id);
+      expect(relevanceIds).toContain(descriptionOnly.id);
+      expect(relevanceIds.indexOf(prefix.id)).toBeLessThan(
+        relevanceIds.indexOf(descriptionOnly.id),
+      );
+
+      const byNewest = await searchLots(`q=${encodeURIComponent('تیشرت')}&sort=createdAt`).expect(
+        200,
+      );
+      const newestIds = byNewest.body.items.map((lot: { id: string }) => lot.id);
+      expect(newestIds.indexOf(descriptionOnly.id)).toBeLessThan(newestIds.indexOf(prefix.id));
+    });
+
+    it('returns an honest empty page for a query matching nothing', async () => {
+      seedSearchLot({ title: 'کفش ورزشی' });
+
+      const response = await searchLots(`q=${encodeURIComponent('زیب‌ناموجودکلن')}`).expect(200);
+
+      expect(response.body.items).toEqual([]);
+      expect(response.body.total).toBe(0);
+    });
+
+    it('400 SEARCH_QUERY_TOO_SHORT for q below 2 characters (incl. ZWNJ-only)', async () => {
+      const short = await searchLots(`q=${encodeURIComponent('ا')}`).expect(400);
+      expect(short.body.code).toBe('SEARCH_QUERY_TOO_SHORT');
+
+      // Two ZWNJs pass the length check but normalize to nothing — same code.
+      const zwnjOnly = await searchLots(`q=${encodeURIComponent('‌‌')}`).expect(400);
+      expect(zwnjOnly.body.code).toBe('SEARCH_QUERY_TOO_SHORT');
+    });
+
+    it('400 for q above 100 characters', async () => {
+      await searchLots(`q=${encodeURIComponent('ا'.repeat(101))}`).expect(400);
     });
   });
 

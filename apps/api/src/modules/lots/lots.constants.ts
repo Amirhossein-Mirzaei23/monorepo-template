@@ -146,6 +146,77 @@ export const LOT_LISTED_WITHIN_DAYS: Record<LotListedWithin, number> = {
 };
 
 /**
+ * MKT-003 — free-text search (`q` on GET /lots) bounds. The DTO enforces the
+ * upper bound mechanically (trim + MaxLength); the service enforces the lower
+ * bound as a business rule so the 400 can carry the SEARCH_QUERY_TOO_SHORT
+ * code (the card's fa copy «جستجو حداقل ۲ کاراکتر» is web-side — the API
+ * returns machine messages + codes).
+ */
+export const SEARCH_QUERY_MIN_LENGTH = 2;
+export const SEARCH_QUERY_MAX_LENGTH = 100;
+
+/**
+ * MKT-003 — the ONE source of truth for Persian text normalization, consumed
+ * by BOTH matching sides so they cannot drift:
+ *
+ * - JS side: `normalizeFaQuery()` below (the query string, and the FakePrisma's
+ *   emulation of the stored columns in tests).
+ * - SQL side: LotsRepository builds its nested replace() chain by iterating
+ *   THIS table, so a pair added here automatically lands in the SQL too.
+ *
+ * Pairs (card: «ي→ی», «ك→ک», fa digits, ZWNJ removal for matching):
+ * - Persian digits ۰-۹ (U+06F0-06F9) → ASCII 0-9 — «پیراهن ۵۰» must match a
+ *   title written with Latin digits.
+ * - Arabic yeh ي (U+064A) → Persian yeh ی (U+06CC) and Arabic kaf ك (U+0643)
+ *   → Persian kaf ک (U+06A9) — Arabic-keyboard text is common.
+ * - ZWNJ (U+200C, «نیم‌فاصله») → removed — «تیشرت» must find «تی‌شرت» and vice
+ *   versa. Removal (not space) keeps the normalized forms equal on both sides.
+ *
+ * DELIBERATELY ABSENT: Arabic-Indic digits ٠-٩ (U+0660-0669), آ/ا folding,
+ * ة/ه folding — none are in the card; each is additive here (tests + this
+ * comment) if real-world queries demand them.
+ */
+export const FA_QUERY_REPLACEMENTS: ReadonlyArray<readonly [string, string]> = [
+  ['۰', '0'],
+  ['۱', '1'],
+  ['۲', '2'],
+  ['۳', '3'],
+  ['۴', '4'],
+  ['۵', '5'],
+  ['۶', '6'],
+  ['۷', '7'],
+  ['۸', '8'],
+  ['۹', '9'],
+  ['ي', 'ی'],
+  ['ك', 'ک'],
+  ['\u200c', ''],
+];
+
+/**
+ * MKT-003 — normalize a search query (or any fa text) for matching: apply the
+ * shared replacement table, collapse whitespace runs to one space, trim.
+ * Pure and idempotent; split/join (not regex) mirrors SQL replace() semantics
+ * exactly — every occurrence replaced, literal, no pattern syntax.
+ */
+export function normalizeFaQuery(query: string): string {
+  let normalized = query;
+  for (const [from, to] of FA_QUERY_REPLACEMENTS) {
+    normalized = normalized.split(from).join(to);
+  }
+  return normalized.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * MKT-003 — leading marker of the search prequery SQL built in
+ * LotsRepository.buildLotSearchSql. The only raw-SQL statement in the app
+ * beyond health checks, so FakePrisma's `$queryRaw` dispatches on this exact
+ * prefix (health checks keep their `[{ ok: 1 }]` stub). A shared constant —
+ * not an inline string — because a rename must move BOTH sides or every
+ * search test silently falls back to the health stub.
+ */
+export const LOT_SEARCH_SQL_MARKER = '/* lot_public_search */';
+
+/**
  * MKT-002 filter-param bounds (card: "price ≤ 2B, qty ≤ 1M") — a filter can
  * never reach past the write-path caps: the price filter shares the totalPrice
  * money ceiling and quantity gets the plan's 1M sanity cap. Lower bound is 0
@@ -178,6 +249,10 @@ export const LOT_ERROR_CODES = {
   /** The same mediaAssetId appears twice in one PUT payload (MEDIA-005) —
    * would violate the (lotId, mediaAssetId) unique. */
   MEDIA_DUPLICATED: 'MEDIA_DUPLICATED',
+  /** GET /lots?q= shorter than SEARCH_QUERY_MIN_LENGTH code points, or empty
+   * after normalization (e.g. ZWNJ-only) — nothing searchable (MKT-003; the
+   * card's «جستجو حداقل ۲ کاراکتر» renders web-side from this code). */
+  SEARCH_QUERY_TOO_SHORT: 'SEARCH_QUERY_TOO_SHORT',
   /** coverIndex outside 0..items.length-1, or provided for an empty gallery
    * (MEDIA-005; a cover on zero items is meaningless). */
   COVER_INDEX_OUT_OF_BOUNDS: 'COVER_INDEX_OUT_OF_BOUNDS',

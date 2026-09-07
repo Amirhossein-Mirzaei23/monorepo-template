@@ -3,21 +3,25 @@ import {
   LotCondition,
   LotStatus,
   PricingType,
+  Prisma,
   type LiquidationReason,
   type Lot,
-  type Prisma,
 } from '@prisma/client';
 import { Paginated } from '../../common/dto/pagination-query.dto';
 import { PrismaService } from '../../prisma/prisma.service';
-import type { LotCardSort } from './lots.constants';
+import {
+  FA_QUERY_REPLACEMENTS,
+  LOT_SEARCH_SQL_MARKER,
+  normalizeFaQuery,
+  type LotCardSort,
+} from './lots.constants';
 
 /** Milliseconds in a day — the freshness filter's unit (MKT-002 listedWithin). */
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Public browse filters (GET /lots query params, bound in LotsPublicQueryDto
- * by the service — MKT-001 sort/pagination, MKT-002 filters). One optional
- * `query` arm is pre-wired for MKT-003 search.
+ * by the service — MKT-001 sort/pagination, MKT-002 filters, MKT-003 search).
  */
 export interface LotPublicFilters {
   categoryId?: string;
@@ -37,12 +41,13 @@ export interface LotPublicFilters {
   quantityMax?: number;
   /** Freshness: only lots created within the last N days (MKT-002 7d/30d). */
   listedWithinDays?: number;
-  /** Free-text search across title + description (ILIKE, trgm-backed — plan §12). */
+  /** Free-text search (MKT-003) — the RAW trimmed q; normalized here. */
   query?: string;
 }
 
 export interface FindPublicLotsParams {
   filters?: LotPublicFilters;
+  /** Undefined means "not sent" → relevance ordering when searching (MKT-003). */
   sort?: LotCardSort;
   page?: number;
   limit?: number;
@@ -74,6 +79,100 @@ const SORT_ORDER_BY: Record<LotCardSort, Prisma.LotOrderByWithRelationInput> = {
   quantityDesc: { quantity: 'desc' },
   expiresAt: { expiresAt: 'asc' },
 };
+
+/**
+ * One hit of the MKT-003 search prequery: the lot id plus the relevance flag —
+ * whether the lot's NORMALIZED title starts with the NORMALIZED query (the
+ * card's "exact-title prefix first"). The id set narrows the Prisma where
+ * clause (`id: { in: hits }`); the flag orders the default (no explicit sort)
+ * page.
+ */
+export interface LotSearchHit {
+  id: string;
+  titlePrefix: boolean;
+}
+
+/**
+ * Escape SQL LIKE/ILIKE wildcards so the user query matches LITERALLY (card:
+ * "q sanitized — no regex semantics"). `\` is the ILIKE default escape char;
+ * escaping it first keeps the rest well-formed. Applied AFTER normalization —
+ * the replacement table introduces no wildcards.
+ */
+export function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
+/**
+ * MKT-003 — the SQL-side mirror of `normalizeFaQuery`: a nested replace()
+ * chain GENERATED from FA_QUERY_REPLACEMENTS (the same table the JS
+ * normalizer consumes — one source of truth, no JS/SQL drift; a pair added
+ * there lands here automatically). Wraps a raw column expression:
+ * `replace(replace(l."title", '۰', '0'), 'ي', 'ی'), …)`.
+ */
+function faNormalizedSql(column: string): Prisma.Sql {
+  return FA_QUERY_REPLACEMENTS.reduce<Prisma.Sql>(
+    (expr, [from, to]) => Prisma.sql`replace(${expr}, ${from}, ${to})`,
+    Prisma.raw(column),
+  );
+}
+
+/**
+ * MKT-003 search prequery — the ids of ACTIVE, unexpired, non-deleted lots
+ * matching `normalizedQuery` on ANY of the card's search arms, in RELEVANCE
+ * order (title-prefix hits first, then recency, then id for pagination
+ * determinism):
+ *
+ * - title / description: normalized ILIKE (fa digits, ي/ك, ZWNJ removed on
+ *   BOTH sides — query normalized in JS here, columns via the generated
+ *   replace() chain).
+ * - seller businessName: LEFT JOIN "Profile" (a seller without a profile
+ *   simply has no match on this arm — NULL ILIKE is not true).
+ * - category + subcategory nameFa: the lot's classification is searchable —
+ *   «ورزشی» finds every lot filed under the «کفش ورزشی» subcategory even when
+ *   the word appears nowhere in the lot text.
+ * - city: RAW ILIKE — slugs are ASCII EN keys (iran-geo), nothing to
+ *   normalize.
+ *
+ * INDEX TRADEOFF (card: "backed by trgm GIN", benchmark @10k): the GIN trgm
+ * indexes from LOT-001 sit on the RAW title/description columns; the
+ * normalized expressions cannot use them, so this prequery SEQ-SCANS (see the
+ * EXPLAIN in the task report). At 10k rows that stays far inside the p50 <
+ * 100 ms budget; a normalized-expression index would be a schema decision
+ * (deliberately not made here). An index-pure raw-ILIKE OR-arm was rejected:
+ * it would match UN-normalized text too, changing semantics for the worse.
+ *
+ * CONTRACT (FakePrisma + buildLotSearchSql unit test): the leading marker
+ * routes FakePrisma's `$queryRaw` to its in-memory emulation, and values[0..2]
+ * are exactly [now, containsPattern, prefixPattern] — bound through the scalar
+ * CTE so their positions are stable no matter how many replace() pairs the
+ * shared table grows.
+ */
+export function buildLotSearchSql(now: Date, normalizedQuery: string): Prisma.Sql {
+  const containsPattern = `%${escapeLikePattern(normalizedQuery)}%`;
+  const prefixPattern = `${escapeLikePattern(normalizedQuery)}%`;
+  return Prisma.sql`${Prisma.raw(LOT_SEARCH_SQL_MARKER)}
+WITH search AS (
+  SELECT ${now}::timestamptz AS "now", ${containsPattern} AS "contains", ${prefixPattern} AS "prefix"
+)
+SELECT l."id",
+       (${faNormalizedSql('l."title"')} ILIKE (SELECT "prefix" FROM search)) AS "titlePrefix"
+FROM "Lot" l
+LEFT JOIN "Profile" p ON p."userId" = l."sellerId"
+JOIN "Category" c ON c."id" = l."categoryId"
+LEFT JOIN "Category" s ON s."id" = l."subcategoryId"
+WHERE l."status" = 'ACTIVE'::"LotStatus"
+  AND l."expiresAt" > (SELECT "now" FROM search)
+  AND l."deletedAt" IS NULL
+  AND (
+        ${faNormalizedSql('l."title"')} ILIKE (SELECT "contains" FROM search)
+     OR ${faNormalizedSql('l."description"')} ILIKE (SELECT "contains" FROM search)
+     OR ${faNormalizedSql('p."businessName"')} ILIKE (SELECT "contains" FROM search)
+     OR ${faNormalizedSql('c."nameFa"')} ILIKE (SELECT "contains" FROM search)
+     OR ${faNormalizedSql('s."nameFa"')} ILIKE (SELECT "contains" FROM search)
+     OR l."city" ILIKE (SELECT "contains" FROM search)
+  )
+ORDER BY "titlePrefix" DESC, l."createdAt" DESC, l."id" ASC`;
+}
 
 type Tx = Prisma.TransactionClient | undefined;
 
@@ -138,12 +237,12 @@ export class LotsRepository {
   }
 
   /**
-   * Public marketplace listing (GET /lots, MKT-001 + MKT-002): only ACTIVE
-   * lots, with filter/sort/pagination, returning the CARD row shape (seller
-   * summary + cover link joined — see LOT_CARD_INCLUDE) that the service maps
-   * onto LotCardResponseDto. The where clause is ONE composition: a fixed
-   * visibility core (status + expiry + soft-delete) spread with one arm per
-   * supplied filter — absence means "no arm", never "match null".
+   * Public marketplace listing (GET /lots, MKT-001 + MKT-002 + MKT-003): only
+   * ACTIVE lots, with filter/sort/pagination, returning the CARD row shape
+   * (seller summary + cover link joined — see LOT_CARD_INCLUDE) that the
+   * service maps onto LotCardResponseDto. The where clause is ONE composition:
+   * a fixed visibility core (status + expiry + soft-delete) spread with one
+   * arm per supplied filter — absence means "no arm", never "match null".
    *
    * Besides `status: ACTIVE` the where clause always carries
    * `expiresAt > now`: rows past their expiry stay ACTIVE until the LOT-006
@@ -160,9 +259,26 @@ export class LotsRepository {
    * inverted min/max pair composes to an empty intersection, not an error —
    * the card's ignored-safe rule. `verifiedSeller` has NO arm yet: its
    * EXISTS subquery needs the TRS-001 verification model (Phase 7).
+   *
+   * MKT-003 search arm: with `filters.query` present the where gains
+   * `id: { in: <prequery hits> }` — the prequery (buildLotSearchSql) owns the
+   * normalized ILIKE matching (raw SQL; Prisma's where builder cannot express
+   * the replace() chain), the visibility core is applied there too so the id
+   * set stays minimal, and this method keeps owning ALL other arms so
+   * search+filter composition stays one builder. Execution splits on sort:
+   *
+   * - explicit sort → honor it (card: relevance only for default): ordinary
+   *   findMany + count with orderBy/skip/take in the DB, search narrowed by
+   *   the id set.
+   * - default (no explicit sort) → RELEVANCE: the prequery already returns
+   *   hits in (titlePrefix desc, createdAt desc, id asc) order; the filtered
+   *   id set is resolved, the page sliced in JS in that order, then only the
+   *   page's card rows fetched (3 queries, total = filtered set size).
+   *   A normalized-empty query degenerates to "no search arm" (the service
+   *   400s it first — this is the ignored-safe fallback for direct calls).
    */
   async findPublic(
-    { filters = {}, sort = 'createdAt', page = 1, limit = 20 }: FindPublicLotsParams = {},
+    { filters = {}, sort, page = 1, limit = 20 }: FindPublicLotsParams = {},
     tx: Tx = undefined,
   ): Promise<Paginated<LotCardRepositoryRow>> {
     // One `now` for the expiry + freshness predicates so a page is answered
@@ -202,22 +318,63 @@ export class LotsRepository {
       ...(filters.listedWithinDays !== undefined
         ? { createdAt: { gte: new Date(now.getTime() - filters.listedWithinDays * DAY_MS) } }
         : {}),
-      ...(filters.query !== undefined && filters.query.length > 0
-        ? {
-            // `mode: 'insensitive'` compiles to ILIKE on PostgreSQL, which the
-            // pg_trgm GIN indexes (migration lot_001_lot_domain) accelerate.
-            OR: [
-              { title: { contains: filters.query, mode: 'insensitive' } },
-              { description: { contains: filters.query, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
     };
     const client = this.client(tx);
+
+    const rawQuery = filters.query;
+    const normalizedQuery =
+      rawQuery !== undefined && rawQuery.length > 0 ? normalizeFaQuery(rawQuery) : undefined;
+    if (normalizedQuery !== undefined && normalizedQuery.length > 0) {
+      const hits = await client.$queryRaw<LotSearchHit[]>(buildLotSearchSql(now, normalizedQuery));
+      if (hits.length === 0) {
+        return { items: [], total: 0, page, limit };
+      }
+      const searched: Prisma.LotWhereInput = { ...where, id: { in: hits.map((hit) => hit.id) } };
+
+      // Explicit sort beats relevance (card): order + paginate in the DB.
+      if (sort !== undefined) {
+        const [items, total] = await Promise.all([
+          client.lot.findMany({
+            where: searched,
+            orderBy: SORT_ORDER_BY[sort],
+            include: LOT_CARD_INCLUDE,
+            skip: (page - 1) * limit,
+            take: limit,
+          }),
+          client.lot.count({ where: searched }),
+        ]);
+        return { items, total, page, limit };
+      }
+
+      // Relevance: the prequery order IS the final order. Resolve the
+      // filtered id set, slice the page out of the ordered hits, fetch the
+      // page's card rows, restore the order.
+      const matched = await client.lot.findMany({ where: searched, select: { id: true } });
+      const matchedIds = new Set(matched.map((row) => row.id));
+      const pageIds = hits
+        .filter((hit) => matchedIds.has(hit.id))
+        .slice((page - 1) * limit, page * limit)
+        .map((hit) => hit.id);
+      const rows =
+        pageIds.length > 0
+          ? await client.lot.findMany({
+              where: { id: { in: pageIds } },
+              include: LOT_CARD_INCLUDE,
+            })
+          : [];
+      const rowsById = new Map(rows.map((row) => [row.id, row]));
+      const items = pageIds.flatMap((id) => {
+        const row = rowsById.get(id);
+        return row !== undefined ? [row] : [];
+      });
+      return { items, total: matched.length, page, limit };
+    }
+
+    const effectiveSort: LotCardSort = sort ?? 'createdAt';
     const [items, total] = await Promise.all([
       client.lot.findMany({
         where,
-        orderBy: SORT_ORDER_BY[sort],
+        orderBy: SORT_ORDER_BY[effectiveSort],
         include: LOT_CARD_INCLUDE,
         skip: (page - 1) * limit,
         take: limit,

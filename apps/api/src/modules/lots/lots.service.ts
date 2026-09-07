@@ -36,7 +36,9 @@ import {
   LOT_TITLE_MAX_CODEPOINTS,
   LOT_TITLE_MIN_CODEPOINTS,
   LOT_TRANSITIONS,
+  SEARCH_QUERY_MIN_LENGTH,
   generateLotCode,
+  normalizeFaQuery,
   type LotAction,
 } from './lots.constants';
 import { toLotOwnerResponse, type LotOwnerResponseDto } from './dto/lot-response.dto';
@@ -449,8 +451,8 @@ export class LotsService {
   // --- public reads (MKT-001: the marketplace listing) ---
 
   /**
-   * Public lot listing (GET /lots, MKT-001 + MKT-002): ACTIVE-only, sorted
-   * against the LOT_CARD_SORTS allowlist (the DTO 400s anything else),
+   * Public lot listing (GET /lots, MKT-001 + MKT-002 + MKT-003): ACTIVE-only,
+   * sorted against the LOT_CARD_SORTS allowlist (the DTO 400s anything else),
    * filtered by the MKT-002 buyer filters (the DTO validates each param; this
    * boundary only RENAMES the wire params onto the repository filter shape —
    * no business rule lives here), Paginated envelope of CARD shapes.
@@ -462,8 +464,25 @@ export class LotsService {
    * qtyMin/qtyMax the quantity bounds, listedWithin token → days via
    * LOT_LISTED_WITHIN_DAYS. `verifiedSeller` has no mapping yet — deferred to
    * TRS-001 (documented on the DTO).
+   *
+   * MKT-003 `q`: the ONLY business rule on this endpoint — the card's minimum
+   * length 2 (code points, trimmed — the DTO already trimmed), plus a
+   * normalized-empty guard (a query of only normalizing characters, e.g. two
+   * ZWNJs, would degenerate to match-all). Both 400 with the machine code
+   * SEARCH_QUERY_TOO_SHORT; the card's fa copy «جستجو حداقل ۲ کاراکتر» is
+   * web-side. The raw q is passed through — the repository owns normalization
+   * + matching (one normalizer on the data-access side).
    */
   async findPublic(query: LotsPublicQueryDto): Promise<Paginated<LotCardResponseDto>> {
+    if (query.q !== undefined) {
+      const normalized = normalizeFaQuery(query.q);
+      if ([...query.q].length < SEARCH_QUERY_MIN_LENGTH || normalized.length === 0) {
+        throw new BadRequestException({
+          code: LOT_ERROR_CODES.SEARCH_QUERY_TOO_SHORT,
+          message: `q must be at least ${SEARCH_QUERY_MIN_LENGTH} searchable characters`,
+        });
+      }
+    }
     const { items, total, page, limit } = await this.repository.findPublic({
       filters: {
         categoryId: query.categoryId,
@@ -479,6 +498,7 @@ export class LotsService {
         quantityMax: query.qtyMax,
         listedWithinDays:
           query.listedWithin !== undefined ? LOT_LISTED_WITHIN_DAYS[query.listedWithin] : undefined,
+        query: query.q,
       },
       sort: query.sort,
       page: query.page,

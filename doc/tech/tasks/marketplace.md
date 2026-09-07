@@ -43,7 +43,7 @@ discovery. Exact seller addresses never appear in public payloads.
 - **Testing:** where-builder unit tests (every filter), e2e combos.
 - **DoD:** suites green.
 
-### MKT-003 — Search API
+### MKT-003 ✅ — Search API
 
 **P0 · Phase 4 · Marketplace · M** — Deps: MKT-001
 

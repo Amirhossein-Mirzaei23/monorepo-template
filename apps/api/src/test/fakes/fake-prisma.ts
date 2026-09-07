@@ -20,6 +20,7 @@ import {
   AccountRole,
 } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
+import { LOT_SEARCH_SQL_MARKER, normalizeFaQuery } from '../../modules/lots/lots.constants';
 
 interface RefreshTokenRow {
   id: string;
@@ -97,8 +98,10 @@ type MediaAssetCreateData = {
  * + LOT-005 findMine's notIn status predicate). */
 type LotEnumFilter<T extends string> = T | { in: T[] } | { notIn: T[] };
 type LotTextFilter = { contains: string; mode: 'insensitive' };
+/** id: equality OR the MKT-003 search arm's `in` set. */
+type LotIdFilter = string | { in: string[] };
 type LotWhere = {
-  id?: string;
+  id?: LotIdFilter;
   code?: string;
   sellerId?: string;
   categoryId?: string;
@@ -892,8 +895,82 @@ export class FakePrisma {
     return fn(this);
   }
 
-  async $queryRaw(): Promise<unknown[]> {
+  /**
+   * Health checks return the `[{ ok: 1 }]` stub; the MKT-003 lot-search
+   * prequery (LotsRepository.buildLotSearchSql — the one raw query marked
+   * with LOT_SEARCH_SQL_MARKER) is EMULATED over the in-memory rows. The
+   * SQL's scalar CTE pins the contract: values[0..2] are exactly
+   * [now, containsPattern, prefixPattern] regardless of how many replace()
+   * pairs the shared FA_QUERY_REPLACEMENTS table carries. Matching semantics
+   * mirror the production SQL: ILIKE (case-insensitive) over NORMALIZED
+   * title/description/businessName/category+sub nameFa/city with the
+   * visibility core applied; LIKE wildcards honored literally via a
+   * pattern→RegExp translation.
+   */
+  async $queryRaw(query?: unknown): Promise<unknown[]> {
+    const sql = query as { text?: unknown; values?: unknown } | undefined;
+    if (
+      typeof sql === 'object' &&
+      sql !== null &&
+      typeof sql.text === 'string' &&
+      sql.text.includes(LOT_SEARCH_SQL_MARKER) &&
+      Array.isArray(sql.values)
+    ) {
+      const [now, containsPattern, prefixPattern] = sql.values as [Date, string, string];
+      return this.runLotSearch(now, containsPattern, prefixPattern);
+    }
     return [{ ok: 1 }];
+  }
+
+  /** The in-memory equivalent of the MKT-003 search prequery (see $queryRaw). */
+  private runLotSearch(
+    now: Date,
+    containsPattern: string,
+    prefixPattern: string,
+  ): Array<{ id: string; titlePrefix: boolean }> {
+    const contains = likePatternToRegExp(containsPattern);
+    const prefix = likePatternToRegExp(prefixPattern);
+    const cutoff = new Date(now).getTime();
+    return [...this.lots.values()]
+      .filter(
+        (lot) =>
+          lot.status === LotStatus.ACTIVE &&
+          new Date(lot.expiresAt).getTime() > cutoff &&
+          lot.deletedAt === null,
+      )
+      .filter((lot) => {
+        const seller = [...this.users.values()].find((user) => user.id === lot.sellerId);
+        const profile = seller
+          ? [...this.profiles.values()].find((candidate) => candidate.userId === seller.id)
+          : undefined;
+        const category = this.categories.get(lot.categoryId);
+        const subcategory =
+          lot.subcategoryId === null ? undefined : this.categories.get(lot.subcategoryId);
+        // NULL arms never match (production: NULL ILIKE … is not true).
+        return [
+          lot.title,
+          lot.description,
+          profile?.businessName ?? null,
+          category?.nameFa ?? null,
+          subcategory?.nameFa ?? null,
+          lot.city,
+        ].some((text) => text !== null && contains.test(normalizeFaQuery(text)));
+      })
+      .sort((a, b) => {
+        // ORDER BY "titlePrefix" DESC, l."createdAt" DESC, l."id" ASC
+        const aPrefix = prefix.test(normalizeFaQuery(a.title));
+        const bPrefix = prefix.test(normalizeFaQuery(b.title));
+        if (aPrefix !== bPrefix) {
+          return aPrefix ? -1 : 1;
+        }
+        const aCreated = new Date(a.createdAt).getTime();
+        const bCreated = new Date(b.createdAt).getTime();
+        if (aCreated !== bCreated) {
+          return bCreated - aCreated;
+        }
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+      })
+      .map((lot) => ({ id: lot.id, titlePrefix: prefix.test(normalizeFaQuery(lot.title)) }));
   }
 
   async $connect(): Promise<void> {}
@@ -1236,8 +1313,15 @@ function buildLotRow(data: LotCreateData): Lot {
 }
 
 function matchesLotWhere(where: LotWhere | undefined): (row: Lot) => boolean {
+  const matchesId = (row: Lot): boolean => {
+    const id = where?.id;
+    if (id === undefined) {
+      return true;
+    }
+    return typeof id === 'string' ? row.id === id : id.in.includes(row.id);
+  };
   return (row) =>
-    (where?.id === undefined || row.id === where.id) &&
+    matchesId(row) &&
     (where?.code === undefined || row.code === where.code) &&
     (where?.sellerId === undefined || row.sellerId === where.sellerId) &&
     (where?.categoryId === undefined || row.categoryId === where.categoryId) &&
@@ -1359,6 +1443,31 @@ function cloneLotMedia(row: LotMedia): LotMedia {
 
 function cloneProfile(row: Profile): Profile {
   return { ...row, createdAt: new Date(row.createdAt), updatedAt: new Date(row.updatedAt) };
+}
+
+/**
+ * Translate a SQL LIKE/ILIKE pattern (as bound by LotsRepository — user
+ * wildcards already escaped with `\`) into an anchored RegExp with ILIKE's
+ * case-insensitivity: `%` → any run, `_` → exactly one character, `\x` →
+ * literal x, everything else literal (regex-metas escaped).
+ */
+function likePatternToRegExp(pattern: string): RegExp {
+  const escapeRegexMeta = (literal: string) => literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  let source = '';
+  for (let i = 0; i < pattern.length; i += 1) {
+    const char = pattern[i] as string;
+    if (char === '\\' && i + 1 < pattern.length) {
+      i += 1;
+      source += escapeRegexMeta(pattern[i] as string);
+    } else if (char === '%') {
+      source += '[\\s\\S]*';
+    } else if (char === '_') {
+      source += '[\\s\\S]';
+    } else {
+      source += escapeRegexMeta(char);
+    }
+  }
+  return new RegExp(`^${source}$`, 'i');
 }
 
 function cloneInterest(row: ProfileInterest): ProfileInterest {

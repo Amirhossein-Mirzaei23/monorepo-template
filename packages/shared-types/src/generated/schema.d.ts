@@ -2125,6 +2125,8 @@ export interface operations {
                 liquidationReason?: ("EXCESS_PRODUCTION" | "CANCELLED_ORDER" | "EXPORT_RETURN" | "SEASON_CLEARANCE" | "OVERSTOCK" | "FACTORY_CLOSURE" | "PACKAGING_CHANGE" | "NEAR_EXPIRY" | "OTHER")[];
                 /** @description Freshness — only lots created within the last 7 or 30 days */
                 listedWithin?: "7d" | "30d";
+                /** @description Free-text search (trimmed, literal — no wildcard/regex semantics). Matched case-insensitively against the normalized title/description, seller businessName, category nameFa (fa + sub) and the city slug; normalization: Persian digits → 0-9, ي→ی, ك→ک, ZWNJ removed. Minimum length 2 is a service rule → 400 code SEARCH_QUERY_TOO_SHORT */
+                q?: string;
             };
             header?: never;
             path?: never;

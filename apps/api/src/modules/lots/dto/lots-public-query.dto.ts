@@ -18,6 +18,7 @@ import {
   LOT_FILTER_MAX_PRICE,
   LOT_FILTER_MAX_QUANTITY,
   LOT_LISTED_WITHIN_OPTIONS,
+  SEARCH_QUERY_MAX_LENGTH,
   type LotCardSort,
   type LotListedWithin,
 } from '../lots.constants';
@@ -34,10 +35,13 @@ const ToArray = () =>
   );
 
 /**
- * MKT-001 + MKT-002 — query params for the public listing GET /lots.
+ * MKT-001 + MKT-002 + MKT-003 — query params for the public listing GET /lots.
  *
  * MKT-001 shipped pagination + sort; MKT-002 adds the buyer FILTER params
- * (this class owns the file's filter half). Contract decisions, documented:
+ * (this class owns the file's filter half); MKT-003 adds the `q` search param
+ * (trimmed, ≤ 100 chars — matching semantics live in the repository's search
+ * arm, validation bounds in lots.constants.ts). Contract decisions,
+ * documented:
  *
  * - `priceMin`/`priceMax` filter the DERIVED `unitPrice` (plan §12) — the one
  *   price buyers can compare across lots of different quantities, and the same
@@ -206,4 +210,20 @@ export class LotsPublicQueryDto extends PaginationQueryDto {
     message: 'listedWithin must be one of: ' + LOT_LISTED_WITHIN_OPTIONS.join(', '),
   })
   listedWithin?: LotListedWithin;
+
+  // --- MKT-003 search ---
+
+  @ApiPropertyOptional({
+    example: 'تیشرت',
+    maxLength: SEARCH_QUERY_MAX_LENGTH,
+    description:
+      'Free-text search (trimmed, literal — no wildcard/regex semantics). Matched case-insensitively against the normalized title/description, seller businessName, category nameFa (fa + sub) and the city slug; normalization: Persian digits → 0-9, ي→ی, ك→ک, ZWNJ removed. Minimum length 2 is a service rule → 400 code SEARCH_QUERY_TOO_SHORT',
+  })
+  @IsOptional()
+  @IsString()
+  // Trim here (card: "q string trim ≤ 100") so the length bound and the
+  // service's min-length rule both see the trimmed value.
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @MaxLength(SEARCH_QUERY_MAX_LENGTH)
+  q?: string;
 }
