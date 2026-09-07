@@ -53,20 +53,9 @@ export const otpVerifyDtoSchema = z.object({
   clientType: z.enum(['web', 'android']).optional(),
 });
 
-export const otpVerifyResponseDtoSchema = z.object({
-  accessToken: z.string(),
-  user: userResponseDtoSchema,
-  onboardingCompleted: z.boolean(),
-});
-
 export const loginDtoSchema = z.object({
   email: z.email(),
   password: z.string(),
-});
-
-export const loginResponseDtoSchema = z.object({
-  accessToken: z.string(),
-  user: userResponseDtoSchema,
 });
 
 export const meResponseDtoSchema = z.object({
@@ -153,31 +142,6 @@ export const profileMetricsDtoSchema = z.object({
   activeListings: z.number(),
 });
 
-export const profileResponseDtoSchema = z.object({
-  id: z.string(),
-  userId: z.string(),
-  displayName: z.string(),
-  businessName: z.string().nullable().optional(),
-  province: z.string().nullable().optional(),
-  city: z.string().nullable().optional(),
-  bio: z.string().nullable().optional(),
-  instagram: z.string().nullable().optional(),
-  website: z.string().nullable().optional(),
-  isBuyer: z.boolean(),
-  isSeller: z.boolean(),
-  sellerYearsActive: z.number().nullable().optional(),
-  sellerBusinessType: z.enum(['MANUFACTURER', 'WORKSHOP', 'WHOLESALER', 'RETAILER', 'TRADING', 'SERVICE', 'OTHER']).nullable().optional(),
-  sellerDescription: z.string().nullable().optional(),
-  interests: z.array(profileInterestCategoryDtoSchema),
-  verificationBadges: z.array(z.string()),
-  metrics:   z.object({
-
-    }),
-  onboardingCompleted: z.boolean(),
-  createdAt: z.iso.datetime(),
-  updatedAt: z.iso.datetime(),
-});
-
 export const updateProfileDtoSchema = z.object({
   isBuyer: z.boolean().nullable().optional(),
   isSeller: z.boolean().nullable().optional(),
@@ -203,8 +167,18 @@ export const publicSellerSummaryDtoSchema = z.object({
   verified: z.boolean(),
 });
 
-export const publicSellerListDtoSchema = z.object({
-  items: z.array(publicSellerSummaryDtoSchema),
+export const sellerPublicMetricsDtoSchema = z.object({
+  successfulTransactions: z.number(),
+  ratingAverage: z.number().nullable(),
+  ratingCount: z.number(),
+  responseRateMinutes: z.number().nullable(),
+  cancellationRate: z.number(),
+});
+
+export const sellerPublicCategoryDtoSchema = z.object({
+  id: z.string(),
+  nameFa: z.string(),
+  slug: z.string(),
 });
 
 export const lotMediaResponseDtoSchema = z.object({
@@ -215,6 +189,122 @@ export const lotMediaResponseDtoSchema = z.object({
   thumbUrl: z.string().nullable().optional(),
   sortOrder: z.number(),
   isCover: z.boolean(),
+});
+
+export const lotCardSellerDtoSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  businessName: z.string().nullable().optional(),
+});
+
+export const createLotDtoSchema = z.object({
+  title: z.string(),
+  description: z.string(),
+  categoryId: z.string(),
+  subcategoryId: z.string().nullable().optional(),
+  quantity: z.number(),
+  availableQuantity: z.number().optional(),
+  minOrderQuantity: z.number().optional(),
+  unit: z.enum(['PIECE', 'SET', 'BOX', 'KG', 'PAIR', 'OTHER']).optional(),
+  totalPrice: z.number(),
+  pricingType: z.enum(['FIXED', 'NEGOTIABLE']),
+  condition: z.enum(['GRADE_A', 'GRADE_B', 'GRADE_C', 'MIXED', 'NEW', 'USED', 'DAMAGED', 'NEAR_EXPIRY']),
+  liquidationReason: z.enum(['EXCESS_PRODUCTION', 'CANCELLED_ORDER', 'EXPORT_RETURN', 'SEASON_CLEARANCE', 'OVERSTOCK', 'FACTORY_CLOSURE', 'PACKAGING_CHANGE', 'NEAR_EXPIRY', 'OTHER']),
+  province: z.string(),
+  city: z.string(),
+  locationHint: z.string().nullable().optional(),
+  exactAddress: z.string().nullable().optional(),
+  submit: z.boolean().optional(),
+});
+
+export const lotDetailCategoryDtoSchema = z.object({
+  id: z.string(),
+  nameFa: z.string(),
+  slug: z.string(),
+});
+
+export const lotDetailSellerDtoSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  businessName: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  verified: z.boolean(),
+});
+
+export const updateLotDtoSchema = z.object({
+  title: z.string().optional(),
+  description: z.string().optional(),
+  categoryId: z.string().optional(),
+  subcategoryId: z.string().nullable().optional(),
+  quantity: z.number().optional(),
+  availableQuantity: z.number().optional(),
+  minOrderQuantity: z.number().optional(),
+  unit: z.enum(['PIECE', 'SET', 'BOX', 'KG', 'PAIR', 'OTHER']).optional(),
+  totalPrice: z.number().optional(),
+  pricingType: z.enum(['FIXED', 'NEGOTIABLE']).optional(),
+  condition: z.enum(['GRADE_A', 'GRADE_B', 'GRADE_C', 'MIXED', 'NEW', 'USED', 'DAMAGED', 'NEAR_EXPIRY']).optional(),
+  liquidationReason: z.enum(['EXCESS_PRODUCTION', 'CANCELLED_ORDER', 'EXPORT_RETURN', 'SEASON_CLEARANCE', 'OVERSTOCK', 'FACTORY_CLOSURE', 'PACKAGING_CHANGE', 'NEAR_EXPIRY', 'OTHER']).optional(),
+  province: z.string().optional(),
+  city: z.string().optional(),
+  locationHint: z.string().nullable().optional(),
+  exactAddress: z.string().nullable().optional(),
+  submit: z.boolean().optional(),
+});
+
+export const putLotMediaItemDtoSchema = z.object({
+  mediaAssetId: z.string(),
+});
+
+export const mediaUploadUrlsDtoSchema = z.object({
+  original: z.string(),
+  cover: z.string(),
+  thumb: z.string(),
+});
+
+export const mediaVideoUploadUrlsDtoSchema = z.object({
+  video: z.string(),
+  poster: z.string().optional(),
+  posterThumb: z.string().optional(),
+});
+
+export const otpVerifyResponseDtoSchema = z.object({
+  accessToken: z.string(),
+  user: userResponseDtoSchema,
+  onboardingCompleted: z.boolean(),
+});
+
+export const loginResponseDtoSchema = z.object({
+  accessToken: z.string(),
+  user: userResponseDtoSchema,
+});
+
+export const profileResponseDtoSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  displayName: z.string(),
+  businessName: z.string().nullable().optional(),
+  province: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  bio: z.string().nullable().optional(),
+  instagram: z.string().nullable().optional(),
+  website: z.string().nullable().optional(),
+  isBuyer: z.boolean(),
+  isSeller: z.boolean(),
+  sellerYearsActive: z.number().nullable().optional(),
+  sellerBusinessType: z.enum(['MANUFACTURER', 'WORKSHOP', 'WHOLESALER', 'RETAILER', 'TRADING', 'SERVICE', 'OTHER']).nullable().optional(),
+  sellerDescription: z.string().nullable().optional(),
+  interests: z.array(profileInterestCategoryDtoSchema),
+  verificationBadges: z.array(z.string()),
+  metrics:   z.object({
+
+    }),
+  onboardingCompleted: z.boolean(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+
+export const publicSellerListDtoSchema = z.object({
+  items: z.array(publicSellerSummaryDtoSchema),
 });
 
 export const lotPublicResponseDtoSchema = z.object({
@@ -249,12 +339,6 @@ export const lotPublicResponseDtoSchema = z.object({
   media: z.array(lotMediaResponseDtoSchema),
 });
 
-export const lotCardSellerDtoSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  businessName: z.string().nullable().optional(),
-});
-
 export const lotCardResponseDtoSchema = z.object({
   id: z.string(),
   code: z.string(),
@@ -275,26 +359,6 @@ export const lotCardResponseDtoSchema = z.object({
   updatedAt: z.iso.datetime(),
   createdAt: z.iso.datetime(),
   expiresAt: z.iso.datetime(),
-});
-
-export const createLotDtoSchema = z.object({
-  title: z.string(),
-  description: z.string(),
-  categoryId: z.string(),
-  subcategoryId: z.string().nullable().optional(),
-  quantity: z.number(),
-  availableQuantity: z.number().optional(),
-  minOrderQuantity: z.number().optional(),
-  unit: z.enum(['PIECE', 'SET', 'BOX', 'KG', 'PAIR', 'OTHER']).optional(),
-  totalPrice: z.number(),
-  pricingType: z.enum(['FIXED', 'NEGOTIABLE']),
-  condition: z.enum(['GRADE_A', 'GRADE_B', 'GRADE_C', 'MIXED', 'NEW', 'USED', 'DAMAGED', 'NEAR_EXPIRY']),
-  liquidationReason: z.enum(['EXCESS_PRODUCTION', 'CANCELLED_ORDER', 'EXPORT_RETURN', 'SEASON_CLEARANCE', 'OVERSTOCK', 'FACTORY_CLOSURE', 'PACKAGING_CHANGE', 'NEAR_EXPIRY', 'OTHER']),
-  province: z.string(),
-  city: z.string(),
-  locationHint: z.string().nullable().optional(),
-  exactAddress: z.string().nullable().optional(),
-  submit: z.boolean().optional(),
 });
 
 export const lotOwnerResponseDtoSchema = z.object({
@@ -331,18 +395,50 @@ export const lotOwnerResponseDtoSchema = z.object({
   rejectionReason: z.string().nullable().optional(),
 });
 
-export const lotDetailCategoryDtoSchema = z.object({
-  id: z.string(),
-  nameFa: z.string(),
-  slug: z.string(),
+export const putLotMediaDtoSchema = z.object({
+  items: z.array(putLotMediaItemDtoSchema),
+  coverIndex: z.number().optional(),
 });
 
-export const lotDetailSellerDtoSchema = z.object({
+export const mediaUploadResponseDtoSchema = z.object({
   id: z.string(),
-  name: z.string(),
+  urls: mediaUploadUrlsDtoSchema,
+  width: z.number(),
+  height: z.number(),
+});
+
+export const mediaVideoUploadResponseDtoSchema = z.object({
+  id: z.string(),
+  urls: mediaVideoUploadUrlsDtoSchema,
+  durationMs: z.number(),
+});
+
+export const publicSellerProfileDtoSchema = z.object({
+  id: z.string(),
+  displayName: z.string(),
   businessName: z.string().nullable().optional(),
+  bio: z.string().nullable().optional(),
+  province: z.string().nullable().optional(),
   city: z.string().nullable().optional(),
   verified: z.boolean(),
+  badges: z.array(z.string()),
+  metrics:   z.object({
+
+    }),
+  memberSince: z.iso.datetime(),
+  categories: z.array(sellerPublicCategoryDtoSchema),
+  activeLots:   z.object({
+      items: z.array(lotCardResponseDtoSchema),
+      total: z.number().int(),
+      page: z.number().int(),
+      limit: z.number().int(),
+    }).optional(),
+  soldLots:   z.object({
+      items: z.array(lotCardResponseDtoSchema),
+      total: z.number().int(),
+      page: z.number().int(),
+      limit: z.number().int(),
+    }).optional(),
 });
 
 export const lotPublicDetailResponseDtoSchema = z.object({
@@ -379,60 +475,6 @@ export const lotPublicDetailResponseDtoSchema = z.object({
   similar: z.array(lotCardResponseDtoSchema),
 });
 
-export const updateLotDtoSchema = z.object({
-  title: z.string().optional(),
-  description: z.string().optional(),
-  categoryId: z.string().optional(),
-  subcategoryId: z.string().nullable().optional(),
-  quantity: z.number().optional(),
-  availableQuantity: z.number().optional(),
-  minOrderQuantity: z.number().optional(),
-  unit: z.enum(['PIECE', 'SET', 'BOX', 'KG', 'PAIR', 'OTHER']).optional(),
-  totalPrice: z.number().optional(),
-  pricingType: z.enum(['FIXED', 'NEGOTIABLE']).optional(),
-  condition: z.enum(['GRADE_A', 'GRADE_B', 'GRADE_C', 'MIXED', 'NEW', 'USED', 'DAMAGED', 'NEAR_EXPIRY']).optional(),
-  liquidationReason: z.enum(['EXCESS_PRODUCTION', 'CANCELLED_ORDER', 'EXPORT_RETURN', 'SEASON_CLEARANCE', 'OVERSTOCK', 'FACTORY_CLOSURE', 'PACKAGING_CHANGE', 'NEAR_EXPIRY', 'OTHER']).optional(),
-  province: z.string().optional(),
-  city: z.string().optional(),
-  locationHint: z.string().nullable().optional(),
-  exactAddress: z.string().nullable().optional(),
-  submit: z.boolean().optional(),
-});
-
-export const putLotMediaItemDtoSchema = z.object({
-  mediaAssetId: z.string(),
-});
-
-export const putLotMediaDtoSchema = z.object({
-  items: z.array(putLotMediaItemDtoSchema),
-  coverIndex: z.number().optional(),
-});
-
-export const mediaUploadUrlsDtoSchema = z.object({
-  original: z.string(),
-  cover: z.string(),
-  thumb: z.string(),
-});
-
-export const mediaUploadResponseDtoSchema = z.object({
-  id: z.string(),
-  urls: mediaUploadUrlsDtoSchema,
-  width: z.number(),
-  height: z.number(),
-});
-
-export const mediaVideoUploadUrlsDtoSchema = z.object({
-  video: z.string(),
-  poster: z.string().optional(),
-  posterThumb: z.string().optional(),
-});
-
-export const mediaVideoUploadResponseDtoSchema = z.object({
-  id: z.string(),
-  urls: mediaVideoUploadUrlsDtoSchema,
-  durationMs: z.number(),
-});
-
 export const apiSchemas = {
   Object: objectSchema,
   UserResponseDto: userResponseDtoSchema,
@@ -457,6 +499,9 @@ export const apiSchemas = {
   UpdateProfileDto: updateProfileDtoSchema,
   PublicSellerSummaryDto: publicSellerSummaryDtoSchema,
   PublicSellerListDto: publicSellerListDtoSchema,
+  SellerPublicMetricsDto: sellerPublicMetricsDtoSchema,
+  SellerPublicCategoryDto: sellerPublicCategoryDtoSchema,
+  PublicSellerProfileDto: publicSellerProfileDtoSchema,
   LotMediaResponseDto: lotMediaResponseDtoSchema,
   LotPublicResponseDto: lotPublicResponseDtoSchema,
   LotCardSellerDto: lotCardSellerDtoSchema,

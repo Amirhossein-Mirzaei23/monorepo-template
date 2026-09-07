@@ -106,3 +106,77 @@ export async function copyLotLink(code: string): Promise<CopyLinkOutcome> {
   }
   return 'manual';
 }
+
+// --- PROF-002 seller page share: the MKT-010 mechanics on the /s/{id} URL ---
+
+/** The seller fields the share text/URL are built from (PROF-002). */
+export interface SellerShareInfo {
+  /** Display name — businessName ?? displayName (the page header precedence). */
+  name: string;
+  /** fa city label — optional trailing segment of the share text. */
+  city?: string | null;
+}
+
+export type ShareSellerInput = SellerShareInfo & {
+  /** Profile id — the share URL is /s/{id}. */ id: string;
+};
+
+/**
+ * The fa share text for a seller page: `{name} | راکدشو {city?}` — a seller
+ * page has no single price, so the brand line replaces the lot template's
+ * price segment.
+ */
+export function buildSellerShareText({ name, city }: SellerShareInfo): string {
+  return `${name} | راکدشو${city ? ` ${city}` : ''}`;
+}
+
+/**
+ * Absolute public URL of /s/{id}: NEXT_PUBLIC_APP_URL when configured,
+ * otherwise `window.location.origin` (client-side only); with neither, the
+ * relative path (SSR-safe, same rationale as buildLotShareUrl).
+ */
+export function buildSellerShareUrl(id: string): string {
+  if (publicAppUrl) {
+    return `${publicAppUrl.replace(/\/+$/, '')}/s/${id}`;
+  }
+  if (typeof window !== 'undefined') {
+    return `${window.location.origin}/s/${id}`;
+  }
+  return `/s/${id}`;
+}
+
+/**
+ * Native share when the platform offers it, else 'sheet' — the PROF-002
+ * mirror of shareLot (the caller opens the fallback sheet). A dismissed or
+ * failed native share still resolves 'native': the user already saw the
+ * native UI, so the sheet must not stack on top of it.
+ */
+export async function shareSeller(input: ShareSellerInput): Promise<ShareLotOutcome> {
+  if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+    try {
+      await navigator.share({
+        title: input.name,
+        text: buildSellerShareText(input),
+        url: buildSellerShareUrl(input.id),
+      });
+    } catch {
+      // Dismissal or transport failure of the NATIVE sheet — see docstring.
+    }
+    return 'native';
+  }
+  return 'sheet';
+}
+
+/** Clipboard write of the seller URL — the copySellerLink twin of copyLotLink. */
+export async function copySellerLink(id: string): Promise<CopyLinkOutcome> {
+  const url = buildSellerShareUrl(id);
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      await navigator.clipboard.writeText(url);
+      return 'copied';
+    }
+  } catch {
+    // NotAllowedError (denied) or write failure → manual fallback below.
+  }
+  return 'manual';
+}

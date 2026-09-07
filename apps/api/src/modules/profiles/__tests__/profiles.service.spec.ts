@@ -1,8 +1,10 @@
 import { BadRequestException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { AccountRole } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
 import type { PrismaService } from '../../../prisma/prisma.service';
 import { FakePrisma } from '../../../test/fakes/fake-prisma';
 import { CategoriesRepository } from '../../categories/categories.repository';
+import { LotsRepository } from '../../lots/lots.repository';
 import { UsersRepository } from '../../users/users.repository';
 import type { SaveOnboardingDto } from '../dto/save-onboarding.dto';
 import type { UpdateProfileDto } from '../dto/update-profile.dto';
@@ -43,7 +45,21 @@ describe('ProfilesService', () => {
     const users = new UsersRepository(fake as unknown as PrismaService);
     const profiles = new ProfilesRepository(fake as unknown as PrismaService);
     const categories = new CategoriesRepository(fake as unknown as PrismaService);
-    service = new ProfilesService(profiles, users, categories, fake as unknown as PrismaService);
+    const lots = new LotsRepository(fake as unknown as PrismaService);
+    // ConfigService is only read for PUBLIC_MEDIA_BASE_URL (PROF-002 payload) —
+    // these onboarding/PATCH suites never reach it; a stub suffices.
+    const config = {
+      get: (key: string) =>
+        key === 'app' ? { storage: { publicMediaBaseUrl: 'http://media.test' } } : undefined,
+    } as unknown as ConfigService;
+    service = new ProfilesService(
+      profiles,
+      users,
+      categories,
+      fake as unknown as PrismaService,
+      lots,
+      config,
+    );
 
     userId = fake.seedUser({ phone: '09123334444', name: 'Ali' }).id;
     apparel = fake.seedCategory({ nameFa: 'پوشاک', slug: 'apparel', sortOrder: 1 });

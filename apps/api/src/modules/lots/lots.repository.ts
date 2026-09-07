@@ -248,6 +248,22 @@ export interface LotMediaUpsertData {
 }
 
 /**
+ * Seller-scoped PUBLIC params (PROF-002 seller page): exactly one of the two
+ * public page states per call.
+ */
+export type FindSellerPublicLotsParams = {
+  status: Extract<LotStatus, 'ACTIVE' | 'SOLD'>;
+  page?: number;
+  limit?: number;
+};
+
+/** Sort per seller-page state: active = newest listing, sold = newest sale (createdAt tiebreak). */
+const SELLER_PUBLIC_ORDER_BY: Record<'ACTIVE' | 'SOLD', Prisma.LotOrderByWithRelationInput[]> = {
+  ACTIVE: [{ createdAt: 'desc' }],
+  SOLD: [{ soldAt: 'desc' }, { createdAt: 'desc' }],
+};
+
+/**
  * Data access only. Every method accepts an optional transaction client so the
  * repository stays unit-of-work agnostic — services own transaction boundaries
  * (doc/CONVENTIONS.md → Transactions). Repositories never call $transaction.
@@ -479,6 +495,74 @@ export class LotsRepository {
       }
     }
     return sameSubcategory;
+  }
+
+  /**
+   * PROF-002 — one Paginated page of a seller's PUBLIC lots as CARD rows (the
+   * MKT-001 include — seller summary + cover link, no N+1), split by state:
+   *
+   * - ACTIVE: the exact findPublic visibility core (status + expiresAt > now +
+   *   deletedAt null — past-expiry rows never surface between LOT-006 sweeps),
+   *   newest listing first. Served by the (sellerId, status) index.
+   * - SOLD: newest soldAt first (createdAt tiebreak for pre-soldAt fixtures —
+   *   a SOLD row always has soldAt in production flows), so the seller page's
+   *   «فروش‌های موفق» shows the freshest proof of business.
+   *
+   * Unlike findMine (owner inventory: every non-REMOVED status, full gallery),
+   * this is a PUBLIC read — only the two buyer-visible states exist here and
+   * rows carry only the card include.
+   */
+  async findPublicBySeller(
+    sellerId: string,
+    { status, page = 1, limit = 12 }: FindSellerPublicLotsParams,
+    tx: Tx = undefined,
+  ): Promise<Paginated<LotCardRepositoryRow>> {
+    const now = new Date();
+    const where: Prisma.LotWhereInput = {
+      sellerId,
+      status,
+      deletedAt: null,
+      ...(status === LotStatus.ACTIVE ? { expiresAt: { gt: now } } : {}),
+    };
+    const [items, total] = await Promise.all([
+      this.client(tx).lot.findMany({
+        where,
+        orderBy: SELLER_PUBLIC_ORDER_BY[status],
+        include: LOT_CARD_INCLUDE,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.client(tx).lot.count({ where }),
+    ]);
+    return { items, total, page, limit };
+  }
+
+  /**
+   * PROF-002 — the seller page's category chips: one grouped count over the
+   * seller's visible ACTIVE lots (same visibility core as findPublicBySeller
+   * ACTIVE), `groupBy categoryId` so the whole aggregation is ONE indexed
+   * query (no row pull, no N+1). The service resolves the name rows and
+   * applies the final order (count desc, then nameFa).
+   */
+  async countActiveByCategory(
+    sellerId: string,
+    tx: Tx = undefined,
+  ): Promise<Array<{ categoryId: string; _count: { _all: number } }>> {
+    const now = new Date();
+    const rows = await this.client(tx).lot.groupBy({
+      by: ['categoryId'],
+      where: {
+        sellerId,
+        status: LotStatus.ACTIVE,
+        expiresAt: { gt: now },
+        deletedAt: null,
+      },
+      _count: { _all: true },
+    });
+    return rows.map((row) => ({
+      categoryId: row.categoryId,
+      _count: { _all: row._count._all },
+    }));
   }
 
   /** Owner-scoped fetch (seller dashboard/actions) — null for other sellers' lots. */

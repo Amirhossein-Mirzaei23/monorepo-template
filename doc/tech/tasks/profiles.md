@@ -61,7 +61,7 @@ No business/legal documents in MVP. Public seller profile is a P0 trust surface.
 - **Testing:** e2e edit; component test.
 - **DoD:** suites green.
 
-### PROF-002 — Public seller profile page
+### PROF-002 ✅ — Public seller profile page
 
 **P0 · Phase 1 · Profiles · M** — Deps: ONB-001, MKT-005 (lot cards) — badge row renders empty until TRS-002 lands
 

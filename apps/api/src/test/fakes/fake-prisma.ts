@@ -823,6 +823,28 @@ export class FakePrisma {
       }
       return { count };
     },
+    /**
+     * PROF-002 categories aggregation (LotsRepository.countActiveByCategory):
+     * grouped count over the matching rows, mirroring Prisma's
+     * `groupBy: ['categoryId'], _count: { _all: true }` result shape. Rows are
+     * returned in first-seen insertion order — the service owns the final
+     * ordering (count desc, then nameFa), so this fake stays order-free.
+     */
+    groupBy: async ({
+      where,
+    }: {
+      by?: Array<'categoryId'>;
+      where?: LotWhere;
+    }): Promise<Array<{ categoryId: string; _count: { _all: number } }>> => {
+      const counts = new Map<string, number>();
+      for (const row of [...this.lots.values()].filter(matchesLotWhere(where))) {
+        counts.set(row.categoryId, (counts.get(row.categoryId) ?? 0) + 1);
+      }
+      return [...counts.entries()].map(([categoryId, total]) => ({
+        categoryId,
+        _count: { _all: total },
+      }));
+    },
   };
 
   /** Exactly the surface LotsRepository's gallery methods use (MEDIA-005). */

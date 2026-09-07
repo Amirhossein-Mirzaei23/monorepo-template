@@ -314,6 +314,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/profiles/sellers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Public seller profile page (no auth) — /s/{id} source; :id is the PROFILE id from the sellers listing */
+        get: operations["PublicProfilesController_sellerProfile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/lots": {
         parameters: {
             query?: never;
@@ -1031,6 +1048,110 @@ export interface components {
         };
         PublicSellerListDto: {
             items: components["schemas"]["PublicSellerSummaryDto"][];
+        };
+        SellerPublicMetricsDto: {
+            /**
+             * @description PLACEHOLDER (0) until PROF-005 computes successful deals
+             * @example 0
+             */
+            successfulTransactions: number;
+            /**
+             * @description PLACEHOLDER (null) until REV-001/002 + PROF-005 land ratings
+             * @example null
+             */
+            ratingAverage: number | null;
+            /**
+             * @description PLACEHOLDER (0) until reviews exist
+             * @example 0
+             */
+            ratingCount: number;
+            /**
+             * @description Median first-reply minutes — PLACEHOLDER (null) until PROF-005
+             * @example null
+             */
+            responseRateMinutes: number | null;
+            /**
+             * @description Cancellation rate (0–100) — PLACEHOLDER (0) until PROF-005
+             * @example 0
+             */
+            cancellationRate: number;
+        };
+        SellerPublicCategoryDto: {
+            /**
+             * @description Category id (stable key)
+             * @example clx…cuid
+             */
+            id: string;
+            /**
+             * @description Persian display name
+             * @example پوشاک
+             */
+            nameFa: string;
+            /**
+             * @description EN slug (kebab-case)
+             * @example apparel
+             */
+            slug: string;
+        };
+        PublicSellerProfileDto: {
+            /**
+             * @description Profile id — same id space as GET /profiles/sellers (MKT-004) and the /s/{id} URL
+             * @example clx…cuid
+             */
+            id: string;
+            /** @example مینا رضایی */
+            displayName: string;
+            /**
+             * @description Preferred display name when set (page header: businessName ?? displayName)
+             * @example تولیدی پوشاک مینا
+             */
+            businessName?: string | null;
+            /**
+             * @description Public business description (Profile.bio) — the only about text on the page
+             * @example عمده‌فروشی پوشاک با ۱۰ سال سابقه
+             */
+            bio?: string | null;
+            /**
+             * @description fa PROVINCE LABEL resolved server-side via iran-geo (display-only — diverges from the slug convention of filterable payloads by design)
+             * @example اصفهان
+             */
+            province?: string | null;
+            /**
+             * @description fa CITY LABEL resolved server-side via iran-geo (see province note)
+             * @example کاشان
+             */
+            city?: string | null;
+            /**
+             * @description TRS-001 placeholder — hard false until seller verification exists (Phase 7)
+             * @example false
+             */
+            verified: boolean;
+            /** @description TRS-002 placeholder — always [] until trust badges land (Phase 7) */
+            badges: string[];
+            /** @description Trust metrics — PROF-005 placeholders */
+            metrics: components["schemas"]["SellerPublicMetricsDto"];
+            /**
+             * Format: date-time
+             * @description User.createdAt — «member since» (rendered Jalali)
+             * @example 2026-01-01T00:00:00.000Z
+             */
+            memberSince: string;
+            /** @description Distinct categories of the seller’s visible ACTIVE lots — count desc, then nameFa; [] for a seller without lots */
+            categories: components["schemas"]["SellerPublicCategoryDto"][];
+            /** @description Page 1 (limit 12) of the seller’s visible ACTIVE lots as MKT-001 cards */
+            activeLots?: {
+                items: components["schemas"]["LotCardResponseDto"][];
+                total: number;
+                page: number;
+                limit: number;
+            };
+            /** @description Up to 4 SOLD lots, newest soldAt first, as MKT-001 cards («فروش‌های موفق») */
+            soldLots?: {
+                items: components["schemas"]["LotCardResponseDto"][];
+                total: number;
+                page: number;
+                limit: number;
+            };
         };
         LotMediaResponseDto: {
             /**
@@ -2314,6 +2435,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PublicSellerListDto"];
+                };
+            };
+        };
+    };
+    PublicProfilesController_sellerProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Public seller profile: identity + bio + fa location labels + trust placeholders (verified=false until TRS-001, badges=[] until TRS-002, metrics zeros/nulls until PROF-005) + category chips + Paginated active (12) and sold (4) MKT-001 card envelopes. 404 unless the profile exists, the user holds the SELLER role and is ACTIVE */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicSellerProfileDto"];
                 };
             };
         };

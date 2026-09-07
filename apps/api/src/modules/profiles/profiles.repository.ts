@@ -54,6 +54,16 @@ export class ProfilesRepository {
   }
 
   /**
+   * PROF-002 — public lookup BY PROFILE ID (the /s/{id} route param, the same
+   * id space as the MKT-004 strip). A bare row read — the seller-role/status
+   * decision (business rule) lives in ProfilesService; interests are not part
+   * of the public payload and stay unjoined.
+   */
+  async findById(id: string, tx: Tx = undefined): Promise<Profile | null> {
+    return this.client(tx).profile.findUnique({ where: { id } });
+  }
+
+  /**
    * 1–1 upsert keyed on the unique userId — re-onboarding is an idempotent
    * update of the same row, never a second profile (ONB-001: no 409).
    */

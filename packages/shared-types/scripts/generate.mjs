@@ -119,7 +119,57 @@ function objectToZod(schema, depth, rootName) {
   return `z.object({\n${fields.join('\n')}\n${pad}})`;
 }
 
-const blocks = entries.map(([name, schema]) => {
+/**
+ * Every schema name $ref'd anywhere inside `schema` (nested objects included).
+ */
+function collectRefs(schema, into) {
+  if (Array.isArray(schema)) {
+    for (const item of schema) collectRefs(item, into);
+    return into;
+  }
+  if (schema === null || typeof schema !== 'object') {
+    return into;
+  }
+  if (typeof schema.$ref === 'string' && schema.$ref.startsWith('#/components/schemas/')) {
+    into.add(schema.$ref.replace('#/components/schemas/', ''));
+  }
+  for (const value of Object.values(schema)) collectRefs(value, into);
+  return into;
+}
+
+/**
+ * Emit blocks in DEPENDENCY order: a `const` block that references another
+ * block's const must be declared after it (TDZ — a schema embedded in an
+ * earlier-declared schema would throw "used before its declaration" at build).
+ * Ties keep the original spec order, so the output stays deterministic.
+ * Genuine reference cycles that dependency order cannot break fall back to
+ * spec order (self-references compile fine — they are wrapped in z.lazy).
+ */
+function orderEntriesByDependencies() {
+  const depsByName = new Map(
+    entries.map(([name, schema]) => [name, collectRefs(schema, new Set())]),
+  );
+  const emitted = new Set();
+  const ordered = [];
+  const pending = [...entries];
+  while (pending.length > 0) {
+    const ready = pending.filter(([name]) =>
+      [...depsByName.get(name)].every((dep) => dep === name || emitted.has(dep)),
+    );
+    if (ready.length === 0) {
+      ordered.push(...pending);
+      break;
+    }
+    for (const entry of ready) {
+      emitted.add(entry[0]);
+      ordered.push(entry);
+      pending.splice(pending.indexOf(entry), 1);
+    }
+  }
+  return ordered;
+}
+
+const blocks = orderEntriesByDependencies().map(([name, schema]) => {
   if (Array.isArray(schema.enum)) {
     return `export const ${constName(name)} = z.enum([${schema.enum.map(q).join(', ')}]);`;
   }

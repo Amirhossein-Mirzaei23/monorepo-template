@@ -4,13 +4,25 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { AccountRole } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
+import { AccountRole, LotStatus, UserStatus } from '@prisma/client';
+import { requireAppConfig } from '../../config/configuration';
 import { findIranCity } from '../../common/constants/iran-geo';
+import type { Paginated } from '../../common/dto/pagination-query.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CategoriesRepository } from '../categories/categories.repository';
 import { UsersRepository } from '../users/users.repository';
+import { LotsRepository, type LotCardRepositoryRow } from '../lots/lots.repository';
+import { toLotCardResponse, type LotCardResponseDto } from '../lots/dto/lot-card.dto';
 import { toPublicSellerSummary, type PublicSellerListDto } from './dto/public-seller.dto';
 import type { ListSellersQueryDto } from './dto/list-sellers-query.dto';
+import {
+  SELLER_PROFILE_ACTIVE_LIMIT,
+  SELLER_PROFILE_SOLD_LIMIT,
+  SellerPublicCategoryDto,
+  toPublicSellerProfile,
+  type PublicSellerProfileDto,
+} from './dto/public-seller-profile.dto';
 import { toProfileResponse, type ProfileResponseDto } from './dto/profile-response.dto';
 import type { SaveOnboardingDto } from './dto/save-onboarding.dto';
 import type { UpdateProfileDto } from './dto/update-profile.dto';
@@ -33,6 +45,8 @@ export class ProfilesService {
     private readonly users: UsersRepository,
     private readonly categories: CategoriesRepository,
     private readonly prisma: PrismaService,
+    private readonly lots: LotsRepository,
+    private readonly config: ConfigService,
   ) {}
 
   async submitOnboarding(userId: string, dto: SaveOnboardingDto): Promise<ProfileResponseDto> {
@@ -209,6 +223,92 @@ export class ProfilesService {
     return { items: query.verified === true ? items.filter((seller) => seller.verified) : items };
   }
 
+  /**
+   * PROF-002 — the public seller profile page payload (GET /profiles/sellers/:id,
+   * @Public). The route param is the PROFILE id (the MKT-004 strip's id space).
+   *
+   * Validation is one UNIFORM 404 with no oracle (the public view must not
+   * reveal why a seller page is gone): unknown profile id, a profile whose
+   * user has no SELLER account role, or a user whose status is not ACTIVE
+   * (suspended/blocked/soft-deleted — DELETED covers the AUTH-008 soft delete)
+   * all answer the same «Seller not found». `isSeller` on the profile row is
+   * deliberately NOT the check — User.accountRoles is the authoritative hat
+   * store (the profile flags merely mirror it).
+   *
+   * Payload assembly (3 lot queries + 1 name lookup, all seller-scoped, the
+   * card include keeps it N+1-free):
+   * - categories: ONE groupBy over the seller's visible ACTIVE lots
+   *   (countActiveByCategory), then the name rows joined and ordered
+   *   count desc → nameFa asc.
+   * - activeLots: page 1 (limit 12) of findPublicBySeller ACTIVE — the exact
+   *   findPublic visibility core.
+   * - soldLots: page 1 (limit 4) of findPublicBySeller SOLD, newest soldAt.
+   * Lot rows map through the lots module's strict card mapper (no
+   * exactAddress/rejectionReason ever), resolved against PUBLIC_MEDIA_BASE_URL
+   * at this boundary — the same discipline as LotsService.findPublic.
+   */
+  async getSellerPublicProfile(id: string): Promise<PublicSellerProfileDto> {
+    const profile = await this.repository.findById(id);
+    const user = profile ? await this.users.findById(profile.userId) : null;
+    if (
+      !profile ||
+      !user ||
+      user.status !== UserStatus.ACTIVE ||
+      !user.accountRoles.includes(AccountRole.SELLER)
+    ) {
+      throw new NotFoundException('Seller not found');
+    }
+
+    const [categoryCounts, activePage, soldPage] = await Promise.all([
+      this.lots.countActiveByCategory(user.id),
+      this.lots.findPublicBySeller(user.id, {
+        status: LotStatus.ACTIVE,
+        page: 1,
+        limit: SELLER_PROFILE_ACTIVE_LIMIT,
+      }),
+      this.lots.findPublicBySeller(user.id, {
+        status: LotStatus.SOLD,
+        page: 1,
+        limit: SELLER_PROFILE_SOLD_LIMIT,
+      }),
+    ]);
+    const categories = await this.resolveSellerCategories(categoryCounts);
+
+    const mediaBaseUrl = requireAppConfig(this.config).storage.publicMediaBaseUrl;
+    return toPublicSellerProfile(
+      profile,
+      user,
+      categories,
+      toLotCardPage(activePage, mediaBaseUrl),
+      toLotCardPage(soldPage, mediaBaseUrl),
+    );
+  }
+
+  /**
+   * Name rows for the category chips, in the final payload order: count desc,
+   * then nameFa (plain code-unit order — chips are display-only). A count row
+   * whose category row vanished (historical edge — Category deletes are
+   * restricted) is skipped, never a partial chip.
+   */
+  private async resolveSellerCategories(
+    counts: Array<{ categoryId: string; _count: { _all: number } }>,
+  ): Promise<SellerPublicCategoryDto[]> {
+    if (counts.length === 0) {
+      return [];
+    }
+    const rows = await this.categories.findManyByIds(counts.map((count) => count.categoryId));
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const withCounts = counts.flatMap((count) => {
+      const row = byId.get(count.categoryId);
+      return row
+        ? [{ id: row.id, nameFa: row.nameFa, slug: row.slug, count: count._count._all }]
+        : [];
+    });
+    return withCounts
+      .sort((a, b) => b.count - a.count || (a.nameFa < b.nameFa ? -1 : a.nameFa > b.nameFa ? 1 : 0))
+      .map(({ id, nameFa, slug }) => ({ id, nameFa, slug }));
+  }
+
   // --- validation helpers (service-level rules from the card) ---
 
   /** ≥1 of BUYER/SELLER — one account may hold both hats, never neither. */
@@ -279,4 +379,16 @@ function normalizeOptionalText(value: string | null): string | null {
     return null;
   }
   return value;
+}
+
+/**
+ * Maps a Paginated page of card ROWS onto a Paginated page of card DTOs —
+ * the PROF-002 envelopes reuse the lots module's strict card mapper verbatim
+ * (cover URL resolved against PUBLIC_MEDIA_BASE_URL by the caller).
+ */
+function toLotCardPage(
+  page: Paginated<LotCardRepositoryRow>,
+  mediaBaseUrl: string,
+): Paginated<LotCardResponseDto> {
+  return { ...page, items: page.items.map((lot) => toLotCardResponse(lot, mediaBaseUrl)) };
 }

@@ -1,8 +1,9 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
 import { ListSellersQueryDto } from './dto/list-sellers-query.dto';
 import { PublicSellerListDto } from './dto/public-seller.dto';
+import { PublicSellerProfileDto } from './dto/public-seller-profile.dto';
 import { ProfilesService } from './profiles.service';
 
 /**
@@ -32,5 +33,26 @@ export class PublicProfilesController {
   })
   async sellers(@Query() query: ListSellersQueryDto): Promise<PublicSellerListDto> {
     return this.profiles.findPublicSellers(query);
+  }
+
+  /**
+   * PROF-002 — the public seller profile page payload. Declared AFTER the
+   * `sellers` collection route (two segments — no route shadowing either way).
+   * Any validation miss (unknown profile id / no SELLER role / user not
+   * ACTIVE) is one uniform 404 with no oracle — see ProfilesService.
+   */
+  @Get('sellers/:id')
+  @Public()
+  @ApiOkResponse({
+    type: PublicSellerProfileDto,
+    description:
+      'Public seller profile: identity + bio + fa location labels + trust placeholders (verified=false until TRS-001, badges=[] until TRS-002, metrics zeros/nulls until PROF-005) + category chips + Paginated active (12) and sold (4) MKT-001 card envelopes. 404 unless the profile exists, the user holds the SELLER role and is ACTIVE',
+  })
+  @ApiOperation({
+    summary:
+      'Public seller profile page (no auth) — /s/{id} source; :id is the PROFILE id from the sellers listing',
+  })
+  async sellerProfile(@Param('id') id: string): Promise<PublicSellerProfileDto> {
+    return this.profiles.getSellerPublicProfile(id);
   }
 }

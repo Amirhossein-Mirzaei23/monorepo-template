@@ -59,6 +59,23 @@ export type LotDetailCategoryDto = components['schemas']['LotDetailCategoryDto']
 export type PublicSellerSummaryDto = components['schemas']['PublicSellerSummaryDto'];
 /** Envelope of GET /profiles/sellers — a plain list, no pagination metadata. */
 export type PublicSellerListDto = components['schemas']['PublicSellerListDto'];
+// --- profiles (PROF-002 public seller page) ---
+/** Trust metrics block — PROF-005 placeholders (zeros + nulls) on a public shape. */
+export type SellerPublicMetricsDto = components['schemas']['SellerPublicMetricsDto'];
+/** One distinct ACTIVE-lot category chip of the seller page. */
+export type SellerPublicCategoryDto = components['schemas']['SellerPublicCategoryDto'];
+/**
+ * GET /profiles/sellers/:id payload. The generated type leaves the two
+ * lot-page envelopes optional (inline-schema quirk) — recompose with them
+ * REQUIRED since the runtime payload always carries both.
+ */
+export type PublicSellerProfileDto = Omit<
+  components['schemas']['PublicSellerProfileDto'],
+  'activeLots' | 'soldLots'
+> & {
+  activeLots: Paginated<LotCardResponseDto>;
+  soldLots: Paginated<LotCardResponseDto>;
+};
 export type LotStatus = LotPublicResponseDto['status'];
 export type LotUnit = LotPublicResponseDto['unit'];
 export type LotCondition = LotPublicResponseDto['condition'];
@@ -131,6 +148,27 @@ export const lotPublicDetailResponseSchema = apiSchemas.LotPublicDetailResponseD
 // --- profiles (MKT-004) ---
 export const publicSellerSummarySchema = apiSchemas.PublicSellerSummaryDto;
 export const publicSellerListSchema = apiSchemas.PublicSellerListDto;
+// --- profiles (PROF-002) ---
+/**
+ * The same Nest quirks as the detail payload hit the seller page: `metrics`
+ * serializes as a lossy `z.object({})`, and the two lot-page envelopes embed
+ * the lossy generated card schema (plus a spurious `.optional()`). Recompose
+ * metrics/categories/pages from the real shapes so the runtime schema
+ * validates and KEEPS what the TS contract (PublicSellerProfileDto) promises.
+ */
+const sellerLotCardPageSchema = zod.object({
+  items: zod.array(lotCardResponseSchema),
+  total: zod.number(),
+  page: zod.number(),
+  limit: zod.number(),
+});
+export const sellerPublicMetricsSchema = apiSchemas.SellerPublicMetricsDto;
+export const sellerPublicCategorySchema = apiSchemas.SellerPublicCategoryDto;
+export const publicSellerProfileSchema = apiSchemas.PublicSellerProfileDto.extend({
+  metrics: apiSchemas.SellerPublicMetricsDto,
+  activeLots: sellerLotCardPageSchema,
+  soldLots: sellerLotCardPageSchema,
+});
 
 // --- shared helpers ---
 

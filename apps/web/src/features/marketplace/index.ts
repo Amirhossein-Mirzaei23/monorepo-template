@@ -85,12 +85,42 @@ export {
   type SellersServerQuery,
 } from './api/marketplace-api';
 /**
+ * PROF-002 — the MKT-010 share builders/actions for the seller page (/s/{id}):
+ * same native-share-then-sheet mechanics as shareLot, with the seller fa text
+ * and the /s/{id} URL (no price segment — a seller page has no single price).
+ */
+/**
+ * MKT-010 + PROF-002 — share builders/actions. The lot set powers the /l/{code}
+ * share sheet; the seller set re-runs the same mechanics on the /s/{id} URL
+ * with the seller fa text (no price segment — a seller page has no single
+ * price). Exported so dependent features (profiles) consume them via the
+ * barrel, per the cross-feature import rule.
+ */
+export {
+  buildLotShareText,
+  buildLotShareUrl,
+  buildTelegramUrl,
+  buildWhatsappUrl,
+  copyLotLink,
+  shareLot,
+  buildSellerShareText,
+  buildSellerShareUrl,
+  shareSeller,
+  copySellerLink,
+  type ShareLotInput,
+  type ShareLotOutcome,
+  type CopyLinkOutcome,
+  type SellerShareInfo,
+  type ShareSellerInput,
+} from './lib/share';
+/**
  * Test fixtures (MKT-009) — contract-shaped payloads for suites OUTSIDE the
  * feature (route-group page tests cannot deep-import into features/, so the
  * fixture travels through the barrel like every other export; the zod-validated
  * page test then fails loudly if the fixture drifts from the contract).
+ * cardLotFixture also feeds dependent features' fixtures (PROF-002 seller page).
  */
-export { lotDetailFixture } from './testing/fixtures';
+export { lotDetailFixture, cardLotFixture } from './testing/fixtures';
 export { marketplaceKeys } from './api/keys';
 export {
   lotCardPageSchema,
