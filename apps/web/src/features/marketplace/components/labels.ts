@@ -1,4 +1,5 @@
-import type { LotCondition, LotUnit, PricingType } from '@monorepo/shared-types';
+import type { LiquidationReason, LotCondition, LotUnit, PricingType } from '@monorepo/shared-types';
+import type { LotsListedWithin } from '../schemas/browse-query';
 
 /**
  * Persian display labels for the lot-card enums (MKT-005) — the marketplace
@@ -29,7 +30,25 @@ export const LOT_CONDITION_LABELS_FA: Record<LotCondition, string> = {
   NEAR_EXPIRY: 'نزدیک انقضا',
 };
 
+export const LIQUIDATION_REASON_LABELS_FA: Record<LiquidationReason, string> = {
+  EXCESS_PRODUCTION: 'تولید مازاد',
+  CANCELLED_ORDER: 'سفارش لغو شده',
+  EXPORT_RETURN: 'مرجوعی صادرات',
+  SEASON_CLEARANCE: 'تخفیف فصلی',
+  OVERSTOCK: 'انباشت موجودی',
+  FACTORY_CLOSURE: 'تعطیلی کارگاه',
+  PACKAGING_CHANGE: 'تغییر بسته‌بندی',
+  NEAR_EXPIRY: 'نزدیک انقضا',
+  OTHER: 'سایر',
+};
+
 export const PRICING_TYPE_LABELS_FA: Record<PricingType, string> = {
   FIXED: 'قیمت ثابت',
   NEGOTIABLE: 'قابل مذاکره',
+};
+
+/** Freshness filter (MKT-008) — the card's «هفت روز گذشته / سی روز گذشته». */
+export const LISTED_WITHIN_LABELS_FA: Record<LotsListedWithin, string> = {
+  '7d': 'هفت روز گذشته',
+  '30d': 'سی روز گذشته',
 };

@@ -76,7 +76,7 @@ Complexity: XS 1 · S 22 · M 71 · L 12 · XL 1.
 | MKT-005   | ✅ Lot card component                    | P0  | 4   | M   |     | DSH-004  | Settings page                       | P0  | 8   | S   |
 | MKT-006   | ✅ Browse page + infinite scroll         | P0  | 4   | M   |     | SAV-001  | Saved lots API                      | P0  | 8   | S   |
 | MKT-007   | ✅ Search UI                             | P0  | 4   | S   |     | SAV-002  | Saved lots page                     | P0  | 8   | M   |
-| MKT-008   | Filters & sort UI                        | P0  | 4   | M   |     | SAV-003  | Saved searches                      | P1  | 9   | M   |
+| MKT-008   | ✅ Filters & sort UI                     | P0  | 4   | M   |     | SAV-003  | Saved searches                      | P1  | 9   | M   |
 | MKT-009   | Lot detail page                          | P0  | 4   | L   |     | SAV-004  | Saved-search notifications          | P2  | 10  | M   |
 | MKT-010   | Share                                    | P0  | 4   | S   |     | NTF-001  | Notification domain + wiring        | P1  | 9   | M   |
 | MKT-011   | Engagement counters + events             | P1  | 9   | M   |     | NTF-002  | Notifications API                   | P1  | 9   | S   |

@@ -1,8 +1,11 @@
 import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import {
+  ActiveFilterChips,
+  FiltersSheet,
   LotList,
   SearchBar,
+  SortSelect,
   fetchLotsServer,
   parseLotsBrowseParams,
   LOT_LIST_PAGE_SIZE,
@@ -26,6 +29,10 @@ import {
  * here with a new q. It is keyed by the URL q so back/forward keeps the input
  * in URL sync, and `initialQuery` prefills shared /lots?q=… links (which work
  * logged-out — the page is public). The home page placement is MKT-004.
+ *
+ * MKT-008: the toolbar above the grid — the filter sheet trigger (bottom
+ * sheet on mobile, sidebar panel on ≥md), the sort select and the
+ * active-filter chips. All three write the SAME URL params the list reads.
  */
 export const metadata: Metadata = {
   title: 'فهرست لات‌ها',
@@ -56,6 +63,11 @@ export default async function LotsPage({ searchParams }: LotsPageProps) {
         </div>
       </header>
       <Suspense fallback={<p className="text-muted-foreground text-sm">در حال بارگذاری…</p>}>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <FiltersSheet />
+          <SortSelect />
+        </div>
+        <ActiveFilterChips />
         <LotList initialPage={initialPage} />
       </Suspense>
     </main>

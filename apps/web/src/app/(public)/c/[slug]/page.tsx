@@ -2,7 +2,10 @@ import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import {
+  ActiveFilterChips,
+  FiltersSheet,
   LotList,
+  SortSelect,
   fetchCategoriesServer,
   fetchLotsServer,
   findCategoryBySlug,
@@ -18,6 +21,11 @@ import {
  * params, while the rest of the URL state (sort, filters, q) keeps working
  * (PLAT-005 refines the SEO surface later). Same SSR page-1 handoff as
  * /lots — see that page's doc for the SSR/client split.
+ *
+ * MKT-008: the same filter toolbar as /lots, but with `hideCategory` — the
+ * category is LOCKED by the path scope, so the sheet hides its cascade and
+ * never writes categoryId params (the chips row never shows one either,
+ * since the scope lives outside the URL).
  */
 interface CategoryPageProps {
   params: Promise<{ slug: string }>;
@@ -57,6 +65,11 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
         <h1 className="text-xl font-semibold tracking-tight">{category.nameFa}</h1>
       </header>
       <Suspense fallback={<p className="text-muted-foreground text-sm">در حال بارگذاری…</p>}>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <FiltersSheet hideCategory />
+          <SortSelect />
+        </div>
+        <ActiveFilterChips />
         <LotList scope={scope} initialPage={initialPage} />
       </Suspense>
     </main>

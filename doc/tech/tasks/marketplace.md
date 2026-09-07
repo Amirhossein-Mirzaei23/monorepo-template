@@ -129,7 +129,7 @@ discovery. Exact seller addresses never appear in public payloads.
 - **Testing:** component tests (submit/normalize/recents).
 - **DoD:** suites green.
 
-### MKT-008 — Filters & sort UI
+### MKT-008 ✅ — Filters & sort UI
 
 **P0 · Phase 4 · Marketplace · M** — Deps: MKT-002, MKT-006, CAT-003
 

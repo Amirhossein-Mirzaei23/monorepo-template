@@ -17,6 +17,8 @@ export {
   LOT_CONDITION_LABELS_FA,
   LOT_UNIT_LABELS_FA,
   PRICING_TYPE_LABELS_FA,
+  LIQUIDATION_REASON_LABELS_FA,
+  LISTED_WITHIN_LABELS_FA,
 } from './components/labels';
 // --- MKT-006 browse (listing fetchers, hooks, list UI, URL param contract) ---
 export { LotList, type LotListProps } from './components/lot-list';
@@ -24,6 +26,26 @@ export { useLots, useLotsList, type LotsListState } from './hooks/use-lots';
 // --- MKT-007 search (bar UI, input normalization, recent searches) ---
 export { SearchBar, type SearchBarProps } from './components/search-bar';
 export { normalizeSearchInput, SEARCH_QUERY_MIN_LENGTH } from './lib/search-normalize';
+// --- MKT-008 filters & sort (sheet, sort select, active chips, form mirror) ---
+export { FiltersSheet, type FiltersSheetProps } from './components/filters-sheet';
+export { SortSelect, SORT_LABELS_FA } from './components/sort-select';
+export { ActiveFilterChips } from './components/active-filter-chips';
+export {
+  EMPTY_FILTERS_FORM,
+  filtersFormSchema,
+  formValuesFromFilter,
+  normalizeNumericInput,
+  commitFiltersToParams,
+  removeFilterParamValue,
+  browseHref,
+  FILTER_PARAM_KEYS,
+  PRICE_BOUNDS_MESSAGE,
+  PRICE_ORDER_MESSAGE,
+  QTY_BOUNDS_MESSAGE,
+  QTY_ORDER_MESSAGE,
+  type FiltersFormValues,
+  type ParsedFiltersForm,
+} from './schemas/filters-schema';
 export {
   readRecentSearches,
   addRecentSearch,
