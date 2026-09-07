@@ -1,16 +1,30 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { ToastProvider } from '@/components/ui/toast';
 import { LotDetail } from '../components/lot-detail';
+import { buildLotShareText, buildLotShareUrl } from '../lib/share';
 import { lotDetailFixture } from '../testing/fixtures';
 
 /**
  * MKT-009 detail-surface tests: header (title, location «شهر — منطقه», price
  * hierarchy), the spec block's fa label rows (unit/condition/reason/pricing/
  * category path/expiry), description, seller summary, the similar-lots grid,
- * and the disabled-first CTA contract (chat/offer/save/share disabled with
- * «به‌زودی», report button ABSENT until TRS-004).
+ * the disabled-first CTA contract (chat/offer/save disabled with «به‌زودی»,
+ * report button ABSENT until TRS-004), and the MKT-010 share wiring (native
+ * navigator.share first, share-sheet fallback on click).
+ *
+ * Renders are wrapped in ToastProvider — the share sheet consumes useToast.
  */
 
 const NOW = new Date('2026-09-05T12:00:00.000Z');
+
+function renderDetail(overrides: Parameters<typeof lotDetailFixture>[0] = {}) {
+  return render(
+    <ToastProvider>
+      <LotDetail lot={lotDetailFixture(overrides)} />
+    </ToastProvider>,
+  );
+}
 
 describe('LotDetail — header', () => {
   beforeEach(() => {
@@ -22,7 +36,7 @@ describe('LotDetail — header', () => {
   });
 
   it('renders title, price hierarchy and the «{city} — {locationHint}» location line', () => {
-    render(<LotDetail lot={lotDetailFixture()} />);
+    renderDetail();
 
     const lot = lotDetailFixture();
     expect(screen.getByRole('heading', { level: 1, name: lot.title })).toBeInTheDocument();
@@ -36,7 +50,7 @@ describe('LotDetail — header', () => {
   });
 
   it('renders the bare fa city when the lot has no locationHint', () => {
-    render(<LotDetail lot={lotDetailFixture({ locationHint: null })} />);
+    renderDetail({ locationHint: null });
 
     expect(screen.getAllByText('تهران').length).toBeGreaterThan(0);
   });
@@ -52,7 +66,7 @@ describe('LotDetail — spec block (fa display maps)', () => {
   });
 
   it('renders every labeled spec row with fa values', () => {
-    render(<LotDetail lot={lotDetailFixture()} />);
+    renderDetail();
 
     // Values like «۵۰ عدد» / «درجه A» also appear inside similar cards, so the
     // spec rows assert on their own <dl> (the terms are unique page-wide).
@@ -78,13 +92,13 @@ describe('LotDetail — spec block (fa display maps)', () => {
   });
 
   it('renders the top-level category alone when there is no subcategory', () => {
-    render(<LotDetail lot={lotDetailFixture({ subcategory: null })} />);
+    renderDetail({ subcategory: null });
 
     expect(screen.getByText('پوشاک')).toBeInTheDocument();
   });
 
   it('renders the description section with preserved line breaks', () => {
-    render(<LotDetail lot={lotDetailFixture()} />);
+    renderDetail();
 
     expect(screen.getByRole('region', { name: 'توضیحات' })).toHaveTextContent(
       'پیراهن‌های درجه A در کارتن‌های ۱۰ عددی',
@@ -102,7 +116,7 @@ describe('LotDetail — seller summary', () => {
   });
 
   it('renders the business name, fa city and no verified badge while verified=false', () => {
-    render(<LotDetail lot={lotDetailFixture()} />);
+    renderDetail();
 
     const seller = screen.getByRole('region', { name: 'فروشنده' });
     expect(seller).toHaveTextContent('تولیدی پوشاک مینا');
@@ -114,7 +128,11 @@ describe('LotDetail — seller summary', () => {
     const lot = lotDetailFixture({
       seller: { id: 's1', name: 'مینا رضایی', businessName: null, city: null, verified: false },
     });
-    render(<LotDetail lot={lot} />);
+    render(
+      <ToastProvider>
+        <LotDetail lot={lot} />
+      </ToastProvider>,
+    );
 
     const seller = screen.getByRole('region', { name: 'فروشنده' });
     expect(seller).toHaveTextContent('مینا رضایی');
@@ -125,7 +143,11 @@ describe('LotDetail — seller summary', () => {
     const lot = lotDetailFixture({
       seller: { ...lotDetailFixture().seller, verified: true },
     });
-    render(<LotDetail lot={lot} />);
+    render(
+      <ToastProvider>
+        <LotDetail lot={lot} />
+      </ToastProvider>,
+    );
 
     expect(screen.getByText('تأییدشده')).toBeInTheDocument();
   });
@@ -141,7 +163,7 @@ describe('LotDetail — similar lots', () => {
   });
 
   it('renders the similar grid as cards linking to /l/{code}', () => {
-    render(<LotDetail lot={lotDetailFixture()} />);
+    renderDetail();
 
     expect(screen.getByRole('region', { name: 'لات‌های مشابه' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /لات مشابه یک/ })).toHaveAttribute(
@@ -155,41 +177,82 @@ describe('LotDetail — similar lots', () => {
   });
 
   it('renders no similar section when the payload is empty', () => {
-    render(<LotDetail lot={lotDetailFixture({ similar: [] })} />);
+    renderDetail({ similar: [] });
 
     expect(screen.queryByRole('region', { name: 'لات‌های مشابه' })).not.toBeInTheDocument();
   });
 });
 
-describe('LotDetail — CTA contract (disabled-first, MKT-009)', () => {
+describe('LotDetail — CTA contract (MKT-009 disabled-first + MKT-010 share)', () => {
   beforeEach(() => {
     jest.spyOn(Date, 'now').mockReturnValue(NOW.getTime());
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
+    // @ts-expect-error -- removing the navigator.share stub (if set)
+    delete window.navigator.share;
   });
 
-  it('renders chat/offer/save/share DISABLED with the «به‌زودی» tooltip', () => {
-    render(<LotDetail lot={lotDetailFixture()} />);
+  it('renders chat/offer/save DISABLED with «به‌زودی» and the share button ENABLED', () => {
+    renderDetail();
 
     // The actions render on BOTH surfaces (sticky mobile bar + desktop row).
     const chat = screen.getAllByRole('button', { name: /گفتگو با فروشنده/ });
     const offer = screen.getAllByRole('button', { name: /پیشنهاد قیمت/ });
     const save = screen.getAllByRole('button', { name: /ذخیره/ });
-    const share = screen.getAllByRole('button', { name: /هم‌رسانی/ });
-    for (const group of [chat, offer, save, share]) {
+    for (const group of [chat, offer, save]) {
       expect(group.length).toBeGreaterThanOrEqual(1);
       for (const button of group) {
         expect(button).toBeDisabled();
         expect(button).toHaveAttribute('title', 'به‌زودی');
       }
     }
+    // MKT-010 wired the share button — no more «به‌زودی» placeholder.
+    for (const button of screen.getAllByRole('button', { name: 'هم‌رسانی' })) {
+      expect(button).toBeEnabled();
+      expect(button).not.toHaveAttribute('title', 'به‌زودی');
+    }
   });
 
   it('renders NO report button (feature-flagged until TRS-004)', () => {
-    render(<LotDetail lot={lotDetailFixture()} />);
+    renderDetail();
 
     expect(screen.queryByRole('button', { name: /گزارش/ })).not.toBeInTheDocument();
+  });
+
+  it('opens the share sheet on click when navigator.share is unavailable', async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getAllByRole('button', { name: 'هم‌رسانی' })[0]!);
+
+    expect(await screen.findByRole('dialog', { name: 'هم‌رسانی' })).toBeInTheDocument();
+    // The sheet offers the fa options of MKT-010.
+    expect(screen.getByRole('button', { name: 'کپی لینک' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'تلگرام' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'واتساپ' })).toBeInTheDocument();
+  });
+
+  it('calls native navigator.share when available and never opens the sheet', async () => {
+    const nativeShare = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window.navigator, 'share', {
+      value: nativeShare,
+      configurable: true,
+    });
+    const user = userEvent.setup();
+    renderDetail();
+    const lot = lotDetailFixture();
+
+    await user.click(screen.getAllByRole('button', { name: 'هم‌رسانی' })[0]!);
+
+    await waitFor(() => {
+      expect(nativeShare).toHaveBeenCalledWith({
+        title: lot.title,
+        text: buildLotShareText({ title: lot.title, unitPrice: lot.unitPrice, city: 'تهران' }),
+        url: buildLotShareUrl(lot.code),
+      });
+    });
+    expect(screen.queryByRole('dialog', { name: 'هم‌رسانی' })).not.toBeInTheDocument();
   });
 });

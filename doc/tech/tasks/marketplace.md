@@ -164,7 +164,7 @@ discovery. Exact seller addresses never appear in public payloads.
 - **Testing:** page render test, payload allowlist e2e, gallery component tests.
 - **DoD:** lint/typecheck/test green.
 
-### MKT-010 — Share
+### MKT-010 ✅ — Share
 
 **P0 · Phase 4 · Marketplace · S** — Deps: MKT-009
 
