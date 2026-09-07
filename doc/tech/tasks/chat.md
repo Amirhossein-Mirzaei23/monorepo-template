@@ -61,7 +61,7 @@ media pipeline (secure serving).
 - **Testing:** service unit (transaction steps), e2e incl. throttle.
 - **DoD:** suites green.
 
-### CHT-004 — WebSocket gateway (realtime)
+### CHT-004 ✅ — WebSocket gateway (realtime)
 
 **P0 · Phase 5 · Chat · L** — Deps: CHT-003 (adds `@nestjs/websockets`, `@nestjs/platform-socket.io`, web `socket.io-client` — intentional dep changes)
 

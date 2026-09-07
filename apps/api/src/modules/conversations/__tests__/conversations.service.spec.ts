@@ -27,6 +27,12 @@ import {
   CONVERSATION_PREVIEW_MAX_LENGTH,
   MESSAGE_ERROR_CODES,
 } from '../conversations.constants';
+import type {
+  ChatEmitter,
+  ConversationUpdatedEvent,
+  MessageNewEvent,
+  MessageReadEvent,
+} from '../chat.events';
 import { ConversationsRepository } from '../conversations.repository';
 import { ConversationsService } from '../conversations.service';
 import { ConversationListQueryDto } from '../dto/conversation-list.dto';
@@ -34,6 +40,30 @@ import { MessageListQueryDto, SendMessageDto } from '../dto/message.dto';
 
 const MEDIA_BASE_URL = 'http://media.test';
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * CHT-004 — recording fake bound to the service's ChatEmitter SEAM. The
+ * service never sees socket.io; these arrays assert the exact outbound
+ * announcements (and their absence on rejected mutations).
+ */
+class FakeChatEmitter implements ChatEmitter {
+  readonly messageNew: MessageNewEvent[] = [];
+  readonly conversationUpdated: Array<{ recipientId: string; event: ConversationUpdatedEvent }> =
+    [];
+  readonly messageRead: MessageReadEvent[] = [];
+
+  emitMessageNew(payload: MessageNewEvent): void {
+    this.messageNew.push(payload);
+  }
+
+  emitConversationUpdated(recipientId: string, event: ConversationUpdatedEvent): void {
+    this.conversationUpdated.push({ recipientId, event });
+  }
+
+  emitMessageRead(payload: MessageReadEvent): void {
+    this.messageRead.push(payload);
+  }
+}
 
 /** Grabs the rejection instead of try/catch noise in every test. */
 async function rejectionOf(promise: Promise<unknown>): Promise<HttpException> {
@@ -53,6 +83,7 @@ describe('ConversationsService', () => {
   let service: ConversationsService;
   let repository: ConversationsRepository;
   let fake: FakePrisma;
+  let emitter: FakeChatEmitter;
   let sellerId: string;
   let buyerId: string;
 
@@ -77,6 +108,7 @@ describe('ConversationsService', () => {
 
   beforeEach(() => {
     fake = new FakePrisma();
+    emitter = new FakeChatEmitter();
     repository = new ConversationsRepository(fake as unknown as PrismaService);
     const users = new UsersRepository(fake as unknown as PrismaService);
     const lots = new LotsRepository(fake as unknown as PrismaService);
@@ -91,6 +123,7 @@ describe('ConversationsService', () => {
       lots,
       fake as unknown as PrismaService,
       config,
+      emitter,
     );
 
     sellerId = fake.seedUser({
@@ -666,6 +699,125 @@ describe('ConversationsService', () => {
           );
         }
         expect(await fake.message.count({ where: { conversationId: conversation.id } })).toBe(1);
+      });
+    });
+
+    /**
+     * CHT-004 — the realtime seam: the service announces COMMITTED mutations
+     * through the injected ChatEmitter (here the recording fake — production
+     * binds the socket.io ChatGateway). Emissions are asserted for payload
+     * shape AND routing (recipient = the OTHER side).
+     */
+    describe('CHT-004 — realtime announcements (fake emitter)', () => {
+      const textDto = (body: string): SendMessageDto => {
+        const dto = new SendMessageDto();
+        dto.body = body;
+        return dto;
+      };
+
+      it('a committed send emits message:new to the thread AND conversation:updated to the OTHER participant', async () => {
+        const lot = seedActiveLot();
+        const lastMessageAt = new Date('2026-09-01T10:00:00.000Z');
+        const conversation = fake.seedConversation({
+          lotId: lot.id,
+          buyerId,
+          sellerId,
+          lastMessageAt,
+          lastMessagePreview: 'گفتگو درباره',
+        });
+
+        const response = await service.sendMessage(buyerId, conversation.id, textDto('سلام'));
+
+        // message:new — exactly one, carrying the committed response payload.
+        expect(emitter.messageNew).toHaveLength(1);
+        expect(emitter.messageNew[0]).toEqual({
+          conversationId: conversation.id,
+          message: response,
+        });
+
+        // conversation:updated — routed to the OTHER side (seller), with the
+        // recipient's post-increment unread counter, not the sender's.
+        expect(emitter.conversationUpdated).toHaveLength(1);
+        const routing = emitter.conversationUpdated[0];
+        expect(routing?.recipientId).toBe(sellerId);
+        expect(routing?.event.conversationId).toBe(conversation.id);
+        expect(routing?.event.preview).toBe('سلام');
+        expect(routing?.event.unreadCount).toBe(1);
+        expect(routing?.event.lastMessageAt.getTime()).toBeGreaterThanOrEqual(
+          response.createdAt.getTime() - 1_000,
+        );
+      });
+
+      it('mirrors the routing when the SELLER sends: recipient is the buyer, buyerUnreadCount reported', async () => {
+        const lot = seedActiveLot();
+        const conversation = fake.seedConversation({
+          lotId: lot.id,
+          buyerId,
+          sellerId,
+          lastMessageAt: new Date(),
+          buyerUnreadCount: 4,
+        });
+
+        await service.sendMessage(sellerId, conversation.id, textDto('بله موجود است'));
+
+        expect(emitter.conversationUpdated).toHaveLength(1);
+        expect(emitter.conversationUpdated[0]?.recipientId).toBe(buyerId);
+        expect(emitter.conversationUpdated[0]?.event.unreadCount).toBe(5);
+        // The sender must never receive their own conversation:updated ping.
+        expect(emitter.conversationUpdated.map((entry) => entry.recipientId)).not.toContain(
+          sellerId,
+        );
+      });
+
+      it('rejected sends emit nothing (announcements follow the commit, not the attempt)', async () => {
+        const lot = seedActiveLot();
+        const conversation = fake.seedConversation({
+          lotId: lot.id,
+          buyerId,
+          sellerId,
+          lastMessageAt: new Date(),
+          status: ConversationStatus.BLOCKED,
+        });
+
+        await expect(
+          service.sendMessage(buyerId, conversation.id, textDto('سلام')),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+
+        expect(emitter.messageNew).toHaveLength(0);
+        expect(emitter.conversationUpdated).toHaveLength(0);
+      });
+
+      it('markRead emits message:read to the thread with readerId + the stamped count (even 0)', async () => {
+        const lot = seedActiveLot();
+        const conversation = fake.seedConversation({
+          lotId: lot.id,
+          buyerId,
+          sellerId,
+          lastMessageAt: new Date(),
+        });
+        fake.seedMessage({
+          conversationId: conversation.id,
+          senderId: sellerId,
+          body: 'پیام فروشنده',
+        });
+
+        const first = await service.markRead(buyerId, conversation.id);
+        const second = await service.markRead(buyerId, conversation.id);
+
+        expect(emitter.messageRead).toHaveLength(2);
+        expect(emitter.messageRead[0]).toEqual({
+          conversationId: conversation.id,
+          readerId: buyerId,
+          readCount: first.readCount,
+        });
+        expect(first.readCount).toBe(1);
+        // Idempotent re-read still announces the reader is caught up (0 stamped).
+        expect(emitter.messageRead[1]).toEqual({
+          conversationId: conversation.id,
+          readerId: buyerId,
+          readCount: second.readCount,
+        });
+        expect(second.readCount).toBe(0);
       });
     });
 

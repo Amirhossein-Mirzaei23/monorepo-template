@@ -22,6 +22,8 @@ import { TokenService } from './token.service';
   ],
   controllers: [AuthController],
   providers: [AuthService, TokenService],
-  exports: [JwtModule],
+  // TokenService is also exported for the /ws chat gateway's handshake (CHT-004):
+  // socket connections verify the SAME access tokens through the SAME service.
+  exports: [JwtModule, TokenService],
 })
 export class AuthModule {}

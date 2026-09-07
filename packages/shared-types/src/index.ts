@@ -25,6 +25,8 @@ export type OtpVerifyResponseDto = components['schemas']['OtpVerifyResponseDto']
 export type MeResponseDto = components['schemas']['MeResponseDto'];
 export type SaveOnboardingDto = components['schemas']['SaveOnboardingDto'];
 export type ProfileResponseDto = components['schemas']['ProfileResponseDto'];
+// --- conversations / messages (CHT-003; CHT-004 embeds it in WS payloads) ---
+export type MessageResponseDto = components['schemas']['MessageResponseDto'];
 export type UpdateProfileDto = components['schemas']['UpdateProfileDto'];
 /** Read-only trust metrics block on ProfileResponseDto (placeholders until P1). */
 export type ProfileMetricsDto = ProfileResponseDto['metrics'];

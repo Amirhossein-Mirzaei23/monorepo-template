@@ -9,6 +9,7 @@ import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import { requireAppConfig } from './config/configuration';
 import { createGlobalValidationPipe } from './common/pipes/validation.pipe';
+import { WsAdapter } from './common/ws/ws-adapter';
 import { AppModule } from './app.module';
 import { buildOpenApiDocument } from './swagger';
 
@@ -41,6 +42,10 @@ async function bootstrap(): Promise<void> {
     exposedHeaders: ['x-request-id'],
   });
   app.useGlobalPipes(createGlobalValidationPipe());
+  // CHT-004 — the /ws socket.io gateway rides the same HTTP server; its
+  // handshake CORS comes from app.ws.origins (credentials on) via this
+  // adapter. REST CORS above is unchanged (corsOrigins).
+  app.useWebSocketAdapter(new WsAdapter(app, app.get(ConfigService)));
   app.enableShutdownHooks();
 
   // --- Swagger (contract source of truth for packages/shared-types) ---

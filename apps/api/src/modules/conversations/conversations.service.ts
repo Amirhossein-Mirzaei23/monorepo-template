@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -44,6 +45,7 @@ import {
   type MessageListQueryDto,
 } from './dto/message.dto';
 import type { Paginated } from '../../common/dto/pagination-query.dto';
+import { CHAT_EMITTER, type ChatEmitter, type ConversationUpdatedEvent } from './chat.events';
 import { ConversationsRepository } from './conversations.repository';
 import type { CreateConversationDto } from './dto/create-conversation.dto';
 
@@ -83,6 +85,14 @@ export class ConversationsService {
     private readonly lots: LotsRepository,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    /**
+     * CHT-004 — the outbound realtime seam, injected as the ChatEmitter
+     * INTERFACE (CHAT_EMITTER token; ConversationsModule binds it to the
+     * ChatGateway with `useExisting`). The service only announces COMMITTED
+     * mutations and never touches socket.io, so unit tests run against a
+     * recording fake.
+     */
+    @Inject(CHAT_EMITTER) private readonly emitter: ChatEmitter,
   ) {}
 
   async getOrCreate(buyerId: string, dto: CreateConversationDto): Promise<ConversationResponseDto> {
@@ -173,8 +183,13 @@ export class ConversationsService {
    * { increment } (buyer sends → sellerUnreadCount+1, seller sends →
    * buyerUnreadCount+1; my own counter never moves on my own send).
    *
-   * Returns the created row as MessageResponseDto — the seam CHT-004's
-   * gateway emits through after the service resolves (no emitter yet).
+   * Returns the created row as MessageResponseDto. CHT-004: AFTER the
+   * transaction commits, the realtime announcements go through the injected
+   * emitter — `message:new` to the conversation room and
+   * `conversation:updated` to the OTHER participant's user room (carrying the
+   * recipient's post-increment unread counter). Emitting post-commit means
+   * listeners only ever see committed data; a lost delivery is recovered by
+   * the web's polling fallback.
    */
   async sendMessage(
     userId: string,
@@ -191,7 +206,7 @@ export class ConversationsService {
 
     const body = dto.body; // trimmed by the DTO transform — the service trusts the boundary
     const sentAt = new Date();
-    const created = await this.prisma.$transaction(async (tx) => {
+    const { message, updated } = await this.prisma.$transaction(async (tx) => {
       const message = await this.repository.createMessage(
         {
           conversationId: conversation.id,
@@ -201,7 +216,9 @@ export class ConversationsService {
         },
         tx,
       );
-      await this.repository.updateConversation(
+      // Re-read through the update's return: the post-increment counters feed
+      // the conversation:updated payload (the recipient's new unread count).
+      const updated = await this.repository.updateConversation(
         conversation.id,
         {
           lastMessageAt: sentAt,
@@ -212,9 +229,37 @@ export class ConversationsService {
         },
         tx,
       );
-      return message;
+      return { message, updated };
     });
-    return toMessageResponse(created);
+
+    const response = toMessageResponse(message);
+    this.emitter.emitMessageNew({ conversationId: conversation.id, message: response });
+    const [recipientId, updatedEvent] = this.conversationUpdatedArgs(userId, updated);
+    this.emitter.emitConversationUpdated(recipientId, updatedEvent);
+    return response;
+  }
+
+  /**
+   * Builds the `conversation:updated` recipient + payload for a committed
+   * send: the OTHER side of the thread (never the sender), the activity stamp
+   * written by the transaction, the stored preview, and their unread counter
+   * AFTER the atomic increment (mirrors the send's increment arm).
+   */
+  private conversationUpdatedArgs(
+    senderId: string,
+    updated: Conversation,
+  ): [string, ConversationUpdatedEvent] {
+    const senderIsBuyer = updated.buyerId === senderId;
+    const recipientId = senderIsBuyer ? updated.sellerId : updated.buyerId;
+    return [
+      recipientId,
+      {
+        conversationId: updated.id,
+        lastMessageAt: updated.lastMessageAt,
+        preview: updated.lastMessagePreview,
+        unreadCount: senderIsBuyer ? updated.sellerUnreadCount : updated.buyerUnreadCount,
+      },
+    ];
   }
 
   /**
@@ -277,6 +322,10 @@ export class ConversationsService {
    * informational and never carry read state). Answers the simple
    * { readCount } shape (documented decision on the card): how many rows this
    * call actually stamped — 0 on an idempotent re-read.
+   *
+   * CHT-004: post-commit, a `message:read` receipt goes to the conversation
+   * room through the emitter (the sender's ticks flip live). Always emitted —
+   * even for readCount 0 — so the counterpart learns the reader is caught up.
    */
   async markRead(userId: string, conversationId: string): Promise<MarkConversationReadResponseDto> {
     await this.requireUser(userId);
@@ -300,6 +349,11 @@ export class ConversationsService {
         { readAt },
         tx,
       );
+    });
+    this.emitter.emitMessageRead({
+      conversationId: conversation.id,
+      readerId: userId,
+      readCount: count,
     });
     return { readCount: count };
   }
