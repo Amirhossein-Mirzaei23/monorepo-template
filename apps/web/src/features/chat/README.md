@@ -1,8 +1,8 @@
 # Chat feature
 
-CHT-004 scope: the realtime transport (socket singleton + hook). UI surfaces
-land with CHT-005 (inbox) and CHT-006 (thread) under `components/` and
-`app/(app)/chat/`.
+CHT-004 scope: the realtime transport (socket singleton + hook). CHT-005 added
+the inbox (data + UI); the thread surface lands with CHT-006 under
+`app/(app)/chat/[id]` (the current file there is a placeholder).
 
 ## Layout
 
@@ -11,7 +11,12 @@ features/chat/
 ├── lib/socket-contract.ts   # web mirror of the API's WS contract (chat.events.ts)
 ├── lib/socket.ts            # socket.io-client SINGLETON (path /ws, auth fn, autoConnect false)
 ├── hooks/use-chat-socket.ts # auth-driven connect + typed on/off/emit + 10s polling-fallback flag
-└── __tests__/               # hook tests (fake socket, fake timers)
+├── hooks/use-conversations.ts # CHT-005 inbox query (infinite) + WS invalidation + 15s fallback poll
+├── api/keys.ts              # chatKeys (query-key factory)
+├── api/chat-api.ts          # GET /conversations via the BFF, zod-validated (CHT-002)
+├── components/chat-inbox.tsx       # CHT-005 /chat body: header + fallback badge + list
+├── components/conversations-list.tsx # CHT-005 rows (lot context, unread, system preview) + states
+└── __tests__/               # hook tests (fake socket, fake timers) + component tests
 ```
 
 ## Contract summary (full table: apps/api/src/modules/conversations/README.md)

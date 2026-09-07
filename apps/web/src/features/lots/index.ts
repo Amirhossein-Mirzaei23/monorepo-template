@@ -6,6 +6,8 @@ export { CreateLotWizard, type CreateLotWizardProps } from './components/create-
 export { LotSummaryCard, type LotSummaryCardProps } from './components/lot-summary-card';
 export { MyLotsPage } from './components/my-lots-page';
 export { UnitPricePreview, type UnitPricePreviewProps } from './components/unit-price-preview';
+/** Semantic status chip — reused by the chat inbox rows (CHT-005) via this barrel. */
+export { LotStatusChip } from './components/lot-status-chip';
 export { StepMedia } from './components/steps/step-media';
 export { StepBasics } from './components/steps/step-basics';
 export { StepPricing } from './components/steps/step-pricing';

@@ -79,7 +79,7 @@ media pipeline (secure serving).
 - **Testing:** gateway unit tests (auth, room guard, emit-on-send via mocked emitter); hook tests (fallback switching).
 - **DoD:** WS origins config via PLAT-003; suites green.
 
-### CHT-005 — Conversations list UI
+### CHT-005 ✅ — Conversations list UI
 
 **P0 · Phase 5 · Chat · L** — Deps: CHT-002, CHT-004, PLAT-001
 

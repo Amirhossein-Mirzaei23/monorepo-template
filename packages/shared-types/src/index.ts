@@ -27,6 +27,9 @@ export type SaveOnboardingDto = components['schemas']['SaveOnboardingDto'];
 export type ProfileResponseDto = components['schemas']['ProfileResponseDto'];
 // --- conversations / messages (CHT-003; CHT-004 embeds it in WS payloads) ---
 export type MessageResponseDto = components['schemas']['MessageResponseDto'];
+// --- conversations inbox (CHT-002/005) ---
+export type ConversationResponseDto = components['schemas']['ConversationResponseDto'];
+export type ConversationLotSummaryDto = components['schemas']['ConversationLotSummaryDto'];
 export type UpdateProfileDto = components['schemas']['UpdateProfileDto'];
 /** Read-only trust metrics block on ProfileResponseDto (placeholders until P1). */
 export type ProfileMetricsDto = ProfileResponseDto['metrics'];
@@ -150,6 +153,52 @@ export const lotPublicDetailResponseSchema = apiSchemas.LotPublicDetailResponseD
 // --- profiles (MKT-004) ---
 export const publicSellerSummarySchema = apiSchemas.PublicSellerSummaryDto;
 export const publicSellerListSchema = apiSchemas.PublicSellerListDto;
+// --- conversations inbox (CHT-002) ---
+export const conversationResponseSchema = apiSchemas.ConversationResponseDto;
+export const conversationLotSummarySchema = apiSchemas.ConversationLotSummaryDto;
+/** Conversation status — derived from the generated schema (compile-time synced). */
+export const conversationStatusSchema = conversationResponseSchema.shape.status;
+/**
+ * GET /conversations items (CHT-002). The controller documents the response as
+ * `Paginated<ConversationListItemDto>` INLINE (description-only `@ApiOkResponse`
+ * — no `type:`), so the swagger document carries no named
+ * `ConversationListItemDto` schema and there is nothing generated to recompose;
+ * this mirror hand-writes the DTO fields
+ * (apps/api/src/modules/conversations/dto/conversation-list.dto.ts) with the
+ * status enum derived from the generated ConversationResponseDto. Contract
+ * drift fails loudly at parse time (`parseApiResponse`), like every card.
+ */
+export const conversationCounterpartSchema = zod.object({
+  id: zod.string(),
+  name: zod.string(),
+  /** Placeholder — always null until user avatars exist (MEDIA/TRS follow-up). */
+  avatarUrl: zod.string().nullable(),
+  /** TRS-001 placeholder — hard false until Phase 7; the badge stays hidden. */
+  verified: zod.boolean(),
+});
+export const conversationListItemSchema = zod.object({
+  id: zod.string(),
+  status: conversationStatusSchema,
+  /** Newest-message stamp — the inbox sort key (ISO datetime over the wire). */
+  lastMessageAt: zod.iso.datetime(),
+  lastMessagePreview: zod.string().nullable(),
+  isLastMessageSystem: zod.boolean(),
+  lot: conversationLotSummarySchema,
+  counterpart: conversationCounterpartSchema,
+  myUnreadCount: zod.number(),
+  role: zod.enum(['buyer', 'seller']),
+});
+export type ConversationCounterpartDto = zod.infer<typeof conversationCounterpartSchema>;
+export type ConversationListItemDto = zod.infer<typeof conversationListItemSchema>;
+export type ConversationStatus = zod.infer<typeof conversationStatusSchema>;
+export type ConversationRole = ConversationListItemDto['role'];
+/** The GET /conversations envelope — Paginated<ConversationListItemDto>. */
+export const conversationsPageSchema = zod.object({
+  items: zod.array(conversationListItemSchema),
+  total: zod.number(),
+  page: zod.number(),
+  limit: zod.number(),
+});
 // --- profiles (PROF-002) ---
 /**
  * The same Nest quirks as the detail payload hit the seller page: `metrics`
