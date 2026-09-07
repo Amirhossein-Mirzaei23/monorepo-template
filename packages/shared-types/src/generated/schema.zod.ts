@@ -194,6 +194,19 @@ export const updateProfileDtoSchema = z.object({
   interests: z.array(z.string()).optional(),
 });
 
+export const publicSellerSummaryDtoSchema = z.object({
+  id: z.string(),
+  displayName: z.string(),
+  businessName: z.string().nullable().optional(),
+  province: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  verified: z.boolean(),
+});
+
+export const publicSellerListDtoSchema = z.object({
+  items: z.array(publicSellerSummaryDtoSchema),
+});
+
 export const lotMediaResponseDtoSchema = z.object({
   id: z.string(),
   mediaAssetId: z.string(),
@@ -394,6 +407,8 @@ export const apiSchemas = {
   ProfileMetricsDto: profileMetricsDtoSchema,
   ProfileResponseDto: profileResponseDtoSchema,
   UpdateProfileDto: updateProfileDtoSchema,
+  PublicSellerSummaryDto: publicSellerSummaryDtoSchema,
+  PublicSellerListDto: publicSellerListDtoSchema,
   LotMediaResponseDto: lotMediaResponseDtoSchema,
   LotPublicResponseDto: lotPublicResponseDtoSchema,
   LotCardSellerDto: lotCardSellerDtoSchema,

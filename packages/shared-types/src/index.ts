@@ -44,6 +44,11 @@ export type PutLotMediaDto = components['schemas']['PutLotMediaDto'];
 export type LotCardResponseDto = components['schemas']['LotCardResponseDto'];
 /** Minimal seller summary embedded in the card (display precedence: businessName ?? name). */
 export type LotCardSellerDto = components['schemas']['LotCardSellerDto'];
+// --- profiles (MKT-004) ---
+/** Public seller strip summary — `verified` is a hard false until TRS-001 (Phase 7). */
+export type PublicSellerSummaryDto = components['schemas']['PublicSellerSummaryDto'];
+/** Envelope of GET /profiles/sellers — a plain list, no pagination metadata. */
+export type PublicSellerListDto = components['schemas']['PublicSellerListDto'];
 export type LotStatus = LotPublicResponseDto['status'];
 export type LotUnit = LotPublicResponseDto['unit'];
 export type LotCondition = LotPublicResponseDto['condition'];
@@ -96,6 +101,9 @@ export const putLotMediaSchema = apiSchemas.PutLotMediaDto;
 export const lotCardResponseSchema = apiSchemas.LotCardResponseDto.extend({
   seller: apiSchemas.LotCardSellerDto,
 });
+// --- profiles (MKT-004) ---
+export const publicSellerSummarySchema = apiSchemas.PublicSellerSummaryDto;
+export const publicSellerListSchema = apiSchemas.PublicSellerListDto;
 
 // --- shared helpers ---
 

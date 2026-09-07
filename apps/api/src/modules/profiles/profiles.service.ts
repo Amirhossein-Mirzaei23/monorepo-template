@@ -9,6 +9,8 @@ import { findIranCity } from '../../common/constants/iran-geo';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CategoriesRepository } from '../categories/categories.repository';
 import { UsersRepository } from '../users/users.repository';
+import { toPublicSellerSummary, type PublicSellerListDto } from './dto/public-seller.dto';
+import type { ListSellersQueryDto } from './dto/list-sellers-query.dto';
 import { toProfileResponse, type ProfileResponseDto } from './dto/profile-response.dto';
 import type { SaveOnboardingDto } from './dto/save-onboarding.dto';
 import type { UpdateProfileDto } from './dto/update-profile.dto';
@@ -189,6 +191,22 @@ export class ProfilesService {
       }
       return toProfileResponse(saved, userAfter);
     });
+  }
+
+  /**
+   * MKT-004 — public sellers listing for the home «تأییدشده‌ها» strip
+   * (GET /profiles/sellers, @Public). Newest seller profiles, plain
+   * { items } envelope — no pagination (the DTO doc explains the cap).
+   *
+   * TRS-001 placeholder: no profile is verified today (the mapper sends a
+   * hard-coded false), so a `verified=true` request filters to an EMPTY list
+   * and the home strip stays hidden until real verification exists — instead
+   * of presenting unverified sellers as trusted.
+   */
+  async findPublicSellers(query: ListSellersQueryDto): Promise<PublicSellerListDto> {
+    const profiles = await this.repository.findSellerProfiles(query.limit);
+    const items = profiles.map(toPublicSellerSummary);
+    return { items: query.verified === true ? items.filter((seller) => seller.verified) : items };
   }
 
   // --- validation helpers (service-level rules from the card) ---

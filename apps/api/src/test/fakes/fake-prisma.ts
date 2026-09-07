@@ -569,8 +569,28 @@ export class FakePrisma {
     },
   };
 
-  /** Exactly the surface ProfilesRepository uses (ONB-001). */
+  /** Exactly the surface ProfilesRepository uses (ONB-001 + MKT-004 sellers). */
   readonly profile = {
+    /** MKT-004 sellers listing: isSeller rows, newest first, hard take. */
+    findMany: async ({
+      where,
+      orderBy,
+      take,
+    }: {
+      where?: { isSeller?: boolean };
+      orderBy?: { createdAt: 'asc' | 'desc' };
+      take?: number;
+    }): Promise<Profile[]> => {
+      let rows = [...this.profiles.values()].filter(
+        (row) => where?.isSeller === undefined || row.isSeller === where.isSeller,
+      );
+      if (orderBy?.createdAt === 'desc') {
+        rows = rows.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      } else if (orderBy?.createdAt === 'asc') {
+        rows = rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      }
+      return rows.slice(0, take).map(cloneProfile);
+    },
     findUnique: async ({
       where,
     }: {
@@ -1055,7 +1075,8 @@ export class FakePrisma {
     return cloneCategory(row);
   }
 
-  /** Test helper: pre-onboarded profile (GET /profiles/me fixtures). */
+  /** Test helper: pre-onboarded profile (GET /profiles/me fixtures). `createdAt`
+   * controls the newest-first order the MKT-004 sellers listing returns. */
   seedProfile(profile: {
     userId: string;
     displayName: string;
@@ -1071,6 +1092,7 @@ export class FakePrisma {
     sellerBusinessType?: string | null;
     sellerDescription?: string | null;
     interestCategoryIds?: string[];
+    createdAt?: Date;
   }): ProfileWithInterestsRow {
     const row: Profile = {
       id: randomUUID(),
@@ -1087,7 +1109,7 @@ export class FakePrisma {
       sellerYearsActive: profile.sellerYearsActive ?? null,
       sellerBusinessType: profile.sellerBusinessType ?? null,
       sellerDescription: profile.sellerDescription ?? null,
-      createdAt: nowIso(),
+      createdAt: profile.createdAt ?? nowIso(),
       updatedAt: nowIso(),
     };
     this.profiles.set(row.id, row);

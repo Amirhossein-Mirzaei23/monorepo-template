@@ -23,6 +23,21 @@ export {
 // --- MKT-006 browse (listing fetchers, hooks, list UI, URL param contract) ---
 export { LotList, type LotListProps } from './components/lot-list';
 export { useLots, useLotsList, type LotsListState } from './hooks/use-lots';
+// --- MKT-004 home (sections, category tiles, public server fetchers) ---
+export {
+  HomeSection,
+  HomeLotGrid,
+  SellersStrip,
+  EmptySection,
+  SectionErrorCard,
+  HOME_LOT_LIMIT,
+  HOME_SELLER_LIMIT,
+  HOME_CATEGORY_LIMIT,
+  type HomeSectionProps,
+  type HomeLotGridProps,
+  type EmptySectionProps,
+} from './components/home-sections';
+export { CategoryTiles, type CategoryTilesProps } from './components/category-tiles';
 // --- MKT-007 search (bar UI, input normalization, recent searches) ---
 export { SearchBar, type SearchBarProps } from './components/search-bar';
 export { normalizeSearchInput, SEARCH_QUERY_MIN_LENGTH } from './lib/search-normalize';
@@ -59,7 +74,9 @@ export {
   fetchLots,
   fetchLotsServer,
   fetchCategoriesServer,
+  fetchSellersServer,
   findCategoryBySlug,
+  type SellersServerQuery,
 } from './api/marketplace-api';
 export { marketplaceKeys } from './api/keys';
 export {

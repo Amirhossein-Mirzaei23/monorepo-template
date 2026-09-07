@@ -297,6 +297,23 @@ export interface paths {
         patch: operations["ProfilesController_updateMe"];
         trace?: never;
     };
+    "/profiles/sellers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Public sellers listing (no auth) — home «تأییدشده‌ها» strip source; ?verified=true filters to verified sellers, ?limit caps at 20 */
+        get: operations["PublicProfilesController_sellers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/lots": {
         parameters: {
             query?: never;
@@ -978,6 +995,26 @@ export interface components {
              *     ]
              */
             interests?: string[];
+        };
+        PublicSellerSummaryDto: {
+            /** @example clx…cuid */
+            id: string;
+            /** @example مینا رضایی */
+            displayName: string;
+            /** @example تولیدی پوشاک مینا */
+            businessName?: string | null;
+            /** @example isfahan */
+            province?: string | null;
+            /** @example kashan */
+            city?: string | null;
+            /**
+             * @description TRS-001 placeholder — seller verification does not exist until Phase 7, so the API sends a hard-coded false; the home strip renders only when a verified=true call returns items and stays hidden until then
+             * @example false
+             */
+            verified: boolean;
+        };
+        PublicSellerListDto: {
+            items: components["schemas"]["PublicSellerSummaryDto"][];
         };
         LotMediaResponseDto: {
             /**
@@ -2090,6 +2127,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProfileResponseDto"];
+                };
+            };
+        };
+    };
+    PublicProfilesController_sellers: {
+        parameters: {
+            query?: {
+                /** @description When true, only verified sellers — an empty list until TRS-001 lands verification (Phase 7) */
+                verified?: boolean;
+                /** @description Page size of the strip — 1..20, default 10 */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description { items: PublicSellerSummaryDto[] } — newest seller profiles, plain list (no pagination envelope). verified=true returns an empty list until TRS-001 lands verification */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicSellerListDto"];
                 };
             };
         };

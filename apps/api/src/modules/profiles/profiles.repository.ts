@@ -74,6 +74,21 @@ export class ProfilesRepository {
     return this.client(tx).profile.update({ where: { userId }, data });
   }
 
+  /**
+   * Newest seller profiles (MKT-004 «تأییدشده‌ها» strip source): isSeller
+   * rows only, newest first, hard `take` — the callers ask for a fixed top
+   * slice (default 10, capped at 20 by the query DTO). Rows stay FULL (no
+   * select): the payload allowlist lives in toPublicSellerSummary, the same
+   * mapper-not-spread discipline as every other public read.
+   */
+  async findSellerProfiles(limit: number, tx: Tx = undefined): Promise<Profile[]> {
+    return this.client(tx).profile.findMany({
+      where: { isSeller: true },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+  }
+
   /** Wholesale replacement of the interest set inside the onboarding transaction. */
   async replaceInterests(
     profileId: string,

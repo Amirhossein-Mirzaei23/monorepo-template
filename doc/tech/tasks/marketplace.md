@@ -61,7 +61,7 @@ discovery. Exact seller addresses never appear in public payloads.
 - **Testing:** unit tests for normalizer; e2e search scenarios incl. empty results.
 - **DoD:** suites green.
 
-### MKT-004 — Marketplace home page
+### MKT-004 ✅ — Marketplace home page
 
 **P0 · Phase 4 · Marketplace · L** — Deps: MKT-005, MKT-006 (hooks), CAT-001, PLAT-002
 

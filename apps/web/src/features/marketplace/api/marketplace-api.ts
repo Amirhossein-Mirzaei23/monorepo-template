@@ -4,11 +4,12 @@
  *
  * - `fetchLots` → the web BFF (`/api/lots?…`) for CLIENT pages (the hook),
  *   like every feature fetcher (frontend-data.md → Transport routing).
- * - `fetchLotsServer` / `fetchCategoriesServer` → direct server-to-server hop
- *   to the API origin for the RSC pages (`/lots`, `/c/{slug}`), which cannot
- *   resolve a relative BFF URL and must not self-fetch over HTTP. They mirror
- *   `proxyToApi`'s public-endpoint semantics (accept JSON, request-id,
- *   no-store) without auth/cookie forwarding — these endpoints are @Public.
+ * - `fetchLotsServer` / `fetchCategoriesServer` / `fetchSellersServer` →
+ *   direct server-to-server hops to the API origin for the RSC pages (`/`,
+ *   `/lots`, `/c/{slug}`), which cannot resolve a relative BFF URL and must
+ *   not self-fetch over HTTP. They mirror `proxyToApi`'s public-endpoint
+ *   semantics (accept JSON, request-id, no-store) without auth/cookie
+ *   forwarding — these endpoints are @Public.
  *
  * Responses on BOTH paths validate through the same generated-schema-backed
  * `lotCardPageSchema` (contract drift fails loudly). File imported by client
@@ -18,9 +19,11 @@
 import {
   categoryTreeNodeSchema,
   parseApiResponse,
+  publicSellerListSchema,
   type CategoryTreeNodeDto,
   type LotCardResponseDto,
   type Paginated,
+  type PublicSellerListDto,
 } from '@monorepo/shared-types';
 import { z } from 'zod';
 import { apiFetch } from '@/lib/api-client';
@@ -72,6 +75,40 @@ export async function fetchCategoriesServer(): Promise<CategoryTreeNodeDto[]> {
   }
   const raw: unknown = await response.json();
   return parseApiResponse(z.array(categoryTreeNodeSchema), raw, 'categories (server)');
+}
+
+/** Query of GET /profiles/sellers (MKT-004) — the strip's fixed top slice. */
+export interface SellersServerQuery {
+  /** The home strip always sends true; an empty list keeps it hidden (TRS-001 placeholder). */
+  verified?: boolean;
+  limit?: number;
+}
+
+/**
+ * GET {API}/profiles/sellers — the «تأییدشده‌ها» strip source (MKT-004).
+ * Direct origin hop like the fetchers above: the ONLY consumer is the home
+ * RSC, so there is deliberately no BFF route for it — a client hook would
+ * re-fetch data the server already rendered (CONVENTIONS → decision table:
+ * never fetch the same data on both sides of one page).
+ */
+export async function fetchSellersServer(query: SellersServerQuery): Promise<PublicSellerListDto> {
+  const params = new URLSearchParams();
+  if (query.verified !== undefined) {
+    params.set('verified', String(query.verified));
+  }
+  if (query.limit !== undefined) {
+    params.set('limit', String(query.limit));
+  }
+  const search = params.toString();
+  const response = await fetch(`${serverApiUrl}/profiles/sellers${search ? `?${search}` : ''}`, {
+    headers: { accept: 'application/json', 'x-request-id': crypto.randomUUID() },
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    throw new Error(`Sellers request failed (${response.status})`);
+  }
+  const raw: unknown = await response.json();
+  return parseApiResponse(publicSellerListSchema, raw, 'sellers (server)');
 }
 
 /**

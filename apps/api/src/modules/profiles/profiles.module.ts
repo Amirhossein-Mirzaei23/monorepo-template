@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { CategoriesModule } from '../categories/categories.module';
 import { UsersModule } from '../users/users.module';
 import { ProfilesController } from './profiles.controller';
+import { PublicProfilesController } from './public-profiles.controller';
 import { ProfilesRepository } from './profiles.repository';
 import { ProfilesService } from './profiles.service';
 
@@ -12,7 +13,7 @@ import { ProfilesService } from './profiles.service';
  */
 @Module({
   imports: [UsersModule, CategoriesModule],
-  controllers: [ProfilesController],
+  controllers: [ProfilesController, PublicProfilesController],
   providers: [ProfilesService, ProfilesRepository],
   exports: [ProfilesService, ProfilesRepository],
 })

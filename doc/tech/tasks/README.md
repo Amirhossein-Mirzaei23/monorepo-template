@@ -72,7 +72,7 @@ Complexity: XS 1 · S 22 · M 71 · L 12 · XL 1.
 | MKT-001   | ✅ Public lot listing API                | P0  | 4   | M   |     | REV-002  | Reviews UI                          | P1  | 9   | M   |
 | MKT-002   | ✅ Filters API                           | P0  | 4   | M   |     | DSH-001  | App shell + bottom tabs             | P0  | 8   | M   |
 | MKT-003   | ✅ Search API (pg_trgm)                  | P0  | 4   | M   |     | DSH-002  | Seller dashboard overview           | P0  | 8   | M   |
-| MKT-004   | Marketplace home page                    | P0  | 4   | L   |     | DSH-003  | Buyer dashboard overview            | P0  | 8   | M   |
+| MKT-004   | ✅ Marketplace home page                 | P0  | 4   | L   |     | DSH-003  | Buyer dashboard overview            | P0  | 8   | M   |
 | MKT-005   | ✅ Lot card component                    | P0  | 4   | M   |     | DSH-004  | Settings page                       | P0  | 8   | S   |
 | MKT-006   | ✅ Browse page + infinite scroll         | P0  | 4   | M   |     | SAV-001  | Saved lots API                      | P0  | 8   | S   |
 | MKT-007   | ✅ Search UI                             | P0  | 4   | S   |     | SAV-002  | Saved lots page                     | P0  | 8   | M   |
