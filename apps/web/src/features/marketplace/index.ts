@@ -18,3 +18,28 @@ export {
   LOT_UNIT_LABELS_FA,
   PRICING_TYPE_LABELS_FA,
 } from './components/labels';
+// --- MKT-006 browse (listing fetchers, hooks, list UI, URL param contract) ---
+export { LotList, type LotListProps } from './components/lot-list';
+export { useLots, useLotsList, type LotsListState } from './hooks/use-lots';
+export {
+  fetchLots,
+  fetchLotsServer,
+  fetchCategoriesServer,
+  findCategoryBySlug,
+} from './api/marketplace-api';
+export { marketplaceKeys } from './api/keys';
+export {
+  lotCardPageSchema,
+  lotsBrowseQueryString,
+  parseLotsBrowseParams,
+  LOT_LIST_PAGE_SIZE,
+  LOTS_BROWSE_SORTS,
+  LOTS_LISTED_WITHIN_OPTIONS,
+  LOTS_FILTER_MAX_PRICE,
+  LOTS_FILTER_MAX_QUANTITY,
+  type LotsBrowseFilter,
+  type LotsBrowseQuery,
+  type LotCardPage,
+  type LotsBrowseSort,
+  type LotsListedWithin,
+} from './schemas/browse-query';

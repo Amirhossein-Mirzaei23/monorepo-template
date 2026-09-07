@@ -95,7 +95,7 @@ discovery. Exact seller addresses never appear in public payloads.
 - **Testing:** component tests (render, save gating, price formatting).
 - **DoD:** used by MKT-004/006/009, SAV-002, PROF-002.
 
-### MKT-006 — Browse/listing page with infinite scroll
+### MKT-006 ✅ — Browse/listing page with infinite scroll
 
 **P0 · Phase 4 · Marketplace · M** — Deps: MKT-005, MKT-001
 
