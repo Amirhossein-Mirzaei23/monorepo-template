@@ -31,6 +31,19 @@ export class JwtAuthGuard {
     }
 
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    await this.authenticate(request);
+    return true;
+  }
+
+  /**
+   * The verification body of the guard (extract → verify → attach request.user),
+   * callable independently of the @Public short-circuit in canActivate.
+   * MKT-009's LotKeyAccessGuard (shared `GET /lots/:key` route) reuses THIS
+   * method — calling super.canActivate there would re-read the route's own
+   * @Public metadata and skip authentication, defeating the conditional-auth
+   * dispatch between the public code lookup and the owner id read.
+   */
+  protected async authenticate(request: AuthenticatedRequest): Promise<void> {
     const token = this.extractToken(request);
 
     try {
@@ -42,7 +55,6 @@ export class JwtAuthGuard {
         role: payload.role,
         status: payload.status,
       };
-      return true;
     } catch {
       throw new UnauthorizedException('Invalid or expired access token');
     }

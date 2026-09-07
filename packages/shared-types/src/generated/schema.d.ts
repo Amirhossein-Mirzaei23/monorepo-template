@@ -349,23 +349,21 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/lots/{id}": {
+    "/lots/{key}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Read one owned lot (owner shape incl. exactAddress/rejectionReason/media) — 404 missing, 403 foreign */
-        get: operations["LotsController_findOne"];
+        /** Public lot detail by 8-char code (anonymous, ACTIVE-only, similar lots included) OR the owned lot by cuid id (bearer → owner shape) */
+        get: operations["LotsController_findDetailOrOwned"];
         put?: never;
         post?: never;
-        /** Soft-delete an owned non-SOLD lot — status REMOVED + deletedAt=now (SOLD → 409) */
-        delete: operations["LotsController_remove"];
+        delete?: never;
         options?: never;
         head?: never;
-        /** Edit an owned lot — DRAFT/REJECTED fully editable (submit=true resubmits); ACTIVE/PAUSED only price/quantity fields; otherwise 409 */
-        patch: operations["LotsController_update"];
+        patch?: never;
         trace?: never;
     };
     "/lots/{id}/submit": {
@@ -451,6 +449,24 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/lots/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Soft-delete an owned non-SOLD lot — status REMOVED + deletedAt=now (SOLD → 409) */
+        delete: operations["LotsController_remove"];
+        options?: never;
+        head?: never;
+        /** Edit an owned lot — DRAFT/REJECTED fully editable (submit=true resubmits); ACTIVE/PAUSED only price/quantity fields; otherwise 409 */
+        patch: operations["LotsController_update"];
         trace?: never;
     };
     "/lots/{id}/media": {
@@ -1475,6 +1491,152 @@ export interface components {
              */
             rejectionReason?: string | null;
         };
+        LotDetailCategoryDto: {
+            /**
+             * @description Category id (stable key for links)
+             * @example clx…cuid
+             */
+            id: string;
+            /**
+             * @description Persian display name (primary label)
+             * @example پوشاک
+             */
+            nameFa: string;
+            /**
+             * @description EN slug — /c/{slug} landing links
+             * @example apparel
+             */
+            slug: string;
+        };
+        LotDetailSellerDto: {
+            /**
+             * @description Seller user id — links the public profile
+             * @example clx…cuid
+             */
+            id: string;
+            /**
+             * @description User.name — the person/fallback display
+             * @example مینا رضایی
+             */
+            name: string;
+            /**
+             * @description Profile.businessName — preferred display when set (businessName ?? name)
+             * @example تولیدی پوشاک مینا
+             */
+            businessName?: string | null;
+            /**
+             * @description Profile.city slug — the seller business location (fa label resolved web-side)
+             * @example tehran
+             */
+            city?: string | null;
+            /**
+             * @description PLACEHOLDER — always false until TRS-001/002 land verification badges (Phase 7); the web hides the badge while false
+             * @example false
+             */
+            verified: boolean;
+        };
+        LotPublicDetailResponseDto: {
+            /**
+             * @description Internal id — client cache keys only, never in URLs
+             * @example clx…cuid
+             */
+            id: string;
+            /**
+             * @description Public, non-sequential URL id (nanoid-8 base62) — this endpoint addresses lots BY it
+             * @example 7Kd2Qm9x
+             */
+            code: string;
+            /** @example عمده پیراهن مردانه — ۵۰ عدد */
+            title: string;
+            /** @example توضیحات کامل کالا و شرایط فروش */
+            description: string;
+            /** @example 112500000 */
+            totalPrice: number;
+            /**
+             * @description Derived on write server-side: round(totalPrice / quantity)
+             * @example 2250000
+             */
+            unitPrice: number;
+            /** @example 50 */
+            quantity: number;
+            /**
+             * @description Remaining sellable amount (0 ≤ available ≤ quantity)
+             * @example 50
+             */
+            availableQuantity: number;
+            /**
+             * @description Minimum order amount (1 ≤ min ≤ quantity)
+             * @example 10
+             */
+            minOrderQuantity: number;
+            /**
+             * @example PIECE
+             * @enum {string}
+             */
+            unit: "PIECE" | "SET" | "BOX" | "KG" | "PAIR" | "OTHER";
+            /**
+             * @example GRADE_A
+             * @enum {string}
+             */
+            condition: "GRADE_A" | "GRADE_B" | "GRADE_C" | "MIXED" | "NEW" | "USED" | "DAMAGED" | "NEAR_EXPIRY";
+            /**
+             * @example OVERSTOCK
+             * @enum {string}
+             */
+            liquidationReason: "EXCESS_PRODUCTION" | "CANCELLED_ORDER" | "EXPORT_RETURN" | "SEASON_CLEARANCE" | "OVERSTOCK" | "FACTORY_CLOSURE" | "PACKAGING_CHANGE" | "NEAR_EXPIRY" | "OTHER";
+            /**
+             * @example NEGOTIABLE
+             * @enum {string}
+             */
+            pricingType: "FIXED" | "NEGOTIABLE";
+            /**
+             * @description Always ACTIVE on this endpoint (else 404)
+             * @example ACTIVE
+             * @enum {string}
+             */
+            status: "DRAFT" | "PENDING_REVIEW" | "ACTIVE" | "PAUSED" | "REJECTED" | "EXPIRED" | "SOLD" | "REMOVED";
+            /** @description Category NAME row (fa label + slug) */
+            category: components["schemas"]["LotDetailCategoryDto"];
+            /** @description Subcategory NAME row — null when the lot is filed at the top level */
+            subcategory?: components["schemas"]["LotDetailCategoryDto"] | null;
+            /**
+             * @description Province slug (static geo list)
+             * @example tehran
+             */
+            province: string;
+            /**
+             * @description City slug (static geo list)
+             * @example tehran
+             */
+            city: string;
+            /**
+             * @description Approximate public area hint — never the address
+             * @example بازار بزرگ تهران
+             */
+            locationHint?: string | null;
+            /**
+             * Format: date-time
+             * @description Listing expiry — the page is 404 once it passes
+             * @example 2026-09-05T00:00:00.000Z
+             */
+            expiresAt: string;
+            /**
+             * Format: date-time
+             * @example 2026-09-05T00:00:00.000Z
+             */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @example 2026-09-05T00:00:00.000Z
+             */
+            updatedAt: string;
+            /** @description Public seller summary — NO contact fields */
+            seller: components["schemas"]["LotDetailSellerDto"];
+            /** @description Ordered full gallery (MEDIA-005) — url + kind + isCover per entry */
+            media: components["schemas"]["LotMediaResponseDto"][];
+            /** @description Up to 8 newest ACTIVE lots of the same subcategory (backfilled from the category), excluding this lot — MKT-001 card shapes */
+            similar: components["schemas"]["LotCardResponseDto"][];
+        };
         UpdateLotDto: {
             /**
              * @description 5–120 code points (fa-aware); only while DRAFT/REJECTED
@@ -2252,69 +2414,24 @@ export interface operations {
             };
         };
     };
-    LotsController_findOne: {
+    LotsController_findDetailOrOwned: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: string;
+                key: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
+            /** @description LotPublicDetailResponseDto for an 8-char lot code (public, 404 unless ACTIVE); LotOwnerResponseDto for a cuid id (bearer, owner shape) */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LotOwnerResponseDto"];
-                };
-            };
-        };
-    };
-    LotsController_remove: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LotOwnerResponseDto"];
-                };
-            };
-        };
-    };
-    LotsController_update: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateLotDto"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LotOwnerResponseDto"];
+                    "application/json": components["schemas"]["LotPublicDetailResponseDto"];
                 };
             };
         };
@@ -2415,6 +2532,52 @@ export interface operations {
         requestBody?: never;
         responses: {
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LotOwnerResponseDto"];
+                };
+            };
+        };
+    };
+    LotsController_remove: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LotOwnerResponseDto"];
+                };
+            };
+        };
+    };
+    LotsController_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateLotDto"];
+            };
+        };
+        responses: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

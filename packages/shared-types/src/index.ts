@@ -9,6 +9,9 @@ import type { z } from 'zod';
 import type { components } from './generated/schema';
 import { apiSchemas } from './generated/schema.zod';
 
+// `z` is needed as a VALUE for the recomposed schemas below (z.array).
+import { z as zod } from 'zod';
+
 // --- entity types (mirror of the API DTOs) ---
 export type UserResponseDto = components['schemas']['UserResponseDto'];
 export type CreateUserDto = components['schemas']['CreateUserDto'];
@@ -44,6 +47,13 @@ export type PutLotMediaDto = components['schemas']['PutLotMediaDto'];
 export type LotCardResponseDto = components['schemas']['LotCardResponseDto'];
 /** Minimal seller summary embedded in the card (display precedence: businessName ?? name). */
 export type LotCardSellerDto = components['schemas']['LotCardSellerDto'];
+// --- lot detail (MKT-009) ---
+/** Public DETAIL payload of GET /lots/{code} — full spec + gallery + seller block + similar. */
+export type LotPublicDetailResponseDto = components['schemas']['LotPublicDetailResponseDto'];
+/** Public seller block on the detail page (`verified` is a TRS-001 hard-false placeholder). */
+export type LotDetailSellerDto = components['schemas']['LotDetailSellerDto'];
+/** Category NAME row (fa label + slug) for the detail spec block. */
+export type LotDetailCategoryDto = components['schemas']['LotDetailCategoryDto'];
 // --- profiles (MKT-004) ---
 /** Public seller strip summary — `verified` is a hard false until TRS-001 (Phase 7). */
 export type PublicSellerSummaryDto = components['schemas']['PublicSellerSummaryDto'];
@@ -100,6 +110,23 @@ export const putLotMediaSchema = apiSchemas.PutLotMediaDto;
  */
 export const lotCardResponseSchema = apiSchemas.LotCardResponseDto.extend({
   seller: apiSchemas.LotCardSellerDto,
+});
+// --- lot detail (MKT-009) ---
+/**
+ * The same Nest allOf quirk hits EVERY nested-object field of the detail
+ * payload (`seller`, `category`, `subcategory`), and `similar` references the
+ * lossy generated card schema — recompose all of them (reusing the card/media
+ * schemas above) so the runtime schema validates and KEEPS the fields the TS
+ * contract already promises.
+ */
+export const lotDetailSellerSchema = apiSchemas.LotDetailSellerDto;
+export const lotDetailCategorySchema = apiSchemas.LotDetailCategoryDto;
+export const lotPublicDetailResponseSchema = apiSchemas.LotPublicDetailResponseDto.extend({
+  seller: apiSchemas.LotDetailSellerDto,
+  category: apiSchemas.LotDetailCategoryDto,
+  subcategory: apiSchemas.LotDetailCategoryDto.nullable(),
+  media: zod.array(lotMediaResponseSchema),
+  similar: zod.array(lotCardResponseSchema),
 });
 // --- profiles (MKT-004) ---
 export const publicSellerSummarySchema = apiSchemas.PublicSellerSummaryDto;

@@ -602,7 +602,7 @@ describe('LotsRepository', () => {
 
       const card = result.items[0]!;
       expect(card.seller).toMatchObject({ id: seller.id, name: 'مینا رضایی' });
-      expect(card.seller.profile).toEqual({ businessName: 'تولیدی پوشاک مینا' });
+      expect(card.seller.profile).toEqual({ businessName: 'تولیدی پوشاک مینا', city: null });
       expect(card.media).toHaveLength(1);
       expect(card.media?.[0]).toMatchObject({
         isCover: true,

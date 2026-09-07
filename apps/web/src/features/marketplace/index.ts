@@ -13,6 +13,11 @@ export {
 } from './components/lot-card';
 export { ConditionChip } from './components/condition-chip';
 export { VerifiedBadge } from './components/verified-badge';
+// --- MKT-009 detail (detail surface, gallery, spec block, seller summary) ---
+export { LotDetail, type LotDetailProps } from './components/lot-detail';
+export { MediaGallery } from './components/media-gallery';
+export { SpecBlock } from './components/spec-block';
+export { SellerSummary } from './components/seller-summary';
 export {
   LOT_CONDITION_LABELS_FA,
   LOT_UNIT_LABELS_FA,
@@ -73,11 +78,19 @@ export {
 export {
   fetchLots,
   fetchLotsServer,
+  fetchLotDetailServer,
   fetchCategoriesServer,
   fetchSellersServer,
   findCategoryBySlug,
   type SellersServerQuery,
 } from './api/marketplace-api';
+/**
+ * Test fixtures (MKT-009) — contract-shaped payloads for suites OUTSIDE the
+ * feature (route-group page tests cannot deep-import into features/, so the
+ * fixture travels through the barrel like every other export; the zod-validated
+ * page test then fails loudly if the fixture drifts from the contract).
+ */
+export { lotDetailFixture } from './testing/fixtures';
 export { marketplaceKeys } from './api/keys';
 export {
   lotCardPageSchema,

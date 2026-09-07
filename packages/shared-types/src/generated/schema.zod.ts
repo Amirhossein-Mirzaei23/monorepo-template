@@ -331,6 +331,54 @@ export const lotOwnerResponseDtoSchema = z.object({
   rejectionReason: z.string().nullable().optional(),
 });
 
+export const lotDetailCategoryDtoSchema = z.object({
+  id: z.string(),
+  nameFa: z.string(),
+  slug: z.string(),
+});
+
+export const lotDetailSellerDtoSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  businessName: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  verified: z.boolean(),
+});
+
+export const lotPublicDetailResponseDtoSchema = z.object({
+  id: z.string(),
+  code: z.string(),
+  title: z.string(),
+  description: z.string(),
+  totalPrice: z.number(),
+  unitPrice: z.number(),
+  quantity: z.number(),
+  availableQuantity: z.number(),
+  minOrderQuantity: z.number(),
+  unit: z.enum(['PIECE', 'SET', 'BOX', 'KG', 'PAIR', 'OTHER']),
+  condition: z.enum(['GRADE_A', 'GRADE_B', 'GRADE_C', 'MIXED', 'NEW', 'USED', 'DAMAGED', 'NEAR_EXPIRY']),
+  liquidationReason: z.enum(['EXCESS_PRODUCTION', 'CANCELLED_ORDER', 'EXPORT_RETURN', 'SEASON_CLEARANCE', 'OVERSTOCK', 'FACTORY_CLOSURE', 'PACKAGING_CHANGE', 'NEAR_EXPIRY', 'OTHER']),
+  pricingType: z.enum(['FIXED', 'NEGOTIABLE']),
+  status: z.enum(['DRAFT', 'PENDING_REVIEW', 'ACTIVE', 'PAUSED', 'REJECTED', 'EXPIRED', 'SOLD', 'REMOVED']),
+  category:   z.object({
+
+    }),
+  subcategory:   z.object({
+
+    }).nullable().optional(),
+  province: z.string(),
+  city: z.string(),
+  locationHint: z.string().nullable().optional(),
+  expiresAt: z.iso.datetime(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  seller:   z.object({
+
+    }),
+  media: z.array(lotMediaResponseDtoSchema),
+  similar: z.array(lotCardResponseDtoSchema),
+});
+
 export const updateLotDtoSchema = z.object({
   title: z.string().optional(),
   description: z.string().optional(),
@@ -415,6 +463,9 @@ export const apiSchemas = {
   LotCardResponseDto: lotCardResponseDtoSchema,
   CreateLotDto: createLotDtoSchema,
   LotOwnerResponseDto: lotOwnerResponseDtoSchema,
+  LotDetailCategoryDto: lotDetailCategoryDtoSchema,
+  LotDetailSellerDto: lotDetailSellerDtoSchema,
+  LotPublicDetailResponseDto: lotPublicDetailResponseDtoSchema,
   UpdateLotDto: updateLotDtoSchema,
   PutLotMediaItemDto: putLotMediaItemDtoSchema,
   PutLotMediaDto: putLotMediaDtoSchema,

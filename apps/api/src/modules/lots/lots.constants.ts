@@ -226,6 +226,41 @@ export const LOT_SEARCH_SQL_MARKER = '/* lot_public_search */';
 export const LOT_FILTER_MAX_PRICE = LOT_MAX_TOTAL_PRICE;
 export const LOT_FILTER_MAX_QUANTITY = 1_000_000;
 
+/**
+ * MKT-009 — key-shape dispatch for the SHARED `GET /lots/:key` path pattern.
+ * The plan's API surface serves both `GET /lots/:code` (public detail) and the
+ * LOT-005 owner read `GET /lots/:id` on the same single-segment path, and
+ * Express matches in declaration order — two separate handlers cannot coexist.
+ * One route therefore dispatches on THIS test: a code is EXACTLY 8 base62
+ * chars (generateLotCode's output space) while Prisma cuids are 25 chars, so
+ * the two key spaces are disjoint and a shape test is total.
+ */
+const LOT_CODE_PATTERN = /^[0-9A-Za-z]{8}$/;
+
+/** True when the `:key` path segment is a public lot CODE (not an internal id). */
+export function isLotPublicCode(key: string): boolean {
+  return LOT_CODE_PATTERN.test(key);
+}
+
+/**
+ * MKT-009 — view-counter dedup heuristic: the detail endpoint sets one cookie
+ * per lot code (`lot_view_{code}`) for 30 minutes and bumps viewCount only
+ * when it is absent — 1 counted view per code per visitor per 30 min.
+ * DOCUMENTED LIMITATION: the cookie dedups DIRECT API visitors; the web RSC
+ * fetches server-to-server without browser cookies, so SSR loads count once
+ * per render until the BFF forwards cookies to the API (follow-up).
+ */
+export const LOT_VIEW_COOKIE_PREFIX = 'lot_view_';
+export const LOT_VIEW_DEDUP_MINUTES = 30;
+
+/** Cookie name for the dedup marker of one lot code. */
+export function lotViewCookieName(code: string): string {
+  return `${LOT_VIEW_COOKIE_PREFIX}${code}`;
+}
+
+/** MKT-009 — the similar-lots slice size (card: "up to 8 newest"). */
+export const LOT_SIMILAR_LIMIT = 8;
+
 /** Machine-readable error codes carried on 403/409 bodies (LOT-002/LOT-003). */
 export const LOT_ERROR_CODES = {
   /** Authenticated user without the SELLER hat (fa copy lives web-side). */

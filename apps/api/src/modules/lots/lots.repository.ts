@@ -12,6 +12,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import {
   FA_QUERY_REPLACEMENTS,
   LOT_SEARCH_SQL_MARKER,
+  LOT_SIMILAR_LIMIT,
   normalizeFaQuery,
   type LotCardSort,
 } from './lots.constants';
@@ -211,6 +212,29 @@ export const LOT_CARD_INCLUDE = {
 /** The findPublic row shape (Lot + seller summary + cover link). */
 export type LotCardRepositoryRow = Prisma.LotGetPayload<{ include: typeof LOT_CARD_INCLUDE }>;
 
+/**
+ * LOT_PUBLIC_DETAIL_INCLUDE (MKT-009) — the public detail include: the FULL
+ * ordered gallery (every buyer sees all of it), the seller summary WITH the
+ * profile's businessName + city (the detail seller card renders the business
+ * location, unlike the listing card), and the category/subcategory NAME rows
+ * the spec block renders. Nothing private joins in — exactAddress and
+ * rejectionReason are Lot columns, never relations, and the allowlist mapper
+ * (toLotPublicDetailResponse) never copies them.
+ */
+export const LOT_PUBLIC_DETAIL_INCLUDE = {
+  seller: {
+    select: { id: true, name: true, profile: { select: { businessName: true, city: true } } },
+  },
+  category: { select: { id: true, nameFa: true, slug: true } },
+  subcategory: { select: { id: true, nameFa: true, slug: true } },
+  media: { orderBy: { sortOrder: 'asc' as const }, include: { mediaAsset: true } },
+} satisfies Prisma.LotInclude;
+
+/** The findPublicDetail row shape (Lot + gallery + seller + category names). */
+export type LotDetailRepositoryRow = Prisma.LotGetPayload<{
+  include: typeof LOT_PUBLIC_DETAIL_INCLUDE;
+}>;
+
 export type LotWithMedia = Prisma.LotGetPayload<{ include: typeof LOT_MEDIA_INCLUDE }>;
 
 /** One LotMedia row with its joined asset (the gallery include's element type). */
@@ -382,6 +406,79 @@ export class LotsRepository {
       client.lot.count({ where }),
     ]);
     return { items, total, page, limit };
+  }
+
+  /**
+   * MKT-009 — single-row lookup BY PUBLIC CODE with the detail include. Only a
+   * row-level read: the ACTIVE/unexpired/not-deleted visibility decision lives
+   * in LotsService.findPublicByCode (the 404 semantics are business rules).
+   */
+  async findByCode(code: string, tx: Tx = undefined): Promise<LotDetailRepositoryRow | null> {
+    return this.client(tx).lot.findUnique({ where: { code }, include: LOT_PUBLIC_DETAIL_INCLUDE });
+  }
+
+  /**
+   * MKT-009 — the detail page's similar-lots slice: up to LOT_SIMILAR_LIMIT
+   * (8) newest ACTIVE lots in the SAME SUBCATEGORY, backfilled from the parent
+   * CATEGORY when the subcategory slice is thin, always excluding the lot
+   * itself. Lots without a subcategory search their category directly. The
+   * visibility core mirrors findPublic exactly (ACTIVE + expiresAt > now +
+   * deletedAt null) — similar lots must never leak paused/draft/expired rows.
+   * Two reads worst case (subcategory then category); rows are ordered
+   * (createdAt desc, id asc) so ties stay deterministic.
+   */
+  async findSimilar(
+    self: Pick<Lot, 'id' | 'categoryId' | 'subcategoryId'>,
+    limit: number = LOT_SIMILAR_LIMIT,
+    tx: Tx = undefined,
+  ): Promise<LotCardRepositoryRow[]> {
+    const now = new Date();
+    const visible: Prisma.LotWhereInput = {
+      status: LotStatus.ACTIVE,
+      expiresAt: { gt: now },
+      deletedAt: null,
+      id: { not: self.id },
+    };
+    const orderBy: Prisma.LotOrderByWithRelationInput[] = [{ createdAt: 'desc' }, { id: 'asc' }];
+    const client = this.client(tx);
+
+    if (self.subcategoryId === null) {
+      return client.lot.findMany({
+        where: { ...visible, categoryId: self.categoryId },
+        orderBy,
+        take: limit,
+        include: LOT_CARD_INCLUDE,
+      });
+    }
+
+    const sameSubcategory = await client.lot.findMany({
+      where: { ...visible, subcategoryId: self.subcategoryId },
+      orderBy,
+      take: limit,
+      include: LOT_CARD_INCLUDE,
+    });
+    if (sameSubcategory.length >= limit) {
+      return sameSubcategory;
+    }
+    // Backfill from the parent category (excluding self + the picked rows) —
+    // a thin subcategory should not thin out the whole grid.
+    const picked = new Set<string>([self.id, ...sameSubcategory.map((row) => row.id)]);
+    const sameCategory = await client.lot.findMany({
+      where: { ...visible, categoryId: self.categoryId },
+      orderBy,
+      take: limit,
+      include: LOT_CARD_INCLUDE,
+    });
+    for (const row of sameCategory) {
+      if (sameSubcategory.length >= limit) {
+        break;
+      }
+      if (!picked.has(row.id)) {
+        sameSubcategory.push(row);
+        picked.add(row.id);
+      }
+    }
+    return sameSubcategory;
   }
 
   /** Owner-scoped fetch (seller dashboard/actions) — null for other sellers' lots. */

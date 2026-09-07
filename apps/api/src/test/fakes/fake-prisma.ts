@@ -98,8 +98,9 @@ type MediaAssetCreateData = {
  * + LOT-005 findMine's notIn status predicate). */
 type LotEnumFilter<T extends string> = T | { in: T[] } | { notIn: T[] };
 type LotTextFilter = { contains: string; mode: 'insensitive' };
-/** id: equality OR the MKT-003 search arm's `in` set. */
-type LotIdFilter = string | { in: string[] };
+/** id: equality OR the MKT-003 search arm's `in` set OR the MKT-009
+ * similar-lots self-exclusion (`not`). */
+type LotIdFilter = string | { in?: string[]; not?: string };
 type LotWhere = {
   id?: LotIdFilter;
   code?: string;
@@ -186,20 +187,25 @@ const nowIso = () => new Date();
 
 /** LotMedia row joined with its asset — what the repository's include returns. */
 type LotMediaRow = LotMedia & { mediaAsset: MediaAsset };
-/**
- * Seller summary joined on every lot read — mirrors the MKT-001 card include's
- * `seller` shape ({id, name} + the Profile's businessName). Lenient by design:
+/** Seller summary joined on every lot read — mirrors the MKT-001 card include's
+ * `seller` shape ({id, name} + the Profile's businessName) and the MKT-009
+ * detail include's wider select (businessName + city). Lenient by design:
  * specs that seed bare sellerIds ('seller-1') without user rows read back
  * name: '' / profile: null instead of throwing (a real DB cannot have a
- * missing seller — FK Restrict — so strictness would only churn fixtures).
- */
+ * missing seller — FK Restrict — so strictness would only churn fixtures). */
 type LotSellerRow = {
   id: string;
   name: string;
-  profile: { businessName: string | null } | null;
+  profile: { businessName: string | null; city: string | null } | null;
 };
-/** A Lot row as the repository's lot reads produce it (seller + gallery). */
-type LotRowWithMedia = Lot & { seller: LotSellerRow; media: LotMediaRow[] };
+/** A Lot row as the repository's lot reads produce it (seller + gallery + the
+ * MKT-009 detail include's category NAME rows). */
+type LotRowWithMedia = Lot & {
+  seller: LotSellerRow;
+  media: LotMediaRow[];
+  category: Category;
+  subcategory: Category | null;
+};
 /** Exactly the surface LotsRepository's gallery methods compose (MEDIA-005). */
 type LotMediaWhere = { lotId?: string; mediaAssetId?: { notIn: string[] } };
 type LotMediaUpsertInput = {
@@ -1199,10 +1205,12 @@ export class FakePrisma {
   }
 
   /** Lot row with its relations joined (seller summary + gallery sorted by
-   * sortOrder), mirroring the production includes (LOT_MEDIA_INCLUDE /
-   * LOT_CARD_INCLUDE). Throws on a link whose asset row is missing —
-   * seeded fixtures are expected to be consistent; the seller join is lenient
-   * (see LotSellerRow). */
+   * sortOrder + category NAME rows), mirroring the production includes
+   * (LOT_MEDIA_INCLUDE / LOT_CARD_INCLUDE / LOT_PUBLIC_DETAIL_INCLUDE).
+   * Throws on a link whose asset row is missing — seeded fixtures are
+   * expected to be consistent; the seller join is lenient (see LotSellerRow)
+   * and missing category rows degrade to an id-only stub (specs seed
+   * historical/unknown category ids deliberately). */
   private withMedia(row: Lot): LotRowWithMedia {
     const sellerUser = [...this.users.values()].find((user) => user.id === row.sellerId);
     const profile = sellerUser
@@ -1213,14 +1221,21 @@ export class FakePrisma {
       .filter((link) => link.lotId === row.id)
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .map((link) => this.withAsset(link));
+    const category = this.categories.get(row.categoryId);
+    const subcategory = row.subcategoryId ?? undefined;
     return {
       ...cloneLot(row),
       seller: {
         id: row.sellerId,
         name: sellerUser?.name ?? '',
-        profile: profile ? { businessName: profile.businessName } : null,
+        profile: profile ? { businessName: profile.businessName, city: profile.city } : null,
       },
       media,
+      category: category ? cloneCategory(category) : categoryStub(row.categoryId),
+      subcategory:
+        subcategory === undefined
+          ? null
+          : (this.categories.get(subcategory) ?? categoryStub(subcategory)),
     };
   }
 
@@ -1296,6 +1311,22 @@ function cloneCategory(row: Category): Category {
   return { ...row, createdAt: new Date(row.createdAt), updatedAt: new Date(row.updatedAt) };
 }
 
+/** Lenient id-only Category row for lots whose categoryId has no seeded row —
+ * specs seed historical/unknown category ids deliberately (LOT-002 400s). */
+function categoryStub(id: string): Category {
+  return {
+    id,
+    nameFa: '',
+    nameEn: null,
+    slug: '',
+    parentId: null,
+    sortOrder: 0,
+    isActive: false,
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  };
+}
+
 /** Full Lot row from the create payload, applying DB defaults (LOT-001). */
 function buildLotRow(data: LotCreateData): Lot {
   const now = nowIso();
@@ -1340,7 +1371,13 @@ function matchesLotWhere(where: LotWhere | undefined): (row: Lot) => boolean {
     if (id === undefined) {
       return true;
     }
-    return typeof id === 'string' ? row.id === id : id.in.includes(row.id);
+    if (typeof id === 'string') {
+      return row.id === id;
+    }
+    if (id.in !== undefined && !id.in.includes(row.id)) {
+      return false;
+    }
+    return id.not === undefined || row.id !== id.not;
   };
   return (row) =>
     matchesId(row) &&

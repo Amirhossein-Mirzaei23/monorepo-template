@@ -18,10 +18,12 @@
  */
 import {
   categoryTreeNodeSchema,
+  lotPublicDetailResponseSchema,
   parseApiResponse,
   publicSellerListSchema,
   type CategoryTreeNodeDto,
   type LotCardResponseDto,
+  type LotPublicDetailResponseDto,
   type Paginated,
   type PublicSellerListDto,
 } from '@monorepo/shared-types';
@@ -62,6 +64,32 @@ export async function fetchLotsServer(
   }
   const raw: unknown = await response.json();
   return parseApiResponse(lotCardPageSchema, raw, 'lots (server)');
+}
+
+/**
+ * GET {API}/lots/:code — the MKT-009 detail payload for the /l/{code} RSC.
+ * Direct origin hop like the other server fetchers (the ONLY consumer is the
+ * public RSC page — no client hook re-fetches it, so there is deliberately no
+ * BFF route; same rationale as fetchSellersServer). Returns null ONLY for the
+ * API's 404 (unknown code or a non-public lot) so the route can notFound();
+ * any other failure throws (transient API outage → the route group's error
+ * boundary with retry, not a fake 404).
+ */
+export async function fetchLotDetailServer(
+  code: string,
+): Promise<LotPublicDetailResponseDto | null> {
+  const response = await fetch(`${serverApiUrl}/lots/${encodeURIComponent(code)}`, {
+    headers: { accept: 'application/json', 'x-request-id': crypto.randomUUID() },
+    cache: 'no-store',
+  });
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`Lot detail request failed (${response.status})`);
+  }
+  const raw: unknown = await response.json();
+  return parseApiResponse(lotPublicDetailResponseSchema, raw, 'lot detail (server)');
 }
 
 /** GET {API}/categories — public tree for the /c/{slug} landing (slug → id). */

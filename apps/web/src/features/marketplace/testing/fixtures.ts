@@ -1,4 +1,9 @@
-import type { CategoryTreeNodeDto, LotCardResponseDto, Paginated } from '@monorepo/shared-types';
+import type {
+  CategoryTreeNodeDto,
+  LotCardResponseDto,
+  LotPublicDetailResponseDto,
+  Paginated,
+} from '@monorepo/shared-types';
 import { LOT_LIST_PAGE_SIZE } from '../schemas/browse-query';
 
 /**
@@ -66,3 +71,78 @@ export const CATEGORY_TREE_FIXTURE: CategoryTreeNodeDto[] = [
     children: [],
   },
 ];
+
+/**
+ * MKT-009 detail fixture — a full LotPublicDetailResponseDto matching the
+ * generated contract (image cover + second image + video with poster, seller
+ * block with profile data, category path, two similar cards).
+ */
+export function lotDetailFixture(
+  overrides: Partial<LotPublicDetailResponseDto> = {},
+): LotPublicDetailResponseDto {
+  return {
+    id: 'clxdetail01',
+    code: '7Kd2Qm9x',
+    title: 'عمده پیراهن مردانه — ۵۰ عدد',
+    description: 'توضیحات کامل لات\nپیراهن‌های درجه A در کارتن‌های ۱۰ عددی بسته‌بندی شده‌اند.',
+    totalPrice: 112_500_000,
+    unitPrice: 2_250_000,
+    quantity: 50,
+    availableQuantity: 45,
+    minOrderQuantity: 10,
+    unit: 'PIECE',
+    condition: 'GRADE_A',
+    liquidationReason: 'OVERSTOCK',
+    pricingType: 'FIXED',
+    status: 'ACTIVE',
+    category: { id: 'cat-apparel', nameFa: 'پوشاک', slug: 'apparel' },
+    subcategory: { id: 'cat-men', nameFa: 'مردانه', slug: 'men' },
+    province: 'tehran',
+    city: 'tehran',
+    locationHint: 'بازار بزرگ تهران',
+    expiresAt: '2026-10-05T00:00:00.000Z',
+    createdAt: '2026-09-01T12:00:00.000Z',
+    updatedAt: '2026-09-05T09:00:00.000Z',
+    seller: {
+      id: 'clxseller01',
+      name: 'مینا رضایی',
+      businessName: 'تولیدی پوشاک مینا',
+      city: 'tehran',
+      verified: false,
+    },
+    media: [
+      {
+        id: 'link-0',
+        mediaAssetId: 'asset-0',
+        kind: 'IMAGE',
+        url: 'http://media.test/2026/09/cover.jpg',
+        thumbUrl: 'http://media.test/2026/09/cover-t.webp',
+        sortOrder: 0,
+        isCover: true,
+      },
+      {
+        id: 'link-1',
+        mediaAssetId: 'asset-1',
+        kind: 'IMAGE',
+        url: 'http://media.test/2026/09/second.jpg',
+        thumbUrl: null,
+        sortOrder: 1,
+        isCover: false,
+      },
+      {
+        id: 'link-2',
+        mediaAssetId: 'asset-2',
+        kind: 'VIDEO',
+        url: 'http://media.test/2026/09/clip.mp4',
+        thumbUrl: 'http://media.test/2026/09/clip-poster.webp',
+        sortOrder: 2,
+        isCover: false,
+      },
+    ],
+    similar: [
+      cardLotFixture({ id: 'sim-1', code: 'SimLot01', title: 'لات مشابه یک' }),
+      cardLotFixture({ id: 'sim-2', code: 'SimLot02', title: 'لات مشابه دو' }),
+    ],
+    ...overrides,
+  };
+}

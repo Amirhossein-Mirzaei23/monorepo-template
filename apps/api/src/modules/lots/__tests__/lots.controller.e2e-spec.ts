@@ -1724,4 +1724,417 @@ describe('LotsController (e2e)', () => {
       await putMedia(token, lot.id, { items: [] }).expect(403);
     });
   });
+
+  // ==========================================================================
+  // MKT-009 — public detail GET /lots/:code (shares the `:key` pattern with
+  // the LOT-005 owner read; dispatched on the 8-char code shape). The owner
+  // side of that route keeps its own describe above.
+  // ==========================================================================
+
+  describe('GET /lots/:code (public detail, MKT-009)', () => {
+    let seller: { token: string; userId: string };
+
+    /** Every public GET gets its own per-IP throttle bucket (like the listing suites). */
+    const getDetail = (code: string) =>
+      request(app.getHttpServer()).get(`/lots/${code}`).set('X-Forwarded-For', nextIp());
+
+    /** ACTIVE fixture with a FIXED public code so tests can address it. */
+    const seedPublicLot = (overrides: Partial<Parameters<FakePrisma['seedLot']>[0]> = {}) =>
+      prisma.seedLot({
+        sellerId: seller.userId,
+        categoryId: parent.id,
+        subcategoryId: child.id,
+        code: 'Detail01',
+        title: 'لات نمایشی عمده',
+        description: 'توضیحات کامل لات نمایشی برای صفحه جزئیات',
+        quantity: 10,
+        availableQuantity: 10,
+        minOrderQuantity: 5,
+        pricingType: PricingType.FIXED,
+        totalPrice: 1_000_000,
+        unitPrice: 100_000,
+        condition: LotCondition.GRADE_A,
+        liquidationReason: LiquidationReason.OVERSTOCK,
+        province: 'tehran',
+        city: 'tehran',
+        status: LotStatus.ACTIVE,
+        publishedAt: new Date(),
+        expiresAt: new Date(Date.now() + 30 * DAY_MS),
+        ...overrides,
+      });
+
+    /** Drains the fire-and-forget view counter (in-memory write settles fast). */
+    const flushViews = async (code: string, min: number): Promise<void> => {
+      for (let i = 0; i < 50; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        const lot = await prisma.lot.findUnique({ where: { code } });
+        if ((lot?.viewCount ?? 0) >= min) {
+          return;
+        }
+      }
+      throw new Error(`viewCount of ${code} never reached ${min}`);
+    };
+
+    beforeAll(async () => {
+      seller = await loginAsSeller();
+      prisma.seedProfile({
+        userId: seller.userId,
+        displayName: 'مینا',
+        businessName: 'تولیدی پوشاک مینا',
+        province: 'tehran',
+        city: 'tehran',
+      });
+    });
+
+    it('serves the full public detail to an ANONYMOUS caller by 8-char code', async () => {
+      seedPublicLot({ locationHint: 'بازار بزرگ تهران' });
+
+      const response = await getDetail('Detail01').expect(200);
+
+      expect(response.body).toMatchObject({
+        code: 'Detail01',
+        title: 'لات نمایشی عمده',
+        description: 'توضیحات کامل لات نمایشی برای صفحه جزئیات',
+        totalPrice: 1_000_000,
+        unitPrice: 100_000,
+        quantity: 10,
+        availableQuantity: 10,
+        minOrderQuantity: 5,
+        unit: 'PIECE',
+        condition: 'GRADE_A',
+        liquidationReason: 'OVERSTOCK',
+        pricingType: 'FIXED',
+        status: 'ACTIVE',
+        province: 'tehran',
+        city: 'tehran',
+        locationHint: 'بازار بزرگ تهران',
+        category: { nameFa: 'پوشاک', slug: 'apparel-lots' },
+        subcategory: { nameFa: 'مردانه', slug: 'apparel-men-lots' },
+        seller: {
+          id: seller.userId,
+          name: expect.any(String),
+          businessName: 'تولیدی پوشاک مینا',
+          city: 'tehran',
+          verified: false, // TRS-001/002 placeholder
+        },
+      });
+      expect(response.body.expiresAt).toBeDefined();
+      expect(response.body.createdAt).toBeDefined();
+      expect(response.body.updatedAt).toBeDefined();
+      expect(response.body.media).toEqual([]); // seeded without a gallery
+      expect(Array.isArray(response.body.similar)).toBe(true);
+    });
+
+    it('404s every non-public variant: non-ACTIVE statuses, past expiry, soft-deleted, unknown code', async () => {
+      // Distinct codes per case — FakePrisma resolves a code to its FIRST row.
+      const hiddenCases: Array<[string, Partial<Parameters<FakePrisma['seedLot']>[0]>]> = [
+        ['Drft0001', { status: LotStatus.DRAFT, publishedAt: null }],
+        ['PndRv001', { status: LotStatus.PENDING_REVIEW, publishedAt: null }],
+        ['Pasd0001', { status: LotStatus.PAUSED }],
+        ['Rjct0001', { status: LotStatus.REJECTED }],
+        ['Exprd001', { status: LotStatus.EXPIRED }],
+        ['SOld0001', { status: LotStatus.SOLD }],
+      ];
+      for (const [code, overrides] of hiddenCases) {
+        seedPublicLot({ code, ...overrides });
+        await getDetail(code).expect(404);
+      }
+      seedPublicLot({ code: 'Rmvd0001', status: LotStatus.REMOVED, deletedAt: new Date() });
+      await getDetail('Rmvd0001').expect(404);
+      // ACTIVE but past expiry — the findPublic safety predicate, not just the status.
+      seedPublicLot({ code: 'PastEx01', expiresAt: new Date(Date.now() - DAY_MS) });
+      await getDetail('PastEx01').expect(404);
+      await getDetail('NoCode99').expect(404); // unknown 8-char code
+      // Boundary: an expiry at/behind `now` is NOT public (gt, not gte).
+      seedPublicLot({ code: 'EdgeEx01', expiresAt: new Date() });
+      await getDetail('EdgeEx01').expect(404);
+    });
+
+    it('serves the DETAIL allowlist: exact key set, no exactAddress/rejectionReason/seller phone', async () => {
+      // Distinct code: every test addresses its OWN row (FakePrisma resolves a
+      // code to its first row, and the basic-detail test already used Detail01).
+      seedPublicLot({
+        code: 'AlowLst1',
+        exactAddress: 'تهران، خیابان …، پلاک ۱۲',
+        rejectionReason: 'نامربوط — لات ACTIVE است',
+      });
+
+      const response = await getDetail('AlowLst1').expect(200);
+      const body = response.body;
+
+      expect(Object.keys(body).sort()).toEqual([
+        'availableQuantity',
+        'category',
+        'city',
+        'code',
+        'condition',
+        'createdAt',
+        'description',
+        'expiresAt',
+        'id',
+        'liquidationReason',
+        'locationHint',
+        'media',
+        'minOrderQuantity',
+        'pricingType',
+        'province',
+        'quantity',
+        'seller',
+        'similar',
+        'status',
+        'subcategory',
+        'title',
+        'totalPrice',
+        'unit',
+        'unitPrice',
+        'updatedAt',
+      ]);
+      expect(Object.keys(body.seller).sort()).toEqual([
+        'businessName',
+        'city',
+        'id',
+        'name',
+        'verified',
+      ]);
+      // The seeded private values must not surface anywhere in the payload.
+      const serialized = JSON.stringify(body);
+      expect(serialized).not.toContain('تهران، خیابان');
+      expect(serialized).not.toContain('نامربوط');
+      expect(serialized).not.toContain('exactAddress');
+      expect(serialized).not.toContain('rejectionReason');
+      expect(serialized).not.toContain('phone');
+      // The counter exists for analytics, not for this page.
+      expect(body).not.toHaveProperty('viewCount');
+    });
+
+    it('serves the ordered full gallery: absolute urls, kind, poster thumb, cover flag', async () => {
+      const lot = seedPublicLot({ code: 'Gllry001' });
+      const coverImage = prisma.seedMediaAsset({
+        ownerId: seller.userId,
+        type: MediaType.IMAGE,
+        mime: 'image/jpeg',
+        sizeBytes: 100,
+        storageKey: '2026/09/cover.jpg',
+        thumbKey: '2026/09/cover-t.webp',
+      });
+      const secondImage = prisma.seedMediaAsset({
+        ownerId: seller.userId,
+        type: MediaType.IMAGE,
+        mime: 'image/jpeg',
+        sizeBytes: 100,
+        storageKey: '2026/09/second.jpg',
+        thumbKey: null,
+      });
+      const video = prisma.seedMediaAsset({
+        ownerId: seller.userId,
+        type: MediaType.VIDEO,
+        mime: 'video/mp4',
+        sizeBytes: 100,
+        storageKey: '2026/09/clip.mp4',
+        thumbKey: '2026/09/clip-poster.webp',
+      });
+      // sortOrder 1 first on purpose — the include must ORDER the links.
+      prisma.seedLotMedia({
+        lotId: lot.id,
+        mediaAssetId: coverImage.id,
+        sortOrder: 1,
+        isCover: true,
+      });
+      prisma.seedLotMedia({ lotId: lot.id, mediaAssetId: secondImage.id, sortOrder: 0 });
+      prisma.seedLotMedia({ lotId: lot.id, mediaAssetId: video.id, sortOrder: 2 });
+
+      const response = await getDetail('Gllry001').expect(200);
+
+      expect(response.body.media.map((entry: { sortOrder: number }) => entry.sortOrder)).toEqual([
+        0, 1, 2,
+      ]);
+      expect(response.body.media[0]).toMatchObject({
+        kind: 'IMAGE',
+        url: 'http://localhost:3001/media/2026/09/second.jpg',
+        thumbUrl: null,
+        isCover: false,
+      });
+      expect(response.body.media[1]).toMatchObject({
+        kind: 'IMAGE',
+        url: 'http://localhost:3001/media/2026/09/cover.jpg',
+        thumbUrl: 'http://localhost:3001/media/2026/09/cover-t.webp',
+        isCover: true,
+      });
+      expect(response.body.media[2]).toMatchObject({
+        kind: 'VIDEO',
+        url: 'http://localhost:3001/media/2026/09/clip.mp4',
+        thumbUrl: 'http://localhost:3001/media/2026/09/clip-poster.webp',
+        isCover: false,
+      });
+    });
+
+    it('similar: same-subcategory first (newest first), ACTIVE+unexpired only, self excluded', async () => {
+      // A DEDICATED subcategory keeps the sub-slice deterministic against the
+      // shared store (earlier suites left other ACTIVE child lots behind).
+      const simSub = prisma.seedCategory({
+        nameFa: 'هم‌دسته‌ها',
+        slug: 'similar-sub-lots',
+        parentId: parent.id,
+        sortOrder: 9,
+      });
+      seedPublicLot({ code: 'SimLr001', subcategoryId: simSub.id });
+      // Same subcategory, ACTIVE — explicit createdAt offsets beat the wall
+      // clock so the relative order is deterministic even on ties.
+      seedPublicLot({
+        code: 'SimLr002',
+        title: 'زیردست تازه',
+        subcategoryId: simSub.id,
+        createdAt: new Date(Date.now() + 2_000),
+      });
+      seedPublicLot({
+        code: 'SimLr003',
+        title: 'زیردست قدیمی',
+        subcategoryId: simSub.id,
+        createdAt: new Date(Date.now() + 1_000),
+      });
+      // Same subcategory but NOT public — must never appear:
+      seedPublicLot({
+        code: 'SimLr004',
+        title: 'زیردست پیش‌نویس',
+        subcategoryId: simSub.id,
+        status: LotStatus.DRAFT,
+      });
+      seedPublicLot({
+        code: 'SimLr005',
+        title: 'زیردست منقضی',
+        subcategoryId: simSub.id,
+        expiresAt: new Date(Date.now() - DAY_MS),
+      });
+      seedPublicLot({
+        code: 'SimLr006',
+        title: 'زیردست مکث‌شده',
+        subcategoryId: simSub.id,
+        status: LotStatus.PAUSED,
+      });
+      // Same CATEGORY, different subcategory — the backfill slice. The +2d
+      // offset beats every other ACTIVE category row in the shared store
+      // (earlier suites seeded future-dated lots), so this row is always the
+      // first backfill pick and can never be crowded out by the 8-cap:
+      seedPublicLot({
+        code: 'SimLr007',
+        title: 'هم‌دسته',
+        subcategoryId: otherChild.id,
+        createdAt: new Date(Date.now() + 2 * DAY_MS),
+      });
+
+      const response = await getDetail('SimLr001').expect(200);
+
+      const titles = response.body.similar.map((card: { title: string }) => card.title);
+      // The subcategory slice is served FIRST, newest first; the category
+      // backfill follows with the newest same-category row.
+      expect(titles[0]).toBe('زیردست تازه');
+      expect(titles[1]).toBe('زیردست قدیمی');
+      expect(titles[2]).toBe('هم‌دسته');
+      for (const hidden of ['زیردست پیش‌نویس', 'زیردست منقضی', 'زیردست مکث‌شده']) {
+        expect(titles).not.toContain(hidden);
+      }
+      for (const card of response.body.similar) {
+        expect(card.code).not.toBe('SimLr001');
+        // Each similar row is a full MKT-001 CARD shape (exact key set).
+        expect(Object.keys(card).sort()).toEqual([
+          'availableQuantity',
+          'city',
+          'code',
+          'condition',
+          'coverThumbUrl',
+          'createdAt',
+          'expiresAt',
+          'id',
+          'province',
+          'quantity',
+          'seller',
+          'title',
+          'totalPrice',
+          'unit',
+          'unitPrice',
+          'updatedAt',
+          'verifiedSeller',
+        ]);
+      }
+    });
+
+    it('similar: a lot without a subcategory searches its whole category', async () => {
+      seedPublicLot({ code: 'SimLr010', subcategoryId: null });
+      seedPublicLot({
+        code: 'SimLr011',
+        title: 'هم‌دسته یک',
+        subcategoryId: child.id,
+        createdAt: new Date(Date.now() + 2_000),
+      });
+      seedPublicLot({
+        code: 'SimLr012',
+        title: 'هم‌دسته دو',
+        subcategoryId: otherChild.id,
+        createdAt: new Date(Date.now() + 1_000),
+      });
+      // Another category tree — never related:
+      seedPublicLot({
+        code: 'SimLr013',
+        title: 'بی‌ربط',
+        categoryId: otherChild.id,
+        subcategoryId: null,
+        createdAt: new Date(Date.now() + 3_000),
+      });
+
+      const response = await getDetail('SimLr010').expect(200);
+
+      const titles = response.body.similar.map((card: { title: string }) => card.title);
+      // Category-wide membership (earlier suites seeded future-dated lots, so
+      // the exact head of the slice is not asserted here).
+      expect(titles).toContain('هم‌دسته یک');
+      expect(titles).toContain('هم‌دسته دو');
+      expect(titles).not.toContain('بی‌ربط');
+    });
+
+    it('similar: caps at 8 rows', async () => {
+      seedPublicLot({ code: 'SimLr020' });
+      for (let i = 1; i <= 11; i += 1) {
+        seedPublicLot({
+          code: `SimLr0${20 + i}`.slice(0, 8),
+          title: `زیردست ${i}`,
+          createdAt: new Date(Date.now() + i * 1_000),
+        });
+      }
+
+      const response = await getDetail('SimLr020').expect(200);
+
+      expect(response.body.similar).toHaveLength(8);
+      expect(response.body.similar[0].title).toBe('زیردست 11'); // newest first
+    });
+
+    it('counts ONE view per code per 30 min (lot_view_{code} cookie dedup) and never fails the page', async () => {
+      seedPublicLot({ code: 'VwCnt001' });
+      const cookieName = 'lot_view_VwCnt001';
+
+      const first = await getDetail('VwCnt001').expect(200);
+      // Set-Cookie marks the visitor for the dedup window.
+      const setCookie = first.headers['set-cookie'] as unknown as string[];
+      const marker = setCookie.find((line) => line.startsWith(`${cookieName}=`));
+      expect(marker).toBeDefined();
+      expect(marker).toContain('Max-Age=1800');
+      expect(marker).toContain('HttpOnly');
+      expect(marker).toContain('SameSite=Lax');
+      expect(marker).toContain('Path=/lots/VwCnt001');
+      await flushViews('VwCnt001', 1);
+      const afterFirst = await prisma.lot.findUnique({ where: { code: 'VwCnt001' } });
+      expect(afterFirst?.viewCount).toBe(1);
+
+      // Repeat visit WITH the cookie: no increment, no fresh cookie.
+      const repeat = await getDetail('VwCnt001').set('Cookie', `${cookieName}=1`).expect(200);
+      expect(repeat.headers['set-cookie']).toBeUndefined();
+      const afterRepeat = await prisma.lot.findUnique({ where: { code: 'VwCnt001' } });
+      expect(afterRepeat?.viewCount).toBe(1);
+
+      // A visitor WITHOUT the cookie (expired/new browser) counts again.
+      await getDetail('VwCnt001').expect(200);
+      await flushViews('VwCnt001', 2);
+      const afterThird = await prisma.lot.findUnique({ where: { code: 'VwCnt001' } });
+      expect(afterThird?.viewCount).toBe(2);
+    });
+  });
 });

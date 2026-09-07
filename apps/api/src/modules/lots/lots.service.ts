@@ -43,6 +43,7 @@ import {
 } from './lots.constants';
 import { toLotOwnerResponse, type LotOwnerResponseDto } from './dto/lot-response.dto';
 import { toLotCardResponse, type LotCardResponseDto } from './dto/lot-card.dto';
+import { toLotPublicDetailResponse, type LotPublicDetailResponseDto } from './dto/lot-detail.dto';
 import type { LotsPublicQueryDto } from './dto/lots-public-query.dto';
 import type { PutLotMediaDto } from './dto/lot-media.dto';
 import type { CreateLotDto } from './dto/create-lot.dto';
@@ -506,6 +507,50 @@ export class LotsService {
     });
     const mediaBaseUrl = requireAppConfig(this.config).storage.publicMediaBaseUrl;
     return { items: items.map((lot) => toLotCardResponse(lot, mediaBaseUrl)), total, page, limit };
+  }
+
+  /**
+   * Public lot detail (GET /lots/:code, MKT-009): the full public spec of ONE
+   * ACTIVE lot addressed by its public `code` (never the internal id), plus
+   * the similar-lots slice. Visibility is exactly the findPublic core —
+   * ACTIVE + expiresAt > now + deletedAt null — and any miss (unknown code,
+   * DRAFT/PAUSED/PENDING_REVIEW/EXPIRED/REMOVED/SOLD, past expiry) answers a
+   * uniform 404: the public view has no oracle for why a lot is gone (owners
+   * use the untouched GET /lots/:id owner route; validation note on the card).
+   * Payload = strict LotPublicDetailResponseDto allowlist (no exactAddress /
+   * rejectionReason / seller contact; viewCount is not rendered by the page
+   * and stays out of the payload).
+   */
+  async findPublicByCode(code: string): Promise<LotPublicDetailResponseDto> {
+    const lot = await this.repository.findByCode(code);
+    if (
+      !lot ||
+      lot.status !== LotStatus.ACTIVE ||
+      lot.deletedAt !== null ||
+      lot.expiresAt.getTime() <= Date.now()
+    ) {
+      throw new NotFoundException('Lot not found');
+    }
+    const mediaBaseUrl = requireAppConfig(this.config).storage.publicMediaBaseUrl;
+    const similar = await this.repository.findSimilar(lot);
+    return {
+      ...toLotPublicDetailResponse(lot, mediaBaseUrl),
+      similar: similar.map((row) => toLotCardResponse(row, mediaBaseUrl)),
+    };
+  }
+
+  /**
+   * MKT-009 view counter — one atomic updateMany increment ({increment},
+   * plan §12: never read-modify-write). The controller calls this
+   * FIRE-AND-FORGET after the dedup cookie check; every failure is swallowed
+   * here (logged) so a counter write can NEVER fail the page render.
+   */
+  async recordView(lotId: string): Promise<void> {
+    try {
+      await this.repository.incrementCounters(lotId, { viewCount: 1 });
+    } catch (error) {
+      this.logger.warn(`viewCount increment failed for lot ${lotId}: ${String(error)}`);
+    }
   }
 
   // --- owner reads (LOT-005: seller inventory + the edit-flow load step) ---

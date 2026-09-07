@@ -146,7 +146,7 @@ discovery. Exact seller addresses never appear in public payloads.
 - **Testing:** component tests (open/close, apply/reset, URL sync).
 - **DoD:** suites green.
 
-### MKT-009 — Lot detail page
+### MKT-009 ✅ — Lot detail page
 
 **P0 · Phase 4 · Marketplace · L** — Deps: MKT-001, MEDIA-005, CHT-001 (chat CTA), OFR-001 (offer CTA — CTAs may land disabled-first)
 
