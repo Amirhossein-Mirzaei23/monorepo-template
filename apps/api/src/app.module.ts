@@ -16,6 +16,7 @@ import { HealthModule } from './health/health.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CategoriesModule } from './modules/categories/categories.module';
+import { ConversationsModule } from './modules/conversations/conversations.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { LotsModule } from './modules/lots/lots.module';
 import { MediaModule } from './modules/media/media.module';
@@ -82,6 +83,7 @@ import { PrismaModule } from './prisma/prisma.module';
     CategoriesModule,
     ProfilesModule,
     LotsModule,
+    ConversationsModule,
     MediaModule,
     JobsModule,
   ],

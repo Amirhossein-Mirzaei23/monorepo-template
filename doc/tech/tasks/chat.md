@@ -7,7 +7,7 @@ media pipeline (secure serving).
 
 ---
 
-### CHT-001 — Conversation domain + get-or-create API
+### CHT-001 ✅ — Conversation domain + get-or-create API
 
 **P0 · Phase 5 · Chat · M** — Deps: LOT-001, AUTH-003
 

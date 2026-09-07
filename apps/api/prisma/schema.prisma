@@ -98,6 +98,26 @@ enum MediaType {
   VIDEO
 }
 
+/// Conversation lifecycle (plan §3). BLOCKED is set by CHT-009 (block/report);
+/// REPORTED marks a conversation under an open report — the column exists from
+/// CHT-001 per plan §3, no API path writes it yet.
+enum ConversationStatus {
+  ACTIVE
+  BLOCKED
+  REPORTED
+}
+
+/// Message kinds (plan §3). senderId is null exactly for SYSTEM rows (the
+/// sender-null = system rule). ACTION is reserved for future structured
+/// payloads (CHT-008 architecture note); IMAGE/VIDEO sends land in CHT-007.
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  SYSTEM
+  ACTION
+}
+
 model User {
   id            String         @id @default(cuid())
   /// Iranian mobile number, normalized and stored as `09xxxxxxxxx`.
@@ -121,6 +141,12 @@ model User {
   lots          Lot[]
   /// Uploaded media (MEDIA-001).
   mediaAssets   MediaAsset[]
+  /// Conversations where this account is the buyer (CHT-001).
+  buyerConversations  Conversation[] @relation("ConversationBuyer")
+  /// Conversations where this account is the seller (CHT-001).
+  sellerConversations Conversation[] @relation("ConversationSeller")
+  /// Messages this account sent (null senderId = SYSTEM rows, never in here).
+  sentMessages  Message[]
 
   @@index([status])
 }
@@ -317,6 +343,9 @@ model Lot {
   /// Ordered gallery (MEDIA-005) — the join table IS the gallery: order and
   /// cover live here, not on the asset or the client.
   media LotMedia[]
+  /// Buyer threads opened on this lot — at most one per buyer
+  /// (unique(lotId, buyerId), CHT-001).
+  conversations Conversation[]
 }
 
 /// An uploaded binary and its storage metadata (MEDIA-001, plan §3). The bytes
@@ -355,6 +384,8 @@ model MediaAsset {
   /// content (a future message/avatar may reference them too), so linking,
   /// not owning, is the relationship.
   lotMedia LotMedia[]
+  /// Chat messages carrying this asset (IMAGE/VIDEO, CHT-007).
+  messages Message[]
 }
 
 /// Ordered lot↔media link (MEDIA-005, plan §3). A real join table (not an
@@ -387,4 +418,85 @@ model LotMedia {
   /// One link per (lot, asset) pair; (lotId, sortOrder) serves ordered reads.
   @@unique([lotId, mediaAssetId])
   @@index([lotId, sortOrder])
+}
+
+/// One buyer↔seller negotiation thread about ONE lot (CHT-001, plan §3) —
+/// the product's "one thread per buyer per lot" rule is the DB-level
+/// unique(lotId, buyerId); the seller is DERIVED from the lot (denormalized
+/// onto the row only so participant queries are a plain indexed lookup).
+/// lastMessageAt/lastMessagePreview are denormalized list-feed data (CHT-002
+/// renders the inbox from them without joining Message); the unread counters
+/// are per-side and bumped atomically by the CHT-003 send/read endpoints
+/// (updateMany increments — never read-modify-write, plan §12).
+model Conversation {
+  id                 String             @id @default(cuid())
+  lotId              String
+  /// onDelete: Cascade — a HARD-deleted lot takes its threads with it. Lots
+  /// are soft-deleted in practice (REMOVED + deletedAt, LOT-003), mirroring
+  /// LotMedia.lot: this fires only on explicit row cleanup.
+  lot                Lot                @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  buyerId            String
+  /// onDelete: Restrict on both participants — users are soft-deleted
+  /// (plan §12); a hard user delete behind live conversations must be
+  /// impossible (same reasoning as Lot.seller).
+  buyer              User               @relation("ConversationBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  /// Copied from Lot.sellerId at create (the service derives it — never the
+  /// client); kept on the row to serve seller-inbox queries by index.
+  sellerId           String
+  seller             User               @relation("ConversationSeller", fields: [sellerId], references: [id], onDelete: Restrict)
+  status             ConversationStatus @default(ACTIVE)
+  /// Stamp of the newest message (welcome message included) — the inbox sort
+  /// key; every message write moves it forward (CHT-003).
+  lastMessageAt      DateTime
+  /// Truncated preview of the newest message body (CHT-002, ≤ 80 chars).
+  lastMessagePreview String?
+  /// Per-side unread counters, atomic {increment} writes only (CHT-003).
+  buyerUnreadCount   Int                @default(0)
+  sellerUnreadCount  Int                @default(0)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  messages Message[]
+
+  /// The product's one-thread-per-buyer-per-lot rule (CHT-001).
+  @@unique([lotId, buyerId])
+  /// Participant inbox feeds (CHT-002): newest-activity first per side.
+  @@index([buyerId, lastMessageAt])
+  @@index([sellerId, lastMessageAt])
+}
+
+/// A single chat message (CHT-001 schema, plan §3). Append-only: rows are
+/// never updated in place — the only mutable field is readAt (CHT-003 batch
+/// read-marking), so there is no updatedAt. body is a Postgres TEXT column
+/// (Prisma String default) — the ≤ 2000-char cap is the CHT-003 DTO's job.
+model Message {
+  id             String      @id @default(cuid())
+  conversationId String
+  /// onDelete: Cascade — a hard-deleted conversation takes its messages with
+  /// it (same cleanup-only firing as Conversation.lot).
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  /// null exactly for SYSTEM rows (the welcome message, CHT-001).
+  senderId       String?
+  /// onDelete: Restrict — soft-deleted users must stay resolvable as the
+  /// author of history (same rule as Conversation participants).
+  sender         User?       @relation(fields: [senderId], references: [id], onDelete: Restrict)
+  type           MessageType @default(TEXT)
+  /// Text payload (TEXT) or the fa system copy (SYSTEM); null for media rows.
+  body           String?
+  mediaAssetId   String?
+  /// onDelete: Restrict — an asset referenced by chat history must not be
+  /// hard-deleted behind it (CHT-007 secure serving resolves access THROUGH
+  /// this row); mirrors LotMedia.mediaAsset.
+  mediaAsset     MediaAsset? @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict)
+  /// Optional parent message (reply UI, CHT-006 — model-ready from CHT-001).
+  replyToId      String?
+  /// onDelete: Cascade — a reply is meaningless without its target.
+  replyTo        Message?    @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: Cascade)
+  replies        Message[]   @relation("MessageReplies")
+  /// Set by the CHT-003 read endpoint (batch where readAt null); null = unread.
+  readAt         DateTime?
+  createdAt      DateTime    @default(now())
+
+  /// Thread history reads (CHT-003 cursor pagination walks this index).
+  @@index([conversationId, createdAt])
 }

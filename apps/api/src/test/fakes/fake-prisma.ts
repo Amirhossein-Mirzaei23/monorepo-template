@@ -1,5 +1,7 @@
 import {
   type Category,
+  type Conversation,
+  ConversationStatus,
   type LiquidationReason,
   type Lot,
   LotCondition,
@@ -8,6 +10,8 @@ import {
   LotUnit,
   type MediaAsset,
   MediaType,
+  type Message,
+  MessageType,
   type OtpCode,
   OtpPurpose,
   type Prisma,
@@ -214,6 +218,41 @@ type LotMediaUpsertInput = {
   update: { sortOrder: number; isCover: boolean };
 };
 
+/** Exactly the surface ConversationsRepository composes (CHT-001): the
+ * get-or-create unique-key lookup + create, both reading the conversation
+ * back WITH its lot joined (cover media included) for the response mapper. */
+type ConversationFindUniqueArgs = {
+  where: { id?: string; lotId_buyerId?: { lotId: string; buyerId: string } };
+  include?: { lot?: unknown };
+};
+/** Create payload: required scalars; status/unreads take the DB defaults. */
+type ConversationCreateData = {
+  lotId: string;
+  buyerId: string;
+  sellerId: string;
+  lastMessageAt: Date;
+  lastMessagePreview?: string | null;
+  status?: ConversationStatus;
+  buyerUnreadCount?: number;
+  sellerUnreadCount?: number;
+};
+/** A Conversation row as the repository reads produce it (lot + cover joined). */
+type ConversationJoinedRow = Conversation & { lot: LotRowWithMedia };
+
+/** Exactly the surface ConversationsRepository/CHT-001 tests use: welcome-message
+ * create + direct row assertions in specs. */
+type MessageCreateData = {
+  conversationId: string;
+  senderId?: string | null;
+  type?: MessageType;
+  body?: string | null;
+  mediaAssetId?: string | null;
+  replyToId?: string | null;
+  readAt?: Date | null;
+};
+type MessageWhere = { conversationId?: string; senderId?: string | null };
+type MessageOrderBy = Record<string, 'asc' | 'desc'>;
+
 /**
  * Deterministic in-memory Prisma stand-in covering exactly the surface this app
  * uses (user + refreshToken + otpCode + category + profile + profileInterest
@@ -230,6 +269,8 @@ export class FakePrisma {
   private readonly lots = new Map<string, Lot>();
   private readonly lotMediaRows = new Map<string, LotMedia>();
   private readonly mediaAssets = new Map<string, MediaAsset>();
+  private readonly conversations = new Map<string, Conversation>();
+  private readonly messages = new Map<string, Message>();
 
   readonly user = {
     findMany: async ({
@@ -904,6 +945,88 @@ export class FakePrisma {
     },
   };
 
+  /** Exactly the surface ConversationsRepository uses (CHT-001). Reads always
+   * come back with the lot joined (via withMedia — seller/gallery included,
+   * which structurally carries the cover link the response mapper picks). */
+  readonly conversation = {
+    findUnique: async ({
+      where,
+    }: ConversationFindUniqueArgs): Promise<ConversationJoinedRow | null> => {
+      const found = [...this.conversations.values()].find(matchesConversationWhere(where));
+      return found ? this.withConversationLot(found) : null;
+    },
+    create: async ({ data }: { data: ConversationCreateData }): Promise<ConversationJoinedRow> => {
+      const duplicate = [...this.conversations.values()].find(
+        (row) => row.lotId === data.lotId && row.buyerId === data.buyerId,
+      );
+      if (duplicate) {
+        // Mirror the real client: PrismaClientKnownRequestError carries .code.
+        const error = new Error('Unique constraint failed on (lotId, buyerId)') as Error & {
+          code: string;
+        };
+        error.code = 'P2002';
+        throw error;
+      }
+      const row: Conversation = {
+        id: randomUUID(),
+        lotId: data.lotId,
+        buyerId: data.buyerId,
+        sellerId: data.sellerId,
+        status: data.status ?? ConversationStatus.ACTIVE,
+        lastMessageAt: data.lastMessageAt,
+        lastMessagePreview: data.lastMessagePreview ?? null,
+        buyerUnreadCount: data.buyerUnreadCount ?? 0,
+        sellerUnreadCount: data.sellerUnreadCount ?? 0,
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+      };
+      this.conversations.set(row.id, row);
+      return this.withConversationLot(row);
+    },
+  };
+
+  /** Exactly the surface CHT-001 (welcome message) + spec assertions use. */
+  readonly message = {
+    create: async ({ data }: { data: MessageCreateData }): Promise<Message> => {
+      const conversation = this.conversations.get(data.conversationId);
+      if (!conversation) {
+        throw new Error(
+          `FakePrisma: message references missing conversation ${data.conversationId}`,
+        );
+      }
+      const row: Message = {
+        id: randomUUID(),
+        conversationId: data.conversationId,
+        senderId: data.senderId ?? null,
+        type: data.type ?? MessageType.TEXT,
+        body: data.body ?? null,
+        mediaAssetId: data.mediaAssetId ?? null,
+        replyToId: data.replyToId ?? null,
+        readAt: data.readAt ?? null,
+        createdAt: nowIso(),
+      };
+      this.messages.set(row.id, row);
+      return cloneMessage(row);
+    },
+    findMany: async ({
+      where,
+      orderBy,
+    }: {
+      where?: MessageWhere;
+      orderBy?: MessageOrderBy;
+    } = {}): Promise<Message[]> => {
+      let rows = [...this.messages.values()].filter(matchesMessageWhere(where));
+      if (orderBy?.createdAt === 'desc') {
+        rows = rows.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      } else if (orderBy?.createdAt === 'asc') {
+        rows = rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      }
+      return rows.map(cloneMessage);
+    },
+    count: async ({ where }: { where?: MessageWhere } = {}): Promise<number> =>
+      [...this.messages.values()].filter(matchesMessageWhere(where)).length,
+  };
+
   /** Exactly the surface MediaRepository uses (MEDIA-001 + MEDIA-002 quota +
    * MEDIA-005 batch id lookup). */
   readonly mediaAsset = {
@@ -1269,6 +1392,16 @@ export class FakePrisma {
     }
     return { ...cloneLotMedia(row), mediaAsset: cloneMediaAsset(asset) };
   }
+
+  /** Conversation row with its lot joined (withMedia — the repository's
+   * CONVERSATION_LOT_INCLUDE covers the same lot data the response needs). */
+  private withConversationLot(row: Conversation): ConversationJoinedRow {
+    const lot = this.lots.get(row.lotId);
+    if (!lot) {
+      throw new Error(`FakePrisma: conversation ${row.id} references a missing lot`);
+    }
+    return { ...cloneConversation(row), lot: this.withMedia(lot) };
+  }
 }
 
 function matchesWhere(where: UserWhere | undefined): (user: User) => boolean {
@@ -1519,6 +1652,40 @@ function cloneLotMedia(row: LotMedia): LotMedia {
     ...row,
     createdAt: new Date(row.createdAt),
     updatedAt: new Date(row.updatedAt),
+  };
+}
+
+/** CHT-001 conversation matcher: unique-key lookup surface only. */
+function matchesConversationWhere(
+  where: { id?: string; lotId_buyerId?: { lotId: string; buyerId: string } } | undefined,
+): (row: Conversation) => boolean {
+  return (row) =>
+    (where?.id === undefined || row.id === where.id) &&
+    (where?.lotId_buyerId === undefined ||
+      (row.lotId === where.lotId_buyerId.lotId && row.buyerId === where.lotId_buyerId.buyerId));
+}
+
+function cloneConversation(row: Conversation): Conversation {
+  return {
+    ...row,
+    lastMessageAt: new Date(row.lastMessageAt),
+    createdAt: new Date(row.createdAt),
+    updatedAt: new Date(row.updatedAt),
+  };
+}
+
+/** Message matcher: thread scoping + optional sender (null matches SYSTEM rows). */
+function matchesMessageWhere(where: MessageWhere | undefined): (row: Message) => boolean {
+  return (row) =>
+    (where?.conversationId === undefined || row.conversationId === where.conversationId) &&
+    (where?.senderId === undefined || row.senderId === where.senderId);
+}
+
+function cloneMessage(row: Message): Message {
+  return {
+    ...row,
+    readAt: row.readAt === null ? null : new Date(row.readAt),
+    createdAt: new Date(row.createdAt),
   };
 }
 

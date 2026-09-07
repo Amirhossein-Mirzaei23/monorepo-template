@@ -571,6 +571,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Get-or-create the authenticated buyer's conversation about a lot (403 self/non-buyer, 404 unknown lot, 409 inactive lot) */
+        post: operations["ConversationsController_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1903,6 +1920,73 @@ export interface components {
              */
             durationMs: number;
         };
+        CreateConversationDto: {
+            /**
+             * @description The ACTIVE lot to open a conversation about
+             * @example clx…cuid
+             */
+            lotId: string;
+        };
+        ConversationLotSummaryDto: {
+            /**
+             * @description Public lot code — the «مشاهده لات» link target (/l/{code})
+             * @example 7Kd2Qm9x
+             */
+            code: string;
+            /** @example عمده پیراهن مردانه — ۵۰ عدد */
+            title: string;
+            /**
+             * @description Absolute cover thumb (PUBLIC_MEDIA_BASE_URL + thumbKey falling back to storageKey); null when the lot has no cover
+             * @example http://localhost:3001/media/2026/09/abc…123t.webp
+             */
+            coverThumbUrl?: string | null;
+            /**
+             * @description Derived per-unit price (Toman)
+             * @example 2250000
+             */
+            unitPrice: number;
+            /**
+             * @example ACTIVE
+             * @enum {string}
+             */
+            status: "DRAFT" | "PENDING_REVIEW" | "ACTIVE" | "PAUSED" | "REJECTED" | "EXPIRED" | "SOLD" | "REMOVED";
+        };
+        ConversationResponseDto: {
+            /**
+             * @description Conversation id — thread route param
+             * @example clx…cuid
+             */
+            id: string;
+            /** @example clx…cuid */
+            lotId: string;
+            /**
+             * @description The requesting buyer (thread creator)
+             * @example clx…cuid
+             */
+            buyerId: string;
+            /**
+             * @description Derived server-side from the lot — never client-supplied
+             * @example clx…cuid
+             */
+            sellerId: string;
+            /**
+             * @example ACTIVE
+             * @enum {string}
+             */
+            status: "ACTIVE" | "BLOCKED" | "REPORTED";
+            /**
+             * Format: date-time
+             * @example 2026-09-05T00:00:00.000Z
+             */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @description Newest-message stamp — set to the welcome message on create (CHT-003 moves it)
+             * @example 2026-09-05T00:00:00.000Z
+             */
+            lastMessageAt: string;
+            lot: components["schemas"]["ConversationLotSummaryDto"];
+        };
     };
     responses: never;
     parameters: never;
@@ -2862,6 +2946,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": string;
+                };
+            };
+        };
+    };
+    ConversationsController_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateConversationDto"];
+            };
+        };
+        responses: {
+            /** @description The buyer's thread for this lot — created (with a SYSTEM welcome message) or returned unchanged; 200 either way */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationResponseDto"];
                 };
             };
         };

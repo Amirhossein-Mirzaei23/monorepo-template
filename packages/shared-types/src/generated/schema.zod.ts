@@ -267,6 +267,18 @@ export const mediaVideoUploadUrlsDtoSchema = z.object({
   posterThumb: z.string().optional(),
 });
 
+export const createConversationDtoSchema = z.object({
+  lotId: z.string(),
+});
+
+export const conversationLotSummaryDtoSchema = z.object({
+  code: z.string(),
+  title: z.string(),
+  coverThumbUrl: z.string().nullable().optional(),
+  unitPrice: z.number(),
+  status: z.enum(['DRAFT', 'PENDING_REVIEW', 'ACTIVE', 'PAUSED', 'REJECTED', 'EXPIRED', 'SOLD', 'REMOVED']),
+});
+
 export const otpVerifyResponseDtoSchema = z.object({
   accessToken: z.string(),
   user: userResponseDtoSchema,
@@ -413,6 +425,17 @@ export const mediaVideoUploadResponseDtoSchema = z.object({
   durationMs: z.number(),
 });
 
+export const conversationResponseDtoSchema = z.object({
+  id: z.string(),
+  lotId: z.string(),
+  buyerId: z.string(),
+  sellerId: z.string(),
+  status: z.enum(['ACTIVE', 'BLOCKED', 'REPORTED']),
+  createdAt: z.iso.datetime(),
+  lastMessageAt: z.iso.datetime(),
+  lot: conversationLotSummaryDtoSchema,
+});
+
 export const publicSellerProfileDtoSchema = z.object({
   id: z.string(),
   displayName: z.string(),
@@ -518,4 +541,7 @@ export const apiSchemas = {
   MediaUploadResponseDto: mediaUploadResponseDtoSchema,
   MediaVideoUploadUrlsDto: mediaVideoUploadUrlsDtoSchema,
   MediaVideoUploadResponseDto: mediaVideoUploadResponseDtoSchema,
+  CreateConversationDto: createConversationDtoSchema,
+  ConversationLotSummaryDto: conversationLotSummaryDtoSchema,
+  ConversationResponseDto: conversationResponseDtoSchema,
 } as const;
