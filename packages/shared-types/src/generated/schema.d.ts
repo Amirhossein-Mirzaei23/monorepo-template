@@ -2101,6 +2101,30 @@ export interface operations {
                 limit?: components["schemas"]["Object"];
                 /** @description Full sort token with a fixed direction — createdAt (newest, default), updatedAt, priceAsc, priceDesc, quantityAsc, quantityDesc, expiresAt (ending soon) */
                 sort?: "createdAt" | "updatedAt" | "priceAsc" | "priceDesc" | "quantityAsc" | "quantityDesc" | "expiresAt";
+                /** @description Category id — combined with subcategoryId when both are sent */
+                categoryId?: string;
+                /** @description Subcategory id — narrows within categoryId when both are sent */
+                subcategoryId?: string;
+                /** @description Inclusive min unitPrice (derived Toman) — 0..2000000000; min > max is an empty result, not an error */
+                priceMin?: number;
+                /** @description Inclusive max unitPrice (derived Toman) — 0..2000000000 */
+                priceMax?: number;
+                /** @description Inclusive min quantity (lot size) — 0..1000000 */
+                qtyMin?: number;
+                /** @description Inclusive max quantity (lot size) — 0..1000000 */
+                qtyMax?: number;
+                /** @description City slug (iran-geo EN key) — format validated only; an unknown slug matches nothing */
+                city?: string;
+                /** @description Province slug (iran-geo EN key) — format validated only; an unknown slug matches nothing */
+                province?: string;
+                /** @description Repeatable; OR semantics — lot condition is any of the sent values */
+                condition?: ("GRADE_A" | "GRADE_B" | "GRADE_C" | "MIXED" | "NEW" | "USED" | "DAMAGED" | "NEAR_EXPIRY")[];
+                /** @description FIXED | NEGOTIABLE */
+                pricingType?: "FIXED" | "NEGOTIABLE";
+                /** @description Repeatable; OR semantics — liquidation story is any of the sent values */
+                liquidationReason?: ("EXCESS_PRODUCTION" | "CANCELLED_ORDER" | "EXPORT_RETURN" | "SEASON_CLEARANCE" | "OVERSTOCK" | "FACTORY_CLOSURE" | "PACKAGING_CHANGE" | "NEAR_EXPIRY" | "OTHER")[];
+                /** @description Freshness — only lots created within the last 7 or 30 days */
+                listedWithin?: "7d" | "30d";
             };
             header?: never;
             path?: never;

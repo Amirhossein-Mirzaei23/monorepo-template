@@ -131,6 +131,30 @@ export const LOT_CARD_SORTS = [
 
 export type LotCardSort = (typeof LOT_CARD_SORTS)[number];
 
+/**
+ * MKT-002 — freshness filter tokens (GET /lots?listedWithin=). Values are the
+ * card's two windows; `token → days` lives in LOT_LISTED_WITHIN_DAYS and the
+ * repository turns it into `createdAt >= now − days`.
+ */
+export const LOT_LISTED_WITHIN_OPTIONS = ['7d', '30d'] as const;
+
+export type LotListedWithin = (typeof LOT_LISTED_WITHIN_OPTIONS)[number];
+
+export const LOT_LISTED_WITHIN_DAYS: Record<LotListedWithin, number> = {
+  '7d': 7,
+  '30d': 30,
+};
+
+/**
+ * MKT-002 filter-param bounds (card: "price ≤ 2B, qty ≤ 1M") — a filter can
+ * never reach past the write-path caps: the price filter shares the totalPrice
+ * money ceiling and quantity gets the plan's 1M sanity cap. Lower bound is 0
+ * for both (DTO Min(0)) — filters are reads, the ≥ 1 business minimums apply
+ * to writes only.
+ */
+export const LOT_FILTER_MAX_PRICE = LOT_MAX_TOTAL_PRICE;
+export const LOT_FILTER_MAX_QUANTITY = 1_000_000;
+
 /** Machine-readable error codes carried on 403/409 bodies (LOT-002/LOT-003). */
 export const LOT_ERROR_CODES = {
   /** Authenticated user without the SELLER hat (fa copy lives web-side). */

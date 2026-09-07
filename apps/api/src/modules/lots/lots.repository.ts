@@ -1,10 +1,24 @@
 import { Injectable } from '@nestjs/common';
-import { LotCondition, LotStatus, PricingType, type Lot, type Prisma } from '@prisma/client';
+import {
+  LotCondition,
+  LotStatus,
+  PricingType,
+  type LiquidationReason,
+  type Lot,
+  type Prisma,
+} from '@prisma/client';
 import { Paginated } from '../../common/dto/pagination-query.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { LotCardSort } from './lots.constants';
 
-/** Public browse filters (GET /lots query params, bound in LOT-002 DTOs). */
+/** Milliseconds in a day — the freshness filter's unit (MKT-002 listedWithin). */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Public browse filters (GET /lots query params, bound in LotsPublicQueryDto
+ * by the service — MKT-001 sort/pagination, MKT-002 filters). One optional
+ * `query` arm is pre-wired for MKT-003 search.
+ */
 export interface LotPublicFilters {
   categoryId?: string;
   subcategoryId?: string;
@@ -13,9 +27,16 @@ export interface LotPublicFilters {
   pricingType?: PricingType;
   /** Zero or more merchandising grades — OR semantics (plan §3 LotCondition). */
   condition?: LotCondition[];
+  /** Zero or more liquidation stories — OR semantics (plan §3, MKT-002). */
+  liquidationReason?: LiquidationReason[];
   /** Inclusive unit-price bounds in Toman (stored, derived field — plan §12). */
   unitPriceMin?: number;
   unitPriceMax?: number;
+  /** Inclusive lot-size bounds (MKT-002). */
+  quantityMin?: number;
+  quantityMax?: number;
+  /** Freshness: only lots created within the last N days (MKT-002 7d/30d). */
+  listedWithinDays?: number;
   /** Free-text search across title + description (ILIKE, trgm-backed — plan §12). */
   query?: string;
 }
@@ -117,27 +138,39 @@ export class LotsRepository {
   }
 
   /**
-   * Public marketplace listing (GET /lots, MKT-001): only ACTIVE lots, with
-   * filter/sort/pagination, returning the CARD row shape (seller summary +
-   * cover link joined — see LOT_CARD_INCLUDE) that the service maps onto
-   * LotCardResponseDto. Filter params stay unbound at the DTO until MKT-002.
+   * Public marketplace listing (GET /lots, MKT-001 + MKT-002): only ACTIVE
+   * lots, with filter/sort/pagination, returning the CARD row shape (seller
+   * summary + cover link joined — see LOT_CARD_INCLUDE) that the service maps
+   * onto LotCardResponseDto. The where clause is ONE composition: a fixed
+   * visibility core (status + expiry + soft-delete) spread with one arm per
+   * supplied filter — absence means "no arm", never "match null".
    *
    * Besides `status: ACTIVE` the where clause always carries
    * `expiresAt > now`: rows past their expiry stay ACTIVE until the LOT-006
    * hourly sweep flips them to EXPIRED, and they must never surface to buyers
    * in between (documented decision — the (status, expiresAt) index serves
-   * this predicate).
-   * `deletedAt: null` is a soft-delete guard: REMOVED lots already fail the
-   * status predicate, this keeps the listing correct even if a status edit
-   * ever skips the stamp.
+   * this predicate). `deletedAt: null` is a soft-delete guard: REMOVED lots
+   * already fail the status predicate, this keeps the listing correct even if
+   * a status edit ever skips the stamp.
+   *
+   * MKT-002 arms: categoryId/subcategoryId (served by (categoryId, status)),
+   * city/province ((city, status)), pricingType, condition[]/reason[] (OR via
+   * `in`), inclusive unitPrice/quantity bounds, and listedWithinDays →
+   * `createdAt >= now − days`. Bounds are per-field sane (DTO-capped); an
+   * inverted min/max pair composes to an empty intersection, not an error —
+   * the card's ignored-safe rule. `verifiedSeller` has NO arm yet: its
+   * EXISTS subquery needs the TRS-001 verification model (Phase 7).
    */
   async findPublic(
     { filters = {}, sort = 'createdAt', page = 1, limit = 20 }: FindPublicLotsParams = {},
     tx: Tx = undefined,
   ): Promise<Paginated<LotCardRepositoryRow>> {
+    // One `now` for the expiry + freshness predicates so a page is answered
+    // against a single consistent clock reading.
+    const now = new Date();
     const where: Prisma.LotWhereInput = {
       status: LotStatus.ACTIVE,
-      expiresAt: { gt: new Date() },
+      expiresAt: { gt: now },
       deletedAt: null,
       ...(filters.categoryId !== undefined ? { categoryId: filters.categoryId } : {}),
       ...(filters.subcategoryId !== undefined ? { subcategoryId: filters.subcategoryId } : {}),
@@ -147,6 +180,9 @@ export class LotsRepository {
       ...(filters.condition !== undefined && filters.condition.length > 0
         ? { condition: { in: filters.condition } }
         : {}),
+      ...(filters.liquidationReason !== undefined && filters.liquidationReason.length > 0
+        ? { liquidationReason: { in: filters.liquidationReason } }
+        : {}),
       ...(filters.unitPriceMin !== undefined || filters.unitPriceMax !== undefined
         ? {
             unitPrice: {
@@ -154,6 +190,17 @@ export class LotsRepository {
               ...(filters.unitPriceMax !== undefined ? { lte: filters.unitPriceMax } : {}),
             },
           }
+        : {}),
+      ...(filters.quantityMin !== undefined || filters.quantityMax !== undefined
+        ? {
+            quantity: {
+              ...(filters.quantityMin !== undefined ? { gte: filters.quantityMin } : {}),
+              ...(filters.quantityMax !== undefined ? { lte: filters.quantityMax } : {}),
+            },
+          }
+        : {}),
+      ...(filters.listedWithinDays !== undefined
+        ? { createdAt: { gte: new Date(now.getTime() - filters.listedWithinDays * DAY_MS) } }
         : {}),
       ...(filters.query !== undefined && filters.query.length > 0
         ? {

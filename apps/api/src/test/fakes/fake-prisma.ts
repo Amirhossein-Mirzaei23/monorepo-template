@@ -107,8 +107,11 @@ type LotWhere = {
   province?: string;
   pricingType?: PricingType;
   condition?: LotEnumFilter<LotCondition>;
+  liquidationReason?: LotEnumFilter<LiquidationReason>;
   status?: LotEnumFilter<LotStatus>;
   unitPrice?: { gte?: number; lte?: number };
+  quantity?: { gte?: number; lte?: number };
+  createdAt?: { gte?: Date };
   expiresAt?: { gt?: Date; lt?: Date };
   deletedAt?: null;
   OR?: Array<{ title?: LotTextFilter; description?: LotTextFilter }>;
@@ -1243,10 +1246,18 @@ function matchesLotWhere(where: LotWhere | undefined): (row: Lot) => boolean {
     (where?.province === undefined || row.province === where.province) &&
     (where?.pricingType === undefined || row.pricingType === where.pricingType) &&
     (where?.condition === undefined || matchesLotEnumFilter(row.condition, where.condition)) &&
+    (where?.liquidationReason === undefined ||
+      matchesLotEnumFilter(row.liquidationReason, where.liquidationReason)) &&
     (where?.status === undefined || matchesLotEnumFilter(row.status, where.status)) &&
     (where?.unitPrice === undefined ||
       ((where.unitPrice.gte === undefined || row.unitPrice >= where.unitPrice.gte) &&
         (where.unitPrice.lte === undefined || row.unitPrice <= where.unitPrice.lte))) &&
+    (where?.quantity === undefined ||
+      ((where.quantity.gte === undefined || row.quantity >= where.quantity.gte) &&
+        (where.quantity.lte === undefined || row.quantity <= where.quantity.lte))) &&
+    (where?.createdAt === undefined ||
+      where.createdAt.gte === undefined ||
+      row.createdAt >= where.createdAt.gte) &&
     (where?.expiresAt === undefined ||
       ((where.expiresAt.gt === undefined || row.expiresAt > where.expiresAt.gt) &&
         (where.expiresAt.lt === undefined || row.expiresAt < where.expiresAt.lt))) &&

@@ -30,6 +30,7 @@ import {
   LOT_CODE_MAX_CREATE_ATTEMPTS,
   LOT_DEFAULT_EXPIRY_DAYS,
   LOT_ERROR_CODES,
+  LOT_LISTED_WITHIN_DAYS,
   LOT_MAX_TOTAL_PRICE,
   LOT_MIN_TOTAL_PRICE,
   LOT_TITLE_MAX_CODEPOINTS,
@@ -448,15 +449,37 @@ export class LotsService {
   // --- public reads (MKT-001: the marketplace listing) ---
 
   /**
-   * Public lot listing (GET /lots, MKT-001): ACTIVE-only, sorted against the
-   * LOT_CARD_SORTS allowlist (the DTO 400s anything else), Paginated envelope
-   * of CARD shapes. Anonymous by contract (@Public) — no user lookup, no
-   * seller hat. Rows arrive with the card include (seller summary + cover
-   * link, one query set) and map through the strict allowlist mapper; the
-   * cover URL is resolved against PUBLIC_MEDIA_BASE_URL at this boundary.
+   * Public lot listing (GET /lots, MKT-001 + MKT-002): ACTIVE-only, sorted
+   * against the LOT_CARD_SORTS allowlist (the DTO 400s anything else),
+   * filtered by the MKT-002 buyer filters (the DTO validates each param; this
+   * boundary only RENAMES the wire params onto the repository filter shape —
+   * no business rule lives here), Paginated envelope of CARD shapes.
+   * Anonymous by contract (@Public) — no user lookup, no seller hat. Rows
+   * arrive with the card include (seller summary + cover link, one query set)
+   * and map through the strict allowlist mapper; the cover URL is resolved
+   * against PUBLIC_MEDIA_BASE_URL at this boundary. Param → filter notes:
+   * priceMin/priceMax are the unitPrice bounds (the derived comparison price),
+   * qtyMin/qtyMax the quantity bounds, listedWithin token → days via
+   * LOT_LISTED_WITHIN_DAYS. `verifiedSeller` has no mapping yet — deferred to
+   * TRS-001 (documented on the DTO).
    */
   async findPublic(query: LotsPublicQueryDto): Promise<Paginated<LotCardResponseDto>> {
     const { items, total, page, limit } = await this.repository.findPublic({
+      filters: {
+        categoryId: query.categoryId,
+        subcategoryId: query.subcategoryId,
+        city: query.city,
+        province: query.province,
+        pricingType: query.pricingType,
+        condition: query.condition,
+        liquidationReason: query.liquidationReason,
+        unitPriceMin: query.priceMin,
+        unitPriceMax: query.priceMax,
+        quantityMin: query.qtyMin,
+        quantityMax: query.qtyMax,
+        listedWithinDays:
+          query.listedWithin !== undefined ? LOT_LISTED_WITHIN_DAYS[query.listedWithin] : undefined,
+      },
       sort: query.sort,
       page: query.page,
       limit: query.limit,

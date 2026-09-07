@@ -25,7 +25,7 @@ discovery. Exact seller addresses never appear in public payloads.
 - **Testing:** controller e2e (sort × pagination), mapper allowlist unit test.
 - **DoD:** suites green.
 
-### MKT-002 — Filters API
+### MKT-002 ✅ — Filters API
 
 **P0 · Phase 4 · Marketplace · M** — Deps: MKT-001 (the `verifiedSeller` filter param + EXISTS subquery land with TRS-001 in Phase 7 — ship the other filters first)
 

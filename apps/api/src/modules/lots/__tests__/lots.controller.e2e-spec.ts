@@ -28,6 +28,10 @@ const soonExpiry = (): Date => new Date(Date.now() + 2 * DAY_MS);
  * expiry safety predicate, the full sort allowlist, pagination caps, and the
  * card payload allowlist (exact key set, no exactAddress/rejectionReason/
  * locationHint, cover thumb, seller summary, verifiedSeller placeholder).
+ * MKT-002: the filter params — every filter selects alone, filters compose,
+ * invalid enum members and out-of-bounds numbers are 400, inverted bounds are
+ * ignored-safe (200, empty), and `verifiedSeller` is rejected (deferred to
+ * TRS-001).
  */
 describe('LotsController (e2e)', () => {
   let app: INestApplication;
@@ -659,6 +663,294 @@ describe('LotsController (e2e)', () => {
 
       expect(card.coverThumbUrl).toBeNull();
       expect(card.seller.businessName).toBeNull();
+    });
+  });
+
+  // ==========================================================================
+  // MKT-002 — public listing filters: GET /lots?… (each filter alone + combined)
+  // ==========================================================================
+
+  describe('GET /lots filters (MKT-002)', () => {
+    /** Marker categories so filter assertions never collide with other suites. */
+    let markerCategory: { id: string };
+    let markerSub: { id: string };
+    let markerCategoryOther: { id: string };
+    let filterSeller: { token: string; userId: string };
+
+    /** Every public GET gets its own per-IP throttle bucket. */
+    const getLots = (query: string) =>
+      request(app.getHttpServer()).get(`/lots?${query}`).set('X-Forwarded-For', nextIp());
+
+    /**
+     * ACTIVE fixture with marker field values the other suites never use;
+     * every "alone" test seeds one matching lot + one control failing exactly
+     * the tested arm, then asserts match present / control absent by id —
+     * robust against the shared store's other lots.
+     */
+    const seedMarkerLot = (
+      overrides: Partial<Parameters<FakePrisma['seedLot']>[0]> = {},
+    ): { id: string } => {
+      const lot = prisma.seedLot({
+        sellerId: filterSeller.userId,
+        categoryId: markerCategory.id,
+        subcategoryId: markerSub.id,
+        title: 'لات فیلتر',
+        quantity: 50,
+        availableQuantity: 50,
+        minOrderQuantity: 1,
+        pricingType: PricingType.FIXED,
+        totalPrice: 30_000_000,
+        unitPrice: 600_000,
+        condition: LotCondition.GRADE_B,
+        liquidationReason: LiquidationReason.EXPORT_RETURN,
+        province: 'qazvin',
+        city: 'qazvin',
+        status: LotStatus.ACTIVE,
+        publishedAt: new Date(),
+        expiresAt: new Date(Date.now() + 30 * DAY_MS),
+        ...overrides,
+      });
+      return { id: lot.id };
+    };
+
+    beforeAll(async () => {
+      filterSeller = await loginAsSeller();
+      markerCategory = prisma.seedCategory({
+        nameFa: 'فیلتر والد',
+        slug: 'mkt2-parent',
+        sortOrder: 90,
+      });
+      markerSub = prisma.seedCategory({
+        nameFa: 'فیلتر فرزند',
+        slug: 'mkt2-child',
+        parentId: markerCategory.id,
+        sortOrder: 1,
+      });
+      markerCategoryOther = prisma.seedCategory({
+        nameFa: 'فیلتر دیگر',
+        slug: 'mkt2-other',
+        sortOrder: 91,
+      });
+    });
+
+    it('filters by categoryId alone, and subcategoryId narrows within it', async () => {
+      const inSub = seedMarkerLot();
+      const inCategoryNoSub = seedMarkerLot({ subcategoryId: null });
+      const inOtherCategory = seedMarkerLot({ categoryId: markerCategoryOther.id });
+
+      const byCategory = await getLots(`categoryId=${markerCategory.id}`).expect(200);
+      const bySub = await getLots(
+        `categoryId=${markerCategory.id}&subcategoryId=${markerSub.id}`,
+      ).expect(200);
+
+      const categoryIds = byCategory.body.items.map((lot: { id: string }) => lot.id);
+      expect(categoryIds).toContain(inSub.id);
+      expect(categoryIds).toContain(inCategoryNoSub.id);
+      expect(categoryIds).not.toContain(inOtherCategory.id);
+      const subIds = bySub.body.items.map((lot: { id: string }) => lot.id);
+      expect(subIds).toContain(inSub.id);
+      expect(subIds).not.toContain(inCategoryNoSub.id);
+      expect(subIds).not.toContain(inOtherCategory.id);
+    });
+
+    it('filters by priceMin/priceMax alone (derived unitPrice, inclusive)', async () => {
+      const cheap = seedMarkerLot({ unitPrice: 100_000, totalPrice: 5_000_000 });
+      const mid = seedMarkerLot({ unitPrice: 600_000 });
+      const pricey = seedMarkerLot({ unitPrice: 900_000, totalPrice: 45_000_000 });
+
+      const byMin = await getLots('priceMin=300000').expect(200);
+      const byMax = await getLots('priceMax=600000').expect(200);
+      const byRange = await getLots('priceMin=100000&priceMax=600000').expect(200);
+
+      const ids = (response: { body: { items: { id: string }[] } }) =>
+        response.body.items.map((lot) => lot.id);
+      expect(ids(byMin)).toEqual(expect.arrayContaining([mid.id, pricey.id]));
+      expect(ids(byMin)).not.toContain(cheap.id);
+      expect(ids(byMax)).toEqual(expect.arrayContaining([cheap.id, mid.id]));
+      expect(ids(byMax)).not.toContain(pricey.id);
+      expect(ids(byRange)).toEqual(expect.arrayContaining([cheap.id, mid.id]));
+      expect(ids(byRange)).not.toContain(pricey.id);
+    });
+
+    it('filters by qtyMin/qtyMax alone (quantity, inclusive)', async () => {
+      const small = seedMarkerLot({ quantity: 5, availableQuantity: 5 });
+      const medium = seedMarkerLot({ quantity: 50 });
+      const large = seedMarkerLot({ quantity: 500, availableQuantity: 500 });
+
+      const byMin = await getLots('qtyMin=50').expect(200);
+      const byMax = await getLots('qtyMax=50').expect(200);
+
+      const minIds = byMin.body.items.map((lot: { id: string }) => lot.id);
+      const maxIds = byMax.body.items.map((lot: { id: string }) => lot.id);
+      expect(minIds).toEqual(expect.arrayContaining([medium.id, large.id]));
+      expect(minIds).not.toContain(small.id);
+      expect(maxIds).toEqual(expect.arrayContaining([small.id, medium.id]));
+      expect(maxIds).not.toContain(large.id);
+    });
+
+    it('filters by city and province slugs alone; an unknown slug matches nothing (ignored-safe)', async () => {
+      const qazvin = seedMarkerLot({ city: 'qazvin', province: 'qazvin' });
+      const shiraz = seedMarkerLot({ city: 'shiraz', province: 'fars' });
+
+      const byCity = await getLots('city=qazvin').expect(200);
+      const byProvince = await getLots('province=fars').expect(200);
+      const byNothing = await getLots('city=atlantis').expect(200);
+
+      expect(byCity.body.items.map((lot: { id: string }) => lot.id)).toContain(qazvin.id);
+      expect(byCity.body.items.map((lot: { id: string }) => lot.id)).not.toContain(shiraz.id);
+      expect(byProvince.body.items.map((lot: { id: string }) => lot.id)).toContain(shiraz.id);
+      expect(byProvince.body.items.map((lot: { id: string }) => lot.id)).not.toContain(qazvin.id);
+      expect(byNothing.body.items).toHaveLength(0);
+    });
+
+    it('filters by condition[] with OR semantics (repeatable param)', async () => {
+      const gradeB = seedMarkerLot({ condition: LotCondition.GRADE_B });
+      const mixed = seedMarkerLot({ condition: LotCondition.MIXED });
+      const damaged = seedMarkerLot({ condition: LotCondition.DAMAGED });
+
+      const byOne = await getLots(`condition=${LotCondition.MIXED}`).expect(200);
+      const byMany = await getLots(
+        `condition=${LotCondition.GRADE_B}&condition=${LotCondition.MIXED}`,
+      ).expect(200);
+
+      expect(byOne.body.items.map((lot: { id: string }) => lot.id)).toEqual([mixed.id]);
+      const manyIds = byMany.body.items.map((lot: { id: string }) => lot.id);
+      expect(manyIds).toEqual(expect.arrayContaining([gradeB.id, mixed.id]));
+      expect(manyIds).not.toContain(damaged.id);
+    });
+
+    it('filters by pricingType alone', async () => {
+      const fixed = seedMarkerLot({ pricingType: PricingType.FIXED });
+      const negotiable = seedMarkerLot({ pricingType: PricingType.NEGOTIABLE });
+
+      const byType = await getLots(`pricingType=${PricingType.NEGOTIABLE}`).expect(200);
+
+      const ids = byType.body.items.map((lot: { id: string }) => lot.id);
+      expect(ids).toContain(negotiable.id);
+      expect(ids).not.toContain(fixed.id);
+    });
+
+    it('filters by liquidationReason[] with OR semantics (repeatable param)', async () => {
+      const exportReturn = seedMarkerLot({ liquidationReason: LiquidationReason.EXPORT_RETURN });
+      const closure = seedMarkerLot({ liquidationReason: LiquidationReason.FACTORY_CLOSURE });
+      const other = seedMarkerLot({ liquidationReason: LiquidationReason.OTHER });
+
+      const byMany = await getLots(
+        `liquidationReason=${LiquidationReason.EXPORT_RETURN}&liquidationReason=${LiquidationReason.FACTORY_CLOSURE}`,
+      ).expect(200);
+
+      const ids = byMany.body.items.map((lot: { id: string }) => lot.id);
+      expect(ids).toEqual(expect.arrayContaining([exportReturn.id, closure.id]));
+      expect(ids).not.toContain(other.id);
+    });
+
+    it('filters by listedWithin freshness (7d / 30d windows)', async () => {
+      const now = Date.now();
+      const threeDaysOld = seedMarkerLot({ createdAt: new Date(now - 3 * DAY_MS) });
+      const tenDaysOld = seedMarkerLot({ createdAt: new Date(now - 10 * DAY_MS) });
+      const fortyDaysOld = seedMarkerLot({ createdAt: new Date(now - 40 * DAY_MS) });
+
+      // limit=100: the shared store's other ACTIVE lots are all newer than the
+      // markers — the default 20-row page would truncate them out of page 1.
+      const within7 = await getLots('listedWithin=7d&limit=100').expect(200);
+      const within30 = await getLots('listedWithin=30d&limit=100').expect(200);
+
+      const ids7 = within7.body.items.map((lot: { id: string }) => lot.id);
+      const ids30 = within30.body.items.map((lot: { id: string }) => lot.id);
+      expect(ids7).toContain(threeDaysOld.id);
+      expect(ids7).not.toContain(tenDaysOld.id);
+      expect(ids7).not.toContain(fortyDaysOld.id);
+      expect(ids30).toEqual(expect.arrayContaining([threeDaysOld.id, tenDaysOld.id]));
+      expect(ids30).not.toContain(fortyDaysOld.id);
+    });
+
+    it('composes filters in ONE query (category + city + price + qty + condition + pricing + reason + freshness)', async () => {
+      const match = seedMarkerLot({
+        city: 'tabriz',
+        province: 'east-azarbaijan',
+        unitPrice: 300_000,
+        totalPrice: 36_000_000,
+        quantity: 120,
+        availableQuantity: 120,
+        condition: LotCondition.GRADE_B,
+        pricingType: PricingType.NEGOTIABLE,
+        liquidationReason: LiquidationReason.SEASON_CLEARANCE,
+        createdAt: new Date(Date.now() - 2 * DAY_MS),
+      });
+      // Each control fails EXACTLY one arm of the combined query.
+      const wrongCity = seedMarkerLot({
+        city: 'shiraz',
+        province: 'fars',
+        unitPrice: 300_000,
+        totalPrice: 36_000_000,
+        quantity: 120,
+        availableQuantity: 120,
+        condition: LotCondition.GRADE_B,
+        pricingType: PricingType.NEGOTIABLE,
+        liquidationReason: LiquidationReason.SEASON_CLEARANCE,
+        createdAt: new Date(Date.now() - 2 * DAY_MS),
+      });
+      const wrongPrice = seedMarkerLot({
+        city: 'tabriz',
+        province: 'east-azarbaijan',
+        unitPrice: 900_000,
+        totalPrice: 108_000_000,
+        quantity: 120,
+        availableQuantity: 120,
+        condition: LotCondition.GRADE_B,
+        pricingType: PricingType.NEGOTIABLE,
+        liquidationReason: LiquidationReason.SEASON_CLEARANCE,
+        createdAt: new Date(Date.now() - 2 * DAY_MS),
+      });
+      const tooOld = seedMarkerLot({
+        city: 'tabriz',
+        province: 'east-azarbaijan',
+        unitPrice: 300_000,
+        totalPrice: 36_000_000,
+        quantity: 120,
+        availableQuantity: 120,
+        condition: LotCondition.GRADE_B,
+        pricingType: PricingType.NEGOTIABLE,
+        liquidationReason: LiquidationReason.SEASON_CLEARANCE,
+        createdAt: new Date(Date.now() - 20 * DAY_MS),
+      });
+
+      const combined = await getLots(
+        `categoryId=${markerCategory.id}&city=tabriz&priceMin=100000&priceMax=500000` +
+          '&qtyMin=50&qtyMax=200' +
+          `&condition=${LotCondition.GRADE_B}&pricingType=${PricingType.NEGOTIABLE}` +
+          `&liquidationReason=${LiquidationReason.SEASON_CLEARANCE}&listedWithin=7d`,
+      ).expect(200);
+
+      const ids = combined.body.items.map((lot: { id: string }) => lot.id);
+      expect(ids).toContain(match.id);
+      expect(ids).not.toContain(wrongCity.id);
+      expect(ids).not.toContain(wrongPrice.id);
+      expect(ids).not.toContain(tooOld.id);
+    });
+
+    it('ignores-safe an inverted price range (200, the range is simply empty)', async () => {
+      const lot = seedMarkerLot({ unitPrice: 600_000 });
+
+      const inverted = await getLots('priceMin=900000&priceMax=100000').expect(200);
+
+      expect(inverted.body.items.map((item: { id: string }) => item.id)).not.toContain(lot.id);
+    });
+
+    it.each<[string, string]>([
+      ['an unknown condition enum member', 'condition=JUNK'],
+      ['an unknown pricingType enum member', 'pricingType=AUCTION'],
+      ['an unknown liquidationReason enum member', 'liquidationReason=JUNK'],
+      ['an unknown listedWithin token', 'listedWithin=14d'],
+      ['priceMin above the 2B money cap', 'priceMin=2000000001'],
+      ['a negative priceMax', 'priceMax=-1'],
+      ['qtyMin above the 1M cap', 'qtyMin=1000001'],
+      ['a negative qtyMax', 'qtyMax=-5'],
+      ['verifiedSeller (deferred to TRS-001 — param not whitelisted yet)', 'verifiedSeller=true'],
+    ])('rejects %s with 400', async (_label, queryString) => {
+      const response = await getLots(queryString).expect(400);
+      // ApiErrorBody carries the exception class name in `error`.
+      expect(response.body.error).toBe('BadRequestException');
     });
   });
 

@@ -172,6 +172,126 @@ describe('LotsRepository', () => {
       expect(both.items.map((lot) => lot.title)).toEqual(['cheap', 'mid']);
     });
 
+    // --- MKT-002 filters (where-builder arms) ---
+
+    it('filters by inclusive quantity bounds (MKT-002)', async () => {
+      seedLot({ title: 'small', quantity: 5 });
+      seedLot({ title: 'medium', quantity: 50 });
+      seedLot({ title: 'large', quantity: 500 });
+
+      const minOnly = await repository.findPublic({ filters: { quantityMin: 50 } });
+      const maxOnly = await repository.findPublic({ filters: { quantityMax: 50 } });
+      const both = await repository.findPublic({ filters: { quantityMin: 5, quantityMax: 50 } });
+      const boundary = await repository.findPublic({ filters: { quantityMin: 500 } });
+
+      expect(minOnly.items.map((lot) => lot.title)).toEqual(['medium', 'large']);
+      expect(maxOnly.items.map((lot) => lot.title)).toEqual(['small', 'medium']);
+      expect(both.items.map((lot) => lot.title)).toEqual(['small', 'medium']);
+      // Inclusive at the boundary value.
+      expect(boundary.items.map((lot) => lot.title)).toEqual(['large']);
+    });
+
+    it('filters by liquidationReason set with OR semantics (MKT-002)', async () => {
+      seedLot({ title: 'overstock', liquidationReason: LiquidationReason.OVERSTOCK });
+      seedLot({ title: 'closure', liquidationReason: LiquidationReason.FACTORY_CLOSURE });
+      seedLot({ title: 'other', liquidationReason: LiquidationReason.OTHER });
+
+      const byReason = await repository.findPublic({
+        filters: {
+          liquidationReason: [LiquidationReason.OVERSTOCK, LiquidationReason.FACTORY_CLOSURE],
+        },
+      });
+      const bySingle = await repository.findPublic({
+        filters: { liquidationReason: [LiquidationReason.OTHER] },
+      });
+      // An empty array composes to "no arm" (ignored-safe), not a 0-match.
+      const byEmpty = await repository.findPublic({ filters: { liquidationReason: [] } });
+
+      expect(byReason.items.map((lot) => lot.title).sort()).toEqual(['closure', 'overstock']);
+      expect(bySingle.items.map((lot) => lot.title)).toEqual(['other']);
+      expect(byEmpty.total).toBe(3);
+    });
+
+    it('filters by freshness listedWithinDays — 7d and 30d windows (MKT-002)', async () => {
+      // Fake timers anchor `new Date()` inside findPublic at BASE_TIME.
+      seedLot({ title: 'three-days-old', createdAt: new Date(BASE_TIME.getTime() - 3 * DAY_MS) });
+      seedLot({ title: 'ten-days-old', createdAt: new Date(BASE_TIME.getTime() - 10 * DAY_MS) });
+      seedLot({ title: 'forty-days-old', createdAt: new Date(BASE_TIME.getTime() - 40 * DAY_MS) });
+
+      const within7 = await repository.findPublic({ filters: { listedWithinDays: 7 } });
+      const within30 = await repository.findPublic({ filters: { listedWithinDays: 30 } });
+
+      expect(within7.items.map((lot) => lot.title)).toEqual(['three-days-old']);
+      expect(within30.items.map((lot) => lot.title).sort()).toEqual([
+        'ten-days-old',
+        'three-days-old',
+      ]);
+    });
+
+    it('composes an inverted price/quantity bound pair into an EMPTY page, not an error (MKT-002 ignored-safe)', async () => {
+      seedLot({ title: 'mid', unitPrice: 500_000, quantity: 50 });
+
+      const invertedPrice = await repository.findPublic({
+        filters: { unitPriceMin: 1_000_000, unitPriceMax: 10 },
+      });
+      const invertedQty = await repository.findPublic({
+        filters: { quantityMin: 100, quantityMax: 10 },
+      });
+
+      expect(invertedPrice.items).toEqual([]);
+      expect(invertedPrice.total).toBe(0);
+      expect(invertedQty.items).toEqual([]);
+    });
+
+    it('composes EVERY filter arm in one query (MKT-002 combined)', async () => {
+      const match = {
+        categoryId: 'cat-filter',
+        subcategoryId: 'sub-filter',
+        city: 'tabriz',
+        province: 'east-azarbaijan',
+        pricingType: PricingType.NEGOTIABLE,
+        condition: LotCondition.GRADE_B,
+        liquidationReason: LiquidationReason.SEASON_CLEARANCE,
+        unitPrice: 300_000,
+        quantity: 120,
+        createdAt: new Date(BASE_TIME.getTime() - 2 * DAY_MS),
+      };
+      seedLot({ title: 'matches-all', ...match });
+      // Each control fails EXACTLY one arm.
+      seedLot({ title: 'wrong-category', ...match, categoryId: 'cat-other' });
+      seedLot({ title: 'wrong-city', ...match, city: 'shiraz', province: 'fars' });
+      seedLot({ title: 'wrong-pricing', ...match, pricingType: PricingType.FIXED });
+      seedLot({ title: 'wrong-condition', ...match, condition: LotCondition.DAMAGED });
+      seedLot({ title: 'wrong-reason', ...match, liquidationReason: LiquidationReason.OTHER });
+      seedLot({ title: 'wrong-price', ...match, unitPrice: 900_000 });
+      seedLot({ title: 'wrong-quantity', ...match, quantity: 5 });
+      seedLot({
+        title: 'too-old',
+        ...match,
+        createdAt: new Date(BASE_TIME.getTime() - 20 * DAY_MS),
+      });
+
+      const result = await repository.findPublic({
+        filters: {
+          categoryId: 'cat-filter',
+          subcategoryId: 'sub-filter',
+          city: 'tabriz',
+          province: 'east-azarbaijan',
+          pricingType: PricingType.NEGOTIABLE,
+          condition: [LotCondition.GRADE_A, LotCondition.GRADE_B],
+          liquidationReason: [LiquidationReason.SEASON_CLEARANCE, LiquidationReason.OVERSTOCK],
+          unitPriceMin: 100_000,
+          unitPriceMax: 500_000,
+          quantityMin: 50,
+          quantityMax: 200,
+          listedWithinDays: 7,
+        },
+      });
+
+      expect(result.items.map((lot) => lot.title)).toEqual(['matches-all']);
+      expect(result.total).toBe(1);
+    });
+
     it('searches case-insensitively across title and description', async () => {
       seedLot({ title: 'iPhone 13 pallet', description: 'sealed boxes' });
       seedLot({ title: 'کفش عمده', description: 'کارتن آیفون اصل' });
