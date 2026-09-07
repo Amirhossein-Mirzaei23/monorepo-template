@@ -236,6 +236,34 @@ export const lotPublicResponseDtoSchema = z.object({
   media: z.array(lotMediaResponseDtoSchema),
 });
 
+export const lotCardSellerDtoSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  businessName: z.string().nullable().optional(),
+});
+
+export const lotCardResponseDtoSchema = z.object({
+  id: z.string(),
+  code: z.string(),
+  title: z.string(),
+  unitPrice: z.number(),
+  totalPrice: z.number(),
+  quantity: z.number(),
+  availableQuantity: z.number(),
+  unit: z.enum(['PIECE', 'SET', 'BOX', 'KG', 'PAIR', 'OTHER']),
+  condition: z.enum(['GRADE_A', 'GRADE_B', 'GRADE_C', 'MIXED', 'NEW', 'USED', 'DAMAGED', 'NEAR_EXPIRY']),
+  city: z.string(),
+  province: z.string(),
+  coverThumbUrl: z.string().nullable().optional(),
+  seller:   z.object({
+
+    }),
+  verifiedSeller: z.boolean(),
+  updatedAt: z.iso.datetime(),
+  createdAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime(),
+});
+
 export const createLotDtoSchema = z.object({
   title: z.string(),
   description: z.string(),
@@ -368,6 +396,8 @@ export const apiSchemas = {
   UpdateProfileDto: updateProfileDtoSchema,
   LotMediaResponseDto: lotMediaResponseDtoSchema,
   LotPublicResponseDto: lotPublicResponseDtoSchema,
+  LotCardSellerDto: lotCardSellerDtoSchema,
+  LotCardResponseDto: lotCardResponseDtoSchema,
   CreateLotDto: createLotDtoSchema,
   LotOwnerResponseDto: lotOwnerResponseDtoSchema,
   UpdateLotDto: updateLotDtoSchema,

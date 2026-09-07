@@ -110,6 +110,27 @@ export const LOT_DEFAULT_EXPIRY_DAYS = 30;
 /** Unique-code retries on create before giving up (P2002 → new code → 500). */
 export const LOT_CODE_MAX_CREATE_ATTEMPTS = 3;
 
+/**
+ * MKT-001 — the `sort` allowlist of the public listing (GET /lots). Values are
+ * FULL sort tokens, not `field:dir` pairs: the card enumerates them as
+ * single words (`priceAsc`, `expiresAt`…), each with a fixed direction (the
+ * buyer-facing semantic — e.g. `expiresAt` is always "ending soon" asc), so
+ * direction is not client-addressable. That keeps future sorts (best-deal,
+ * distance, popularity) additive and gives an exact 400 on anything else.
+ * The token → orderBy mapping lives in LotsRepository (SORT_ORDER_BY).
+ */
+export const LOT_CARD_SORTS = [
+  'createdAt', // newest first — the default
+  'updatedAt', // recently edited first
+  'priceAsc',
+  'priceDesc',
+  'quantityAsc',
+  'quantityDesc',
+  'expiresAt', // ending soon
+] as const;
+
+export type LotCardSort = (typeof LOT_CARD_SORTS)[number];
+
 /** Machine-readable error codes carried on 403/409 bodies (LOT-002/LOT-003). */
 export const LOT_ERROR_CODES = {
   /** Authenticated user without the SELLER hat (fa copy lives web-side). */

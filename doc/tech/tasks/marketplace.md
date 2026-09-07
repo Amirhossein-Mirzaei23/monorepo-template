@@ -6,7 +6,7 @@ discovery. Exact seller addresses never appear in public payloads.
 
 ---
 
-### MKT-001 — Public lot listing API
+### MKT-001 ✅ — Public lot listing API
 
 **P0 · Phase 4 · Marketplace · M** — Deps: LOT-001, MEDIA-005 (cover in payload)
 

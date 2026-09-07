@@ -24,6 +24,10 @@ const soonExpiry = (): Date => new Date(Date.now() + 2 * DAY_MS);
  * re-derivation, the owner-shape allowlist (response CONTAINS exactAddress/
  * rejectionReason; exact key set), and the full LOT-003 lifecycle incl.
  * illegal moves rejected and the soft-delete behaviour.
+ * MKT-001: the public listing GET /lots — anonymous access, ACTIVE-only +
+ * expiry safety predicate, the full sort allowlist, pagination caps, and the
+ * card payload allowlist (exact key set, no exactAddress/rejectionReason/
+ * locationHint, cover thumb, seller summary, verifiedSeller placeholder).
  */
 describe('LotsController (e2e)', () => {
   let app: INestApplication;
@@ -428,6 +432,233 @@ describe('LotsController (e2e)', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({ subcategoryId: otherChild.id }) // child of shoes, lot category is apparel
         .expect(400);
+    });
+  });
+
+  // ==========================================================================
+  // MKT-001 — public listing: GET /lots (anonymous, ACTIVE-only, sort allowlist)
+  // ==========================================================================
+
+  describe('GET /lots (public listing, MKT-001)', () => {
+    let seller: { token: string; userId: string };
+    let other: { token: string; userId: string };
+
+    /** Every public GET gets its own per-IP throttle bucket (like the login hops). */
+    const getLots = (query = '') =>
+      request(app.getHttpServer()).get(`/lots${query}`).set('X-Forwarded-For', nextIp());
+
+    /** ACTIVE fixture with full card-relevant fields; overrides per test. */
+    const seedPublicLot = (overrides: Partial<Parameters<FakePrisma['seedLot']>[0]> = {}) =>
+      prisma.seedLot({
+        sellerId: seller.userId,
+        categoryId: parent.id,
+        title: 'لات عمومی',
+        quantity: 10,
+        availableQuantity: 10,
+        minOrderQuantity: 1,
+        pricingType: PricingType.FIXED,
+        totalPrice: 1_000_000,
+        unitPrice: 100_000,
+        condition: LotCondition.GRADE_A,
+        liquidationReason: LiquidationReason.OVERSTOCK,
+        province: 'tehran',
+        city: 'tehran',
+        status: LotStatus.ACTIVE,
+        publishedAt: new Date(),
+        expiresAt: new Date(Date.now() + 30 * DAY_MS),
+        ...overrides,
+      });
+
+    beforeAll(async () => {
+      seller = await loginAsSeller();
+      other = await loginAsSeller();
+      // One seller has a business profile — the card's seller summary carries it.
+      prisma.seedProfile({
+        userId: seller.userId,
+        displayName: 'مینا',
+        businessName: 'تولیدی پوشاک مینا',
+      });
+    });
+
+    it('serves anonymous callers (no Authorization header) — @Public on the route', async () => {
+      const response = await getLots().expect(200);
+      expect(response.body).toHaveProperty('items');
+      expect(response.body).toHaveProperty('total');
+      expect(response.body).toHaveProperty('page', 1);
+      expect(response.body).toHaveProperty('limit', 20);
+    });
+
+    it('returns ONLY ACTIVE lots with unexpired expiresAt, newest first by default', async () => {
+      const now = Date.now();
+      seedPublicLot({ title: 'جدید', createdAt: new Date(now) });
+      seedPublicLot({ title: 'قدیمی', createdAt: new Date(now - 5_000) });
+      seedPublicLot({ title: 'پیش‌نویس', status: LotStatus.DRAFT, publishedAt: null });
+      seedPublicLot({ title: 'مکث‌شده', status: LotStatus.PAUSED, publishedAt: null });
+      seedPublicLot({
+        title: 'منقضی‌شده',
+        expiresAt: new Date(now - DAY_MS), // ACTIVE past expiry — safety predicate
+      });
+      prisma.seedLot({
+        sellerId: seller.userId,
+        categoryId: parent.id,
+        title: 'حذف‌شده',
+        quantity: 10,
+        availableQuantity: 10,
+        minOrderQuantity: 1,
+        pricingType: PricingType.FIXED,
+        totalPrice: 1_000_000,
+        unitPrice: 100_000,
+        condition: LotCondition.GRADE_A,
+        liquidationReason: LiquidationReason.OVERSTOCK,
+        province: 'tehran',
+        city: 'tehran',
+        status: LotStatus.REMOVED,
+        deletedAt: new Date(),
+        expiresAt: new Date(now + 30 * DAY_MS),
+      });
+
+      const response = await getLots().expect(200);
+
+      // Earlier suites in this file left ACTIVE lots in the shared store, so
+      // assert on the seeds' RELATIVE order (both are newer than everything
+      // else, but exact ranks depend on wall-clock, not on store content).
+      expect(response.body.total).toBeGreaterThanOrEqual(2);
+      const titles = response.body.items.map((lot: { title: string }) => lot.title);
+      expect(titles).toContain('جدید');
+      expect(titles).toContain('قدیمی');
+      expect(titles.indexOf('جدید')).toBeLessThan(titles.indexOf('قدیمی'));
+      for (const hidden of ['پیش‌نویس', 'مکث‌شده', 'منقضی‌شده', 'حذف‌شده']) {
+        expect(titles).not.toContain(hidden);
+      }
+    });
+
+    it.each<[string, (a: number, b: number) => boolean, string]>([
+      ['priceAsc', (a, b) => a <= b, 'unitPrice'],
+      ['priceDesc', (a, b) => a >= b, 'unitPrice'],
+      ['quantityAsc', (a, b) => a <= b, 'quantity'],
+      ['quantityDesc', (a, b) => a >= b, 'quantity'],
+    ])('sorts by %s monotonically', async (sort, isOrdered, field) => {
+      seedPublicLot({ title: 'الف', unitPrice: 900_000, quantity: 500 });
+      seedPublicLot({ title: 'ب', unitPrice: 100_000, quantity: 5 });
+      seedPublicLot({ title: 'پ', unitPrice: 400_000, quantity: 50 });
+
+      const response = await getLots(`?sort=${sort}`).expect(200);
+
+      const values = response.body.items.map((lot: Record<string, number>) => lot[field]);
+      for (let i = 1; i < values.length; i += 1) {
+        expect(isOrdered(values[i - 1] as number, values[i] as number)).toBe(true);
+      }
+    });
+
+    it('sort=updatedAt puts the recently edited lot first', async () => {
+      const fresh = seedPublicLot({ title: 'تازه‌ویرایش' });
+      seedPublicLot({ title: 'قدیمی‌ویرایش', createdAt: new Date(Date.now() + DAY_MS) });
+      await prisma.lot.update({ where: { id: fresh.id }, data: { description: 'ویرایش تازه' } });
+
+      const response = await getLots('?sort=updatedAt').expect(200);
+
+      expect(response.body.items[0].title).toBe('تازه‌ویرایش');
+    });
+
+    it('sort=expiresAt is ending-soon (asc)', async () => {
+      seedPublicLot({ title: 'دیر', expiresAt: new Date(Date.now() + 30 * DAY_MS) });
+      seedPublicLot({ title: 'زود', expiresAt: new Date(Date.now() + 2 * DAY_MS) });
+
+      const response = await getLots('?sort=expiresAt').expect(200);
+
+      // Ending-soon asc — relative order of the two seeds (other store lots
+      // sit at the default +30d expiry, i.e. behind both).
+      const titles = response.body.items.map((lot: { title: string }) => lot.title);
+      expect(titles).toContain('زود');
+      expect(titles).toContain('دیر');
+      expect(titles.indexOf('زود')).toBeLessThan(titles.indexOf('دیر'));
+    });
+
+    it('rejects an unknown sort token with 400 (allowlist)', async () => {
+      const response = await getLots('?sort=popularity').expect(400);
+      expect(JSON.stringify(response.body.message)).toContain('sort must be one of');
+    });
+
+    it.each<[string, string]>([
+      ['sort decorated with a direction', 'sort=priceAsc:desc'],
+      ['limit above the 100 cap', 'limit=101'],
+      ['limit 0', 'limit=0'],
+      ['page 0', 'page=0'],
+    ])('rejects %s with 400 (pagination/sort contract)', async (_label, queryString) => {
+      await getLots(`?${queryString}`).expect(400);
+    });
+
+    it('paginates (?page=&limit=) with a truthful total', async () => {
+      for (let i = 0; i < 3; i += 1) {
+        seedPublicLot({ title: `لات ${i}`, createdAt: new Date(Date.now() + i * 1_000) });
+      }
+
+      const page1 = await getLots('?page=2&limit=2').expect(200);
+
+      expect(page1.body.total).toBeGreaterThanOrEqual(3);
+      expect(page1.body.page).toBe(2);
+      expect(page1.body.limit).toBe(2);
+      expect(page1.body.items).toHaveLength(2);
+    });
+
+    it('serves the CARD allowlist: exact key set, no exactAddress/rejectionReason/locationHint, cover thumb, seller summary, verifiedSeller false', async () => {
+      const lot = seedPublicLot({
+        title: 'کارت کامل',
+        locationHint: 'بازار بزرگ تهران',
+        exactAddress: 'تهران، خیابان …، پلاک ۱۲',
+        rejectionReason: 'نامربوط — لات ACTIVE است',
+      });
+      const asset = prisma.seedMediaAsset({
+        ownerId: seller.userId,
+        type: MediaType.IMAGE,
+        mime: 'image/jpeg',
+        sizeBytes: 100,
+        storageKey: '2026/09/cover-original.jpg',
+        thumbKey: '2026/09/cover-thumb.webp',
+      });
+      prisma.seedLotMedia({ lotId: lot.id, mediaAssetId: asset.id, sortOrder: 0, isCover: true });
+
+      const response = await getLots('?limit=100').expect(200);
+      const card = response.body.items.find((item: { id: string }) => item.id === lot.id);
+
+      expect(Object.keys(card).sort()).toEqual([
+        'availableQuantity',
+        'city',
+        'code',
+        'condition',
+        'coverThumbUrl',
+        'createdAt',
+        'expiresAt',
+        'id',
+        'province',
+        'quantity',
+        'seller',
+        'title',
+        'totalPrice',
+        'unit',
+        'unitPrice',
+        'updatedAt',
+        'verifiedSeller',
+      ]);
+      expect(card.code).toHaveLength(8);
+      expect(card.coverThumbUrl).toBe('http://localhost:3001/media/2026/09/cover-thumb.webp');
+      expect(card.seller).toEqual({
+        id: seller.userId,
+        name: expect.any(String),
+        businessName: 'تولیدی پوشاک مینا',
+      });
+      // TRS-001/002 placeholder — the slot exists, the badge infra does not.
+      expect(card.verifiedSeller).toBe(false);
+    });
+
+    it('returns coverThumbUrl null for a lot without media and businessName null without a profile', async () => {
+      const bare = seedPublicLot({ sellerId: other.userId, title: 'بدون تصویر' });
+
+      const response = await getLots().expect(200);
+      const card = response.body.items.find((item: { id: string }) => item.id === bare.id);
+
+      expect(card.coverThumbUrl).toBeNull();
+      expect(card.seller.businessName).toBeNull();
     });
   });
 

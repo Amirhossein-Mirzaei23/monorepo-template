@@ -39,6 +39,8 @@ import {
   type LotAction,
 } from './lots.constants';
 import { toLotOwnerResponse, type LotOwnerResponseDto } from './dto/lot-response.dto';
+import { toLotCardResponse, type LotCardResponseDto } from './dto/lot-card.dto';
+import type { LotsPublicQueryDto } from './dto/lots-public-query.dto';
 import type { PutLotMediaDto } from './dto/lot-media.dto';
 import type { CreateLotDto } from './dto/create-lot.dto';
 import type { MyLotsQueryDto } from './dto/my-lots-query.dto';
@@ -443,8 +445,27 @@ export class LotsService {
     );
   }
 
-  // --- owner reads (LOT-005: seller inventory + the edit-flow load step) ---
+  // --- public reads (MKT-001: the marketplace listing) ---
 
+  /**
+   * Public lot listing (GET /lots, MKT-001): ACTIVE-only, sorted against the
+   * LOT_CARD_SORTS allowlist (the DTO 400s anything else), Paginated envelope
+   * of CARD shapes. Anonymous by contract (@Public) — no user lookup, no
+   * seller hat. Rows arrive with the card include (seller summary + cover
+   * link, one query set) and map through the strict allowlist mapper; the
+   * cover URL is resolved against PUBLIC_MEDIA_BASE_URL at this boundary.
+   */
+  async findPublic(query: LotsPublicQueryDto): Promise<Paginated<LotCardResponseDto>> {
+    const { items, total, page, limit } = await this.repository.findPublic({
+      sort: query.sort,
+      page: query.page,
+      limit: query.limit,
+    });
+    const mediaBaseUrl = requireAppConfig(this.config).storage.publicMediaBaseUrl;
+    return { items: items.map((lot) => toLotCardResponse(lot, mediaBaseUrl)), total, page, limit };
+  }
+
+  // --- owner reads (LOT-005: seller inventory + the edit-flow load step) ---
   /**
    * Seller inventory (GET /lots/mine, LOT-005): every NON-REMOVED lot the
    * caller owns, newest first, one optional status filter (the dashboard

@@ -10,7 +10,7 @@ import {
 import type { PrismaService } from '../../../prisma/prisma.service';
 import { FakePrisma } from '../../../test/fakes/fake-prisma';
 import { generateLotCode } from '../lots.constants';
-import { LotsRepository } from '../lots.repository';
+import { LotsRepository, LOT_CARD_INCLUDE } from '../lots.repository';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BASE_TIME = new Date('2026-09-01T10:00:00.000Z');
@@ -207,26 +207,90 @@ describe('LotsRepository', () => {
       expect(result.items.map((lot) => lot.title)).toEqual(['newest', 'middle', 'oldest']);
     });
 
-    it('sorts by price-asc and price-desc on unitPrice', async () => {
+    it('sorts by priceAsc and priceDesc on unitPrice', async () => {
       seedLot({ title: 'mid', unitPrice: 500_000 });
       seedLot({ title: 'cheap', unitPrice: 100_000 });
       seedLot({ title: 'pricey', unitPrice: 900_000 });
 
-      const asc = await repository.findPublic({ sort: 'price-asc' });
-      const desc = await repository.findPublic({ sort: 'price-desc' });
+      const asc = await repository.findPublic({ sort: 'priceAsc' });
+      const desc = await repository.findPublic({ sort: 'priceDesc' });
 
       expect(asc.items.map((lot) => lot.title)).toEqual(['cheap', 'mid', 'pricey']);
       expect(desc.items.map((lot) => lot.title)).toEqual(['pricey', 'mid', 'cheap']);
     });
 
-    it('sorts by ending-soon (expiresAt asc)', async () => {
+    it('sorts by quantityAsc and quantityDesc on quantity', async () => {
+      seedLot({ title: 'many', quantity: 500 });
+      seedLot({ title: 'few', quantity: 5 });
+      seedLot({ title: 'some', quantity: 50 });
+
+      const asc = await repository.findPublic({ sort: 'quantityAsc' });
+      const desc = await repository.findPublic({ sort: 'quantityDesc' });
+
+      expect(asc.items.map((lot) => lot.title)).toEqual(['few', 'some', 'many']);
+      expect(desc.items.map((lot) => lot.title)).toEqual(['many', 'some', 'few']);
+    });
+
+    it('sorts by updatedAt (recently edited first)', async () => {
+      seedLot({ title: 'old-edit', createdAt: new Date(BASE_TIME.getTime() + 3 * DAY_MS) });
+      const fresh = seedLot({ title: 'fresh-edit' });
+      // The frozen clock stamps every seed with BASE_TIME — advance it so the
+      // edit's updatedAt bump is observable.
+      jest.setSystemTime(new Date(BASE_TIME.getTime() + 60_000));
+      await repository.update(fresh.id, { description: 'ویرایش تازه' });
+
+      const result = await repository.findPublic({ sort: 'updatedAt' });
+
+      // The edit lifted fresh-edit's updatedAt past the later-created row's.
+      expect(result.items.map((lot) => lot.title)).toEqual(['fresh-edit', 'old-edit']);
+    });
+
+    it('sorts by expiresAt asc (ending soon)', async () => {
       seedLot({ title: 'late', expiresAt: new Date(BASE_TIME.getTime() + 30 * DAY_MS) });
       seedLot({ title: 'soon', expiresAt: new Date(BASE_TIME.getTime() + DAY_MS) });
       seedLot({ title: 'middle', expiresAt: new Date(BASE_TIME.getTime() + 7 * DAY_MS) });
 
-      const result = await repository.findPublic({ sort: 'ending-soon' });
+      const result = await repository.findPublic({ sort: 'expiresAt' });
 
       expect(result.items.map((lot) => lot.title)).toEqual(['soon', 'middle', 'late']);
+    });
+
+    it('joins the CARD include (seller select + single cover link) in one findMany call set — no N+1', async () => {
+      const seller = fake.seedUser({ phone: '09351112233', name: 'مینا رضایی' });
+      fake.seedProfile({
+        userId: seller.id,
+        displayName: 'مینا',
+        businessName: 'تولیدی پوشاک مینا',
+      });
+      const lot = seedLot({ sellerId: seller.id, title: 'card' });
+      const asset = fake.seedMediaAsset({
+        ownerId: seller.id,
+        type: MediaType.IMAGE,
+        mime: 'image/jpeg',
+        sizeBytes: 10,
+        storageKey: '2026/09/cover.jpg',
+        thumbKey: '2026/09/covert.webp',
+      });
+      fake.seedLotMedia({ lotId: lot.id, mediaAssetId: asset.id, sortOrder: 0, isCover: true });
+
+      const findManySpy = jest.spyOn(fake.lot, 'findMany');
+      const result = await repository.findPublic();
+
+      // The repository must request EXACTLY the card include — the seller
+      // summary select and the single isCover link with its asset keys.
+      const args = findManySpy.mock.calls[0]?.[0] as { include?: unknown };
+      expect(args.include).toEqual(LOT_CARD_INCLUDE);
+      // And one page = ONE findMany (relations batch in the same query set).
+      expect(findManySpy.mock.calls).toHaveLength(1);
+
+      const card = result.items[0]!;
+      expect(card.seller).toMatchObject({ id: seller.id, name: 'مینا رضایی' });
+      expect(card.seller.profile).toEqual({ businessName: 'تولیدی پوشاک مینا' });
+      expect(card.media).toHaveLength(1);
+      expect(card.media?.[0]).toMatchObject({
+        isCover: true,
+        mediaAsset: { thumbKey: '2026/09/covert.webp', storageKey: '2026/09/cover.jpg' },
+      });
     });
 
     it('returns the Paginated envelope with page slicing', async () => {

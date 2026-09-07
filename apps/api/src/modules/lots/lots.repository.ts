@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { LotCondition, LotStatus, PricingType, type Lot, type Prisma } from '@prisma/client';
 import { Paginated } from '../../common/dto/pagination-query.dto';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { LotCardSort } from './lots.constants';
 
 /** Public browse filters (GET /lots query params, bound in LOT-002 DTOs). */
 export interface LotPublicFilters {
@@ -21,7 +22,7 @@ export interface LotPublicFilters {
 
 export interface FindPublicLotsParams {
   filters?: LotPublicFilters;
-  sort?: LotPublicSort;
+  sort?: LotCardSort;
   page?: number;
   limit?: number;
 }
@@ -33,15 +34,24 @@ export interface FindMineLotsParams {
   limit?: number;
 }
 
-/** Sort allowlist for the public listing — mapped to orderBy below. */
-export const LOT_PUBLIC_SORTS = ['newest', 'price-asc', 'price-desc', 'ending-soon'] as const;
-export type LotPublicSort = (typeof LOT_PUBLIC_SORTS)[number];
-
-const SORT_ORDER_BY: Record<LotPublicSort, Prisma.LotOrderByWithRelationInput> = {
-  newest: { createdAt: 'desc' },
-  'price-asc': { unitPrice: 'asc' },
-  'price-desc': { unitPrice: 'desc' },
-  'ending-soon': { expiresAt: 'asc' },
+/**
+ * Sort allowlist for the public listing (MKT-001): the card's tokens live in
+ * lots.constants.ts (shared with the query DTO); this is the token → orderBy
+ * mapping. Directions are FIXED per token (see the constants doc — direction
+ * is not client-addressable). `createdAt` desc and `expiresAt` asc are served
+ * directly by the LOT-001 (status, createdAt)/(status, expiresAt) indexes;
+ * price/quantity/updatedAt sorts fall back to a planner sort over the
+ * (status, …) filter — the acceptance EXPLAIN on ~1k lots stays well inside
+ * the p50 < 50 ms budget.
+ */
+const SORT_ORDER_BY: Record<LotCardSort, Prisma.LotOrderByWithRelationInput> = {
+  createdAt: { createdAt: 'desc' },
+  updatedAt: { updatedAt: 'desc' },
+  priceAsc: { unitPrice: 'asc' },
+  priceDesc: { unitPrice: 'desc' },
+  quantityAsc: { quantity: 'asc' },
+  quantityDesc: { quantity: 'desc' },
+  expiresAt: { expiresAt: 'asc' },
 };
 
 type Tx = Prisma.TransactionClient | undefined;
@@ -50,12 +60,36 @@ type Tx = Prisma.TransactionClient | undefined;
  * Gallery include for owner-facing single-row reads/writes (MEDIA-005): every
  * lot response carries the ordered `media[]` list, so the create/update/find
  * paths the service maps from always join the links + their assets in. The
- * public LISTING (findPublic) stays join-free until MKT needs cover thumbnails
- * there — a follow-up for the marketplace cards, not this one.
+ * public LISTING uses its own narrower include (LOT_CARD_INCLUDE above —
+ * seller summary + cover only, MKT-001).
  */
 export const LOT_MEDIA_INCLUDE = {
   media: { orderBy: { sortOrder: 'asc' as const }, include: { mediaAsset: true } },
 } satisfies Prisma.LotInclude;
+
+/**
+ * LOT_PUBLIC_CARD_INCLUDE (MKT-001) — the listing include, tuned so one
+ * `findMany` call set answers the whole page with NO N+1: Prisma batches the
+ * relations of all page rows into two follow-up queries (sellers + their
+ * profiles, cover links + their assets), regardless of page size.
+ *
+ * - `seller`: minimal card summary — {id, name} off the User row + the
+ *   Profile's businessName (nullable; profile may not exist yet).
+ * - `media`: ONLY the single cover link (isCover — a server invariant from
+ *   MEDIA-005) with the asset's thumb/storage keys; the rest of the gallery is
+ *   detail-page territory (MKT-009), never fetched for a list page.
+ */
+export const LOT_CARD_INCLUDE = {
+  seller: { select: { id: true, name: true, profile: { select: { businessName: true } } } },
+  media: {
+    where: { isCover: true },
+    take: 1,
+    include: { mediaAsset: { select: { thumbKey: true, storageKey: true } } },
+  },
+} satisfies Prisma.LotInclude;
+
+/** The findPublic row shape (Lot + seller summary + cover link). */
+export type LotCardRepositoryRow = Prisma.LotGetPayload<{ include: typeof LOT_CARD_INCLUDE }>;
 
 export type LotWithMedia = Prisma.LotGetPayload<{ include: typeof LOT_MEDIA_INCLUDE }>;
 
@@ -83,7 +117,10 @@ export class LotsRepository {
   }
 
   /**
-   * Public marketplace listing: only ACTIVE lots, with filter/sort/pagination.
+   * Public marketplace listing (GET /lots, MKT-001): only ACTIVE lots, with
+   * filter/sort/pagination, returning the CARD row shape (seller summary +
+   * cover link joined — see LOT_CARD_INCLUDE) that the service maps onto
+   * LotCardResponseDto. Filter params stay unbound at the DTO until MKT-002.
    *
    * Besides `status: ACTIVE` the where clause always carries
    * `expiresAt > now`: rows past their expiry stay ACTIVE until the LOT-006
@@ -95,9 +132,9 @@ export class LotsRepository {
    * ever skips the stamp.
    */
   async findPublic(
-    { filters = {}, sort = 'newest', page = 1, limit = 20 }: FindPublicLotsParams = {},
+    { filters = {}, sort = 'createdAt', page = 1, limit = 20 }: FindPublicLotsParams = {},
     tx: Tx = undefined,
-  ): Promise<Paginated<Lot>> {
+  ): Promise<Paginated<LotCardRepositoryRow>> {
     const where: Prisma.LotWhereInput = {
       status: LotStatus.ACTIVE,
       expiresAt: { gt: new Date() },
@@ -134,6 +171,7 @@ export class LotsRepository {
       client.lot.findMany({
         where,
         orderBy: SORT_ORDER_BY[sort],
+        include: LOT_CARD_INCLUDE,
         skip: (page - 1) * limit,
         take: limit,
       }),

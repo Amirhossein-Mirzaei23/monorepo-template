@@ -20,24 +20,28 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { type AuthUser, CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Public } from '../../common/decorators/public.decorator';
 import type { Paginated } from '../../common/dto/pagination-query.dto';
 import { CreateLotDto } from './dto/create-lot.dto';
+import { LotCardResponseDto, LotCardSellerDto } from './dto/lot-card.dto';
 import { LotOwnerResponseDto, LotPublicResponseDto } from './dto/lot-response.dto';
 import { PutLotMediaDto } from './dto/lot-media.dto';
+import { LotsPublicQueryDto } from './dto/lots-public-query.dto';
 import { MyLotsQueryDto } from './dto/my-lots-query.dto';
 import { UpdateLotDto } from './dto/update-lot.dto';
 import { LotsService } from './lots.service';
 
 /**
- * Owner-scoped lot endpoints (LOT-002 create/edit + LOT-003 lifecycle
- * actions + LOT-005 owner reads: GET /lots/mine and GET /lots/:id). The
- * global JwtAuthGuard authenticates; the seller hat and
- * ownership are business rules asserted in LotsService (403 SELLER_REQUIRED /
- * 403 non-owner / 404 missing / 409 ILLEGAL_STATUS_EDIT on PATCH, 409
- * ILLEGAL_TRANSITION (+ EXPIRED on a stale resume) on the action routes).
- * Every route returns the OWNER response shape — the public shape is for MKT.
- * LotPublicResponseDto is registered via @ApiExtraModels so the generated
- * contract (gen:types) already carries the public schema no endpoint returns.
+ * Lot endpoints. The public listing (MKT-001, GET /lots) is @Public and
+ * returns the CARD shape; everything else is owner-scoped (LOT-002 create/edit
+ * + LOT-003 lifecycle actions + LOT-005 owner reads: GET /lots/mine and
+ * GET /lots/:id). The global JwtAuthGuard authenticates those; the seller hat
+ * and ownership are business rules asserted in LotsService (403
+ * SELLER_REQUIRED / 403 non-owner / 404 missing / 409 ILLEGAL_STATUS_EDIT on
+ * PATCH, 409 ILLEGAL_TRANSITION (+ EXPIRED on a stale resume) on the action
+ * routes). Owner routes return the OWNER response shape; LotPublicResponseDto
+ * is registered via @ApiExtraModels so the generated contract (gen:types)
+ * carries the public schema no endpoint returns.
  *
  * Status codes: POST /lots and the duplicate action return 201 (they CREATE a
  * row); the other lifecycle actions return 200 with the updated lot's owner
@@ -46,10 +50,35 @@ import { LotsService } from './lots.service';
  */
 @ApiTags('lots')
 @ApiBearerAuth('access-token')
-@ApiExtraModels(LotPublicResponseDto)
+// Gen:types contract: LotPublicResponseDto is the public shape no endpoint
+// returns yet (MKT-009 detail owns it); LotCardResponseDto IS returned by
+// GET /lots but through a Paginated envelope, which swagger cannot express —
+// both are registered explicitly so the generated schemas carry them.
+@ApiExtraModels(LotPublicResponseDto, LotCardResponseDto, LotCardSellerDto)
 @Controller('lots')
 export class LotsController {
   constructor(private readonly lots: LotsService) {}
+
+  /**
+   * MKT-001 — public marketplace listing. Declared FIRST: the root route and
+   * the `:id` route never overlap, but the read order mirrors the docs
+   * (browse → mine → owner detail). Card-shaped payload, ACTIVE-only, sort
+   * allowlist (unknown sort → 400 via the query DTO), pagination capped by
+   * the shared DTO (limit ≤ 100).
+   */
+  @Get()
+  @Public()
+  @ApiOkResponse({
+    description:
+      'Paginated<LotCardResponseDto>: { items, total, page, limit } — ACTIVE lots only, cards carry the cover thumb + seller summary',
+  })
+  @ApiOperation({
+    summary:
+      'Public lot listing — ACTIVE lots only, card payload (no auth); sort=createdAt|updatedAt|priceAsc|priceDesc|quantityAsc|quantityDesc|expiresAt',
+  })
+  async findPublic(@Query() query: LotsPublicQueryDto): Promise<Paginated<LotCardResponseDto>> {
+    return this.lots.findPublic(query);
+  }
 
   @Post()
   @ApiCreatedResponse({ type: LotOwnerResponseDto })

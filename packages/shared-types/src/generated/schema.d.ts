@@ -304,7 +304,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Public lot listing — ACTIVE lots only, card payload (no auth); sort=createdAt|updatedAt|priceAsc|priceDesc|quantityAsc|quantityDesc|expiresAt */
+        get: operations["LotsController_findPublic"];
         put?: never;
         /** Create a lot as the seller — submit=false (default) saves a DRAFT, submit=true submits for moderation */
         post: operations["LotsController_create"];
@@ -1137,6 +1138,100 @@ export interface components {
             updatedAt: string;
             /** @description Ordered gallery (MEDIA-005) */
             media: components["schemas"]["LotMediaResponseDto"][];
+        };
+        LotCardSellerDto: {
+            /**
+             * @description Seller user id — links the public profile
+             * @example clx…cuid
+             */
+            id: string;
+            /**
+             * @description User.name — the person/fallback display
+             * @example مینا رضایی
+             */
+            name: string;
+            /**
+             * @description Profile.businessName — preferred display when set (businessName ?? name)
+             * @example تولیدی پوشاک مینا
+             */
+            businessName?: string | null;
+        };
+        LotCardResponseDto: {
+            /**
+             * @description Internal id — client cache keys only, never in URLs
+             * @example clx…cuid
+             */
+            id: string;
+            /**
+             * @description Public, non-sequential URL id (nanoid-8 base62) — detail pages live at /l/{code}
+             * @example 7Kd2Qm9x
+             */
+            code: string;
+            /** @example عمده پیراهن مردانه — ۵۰ عدد */
+            title: string;
+            /**
+             * @description Derived on write server-side: round(totalPrice / quantity)
+             * @example 2250000
+             */
+            unitPrice: number;
+            /** @example 112500000 */
+            totalPrice: number;
+            /** @example 50 */
+            quantity: number;
+            /**
+             * @description Remaining sellable amount (0 ≤ available ≤ quantity)
+             * @example 50
+             */
+            availableQuantity: number;
+            /**
+             * @example PIECE
+             * @enum {string}
+             */
+            unit: "PIECE" | "SET" | "BOX" | "KG" | "PAIR" | "OTHER";
+            /**
+             * @example GRADE_A
+             * @enum {string}
+             */
+            condition: "GRADE_A" | "GRADE_B" | "GRADE_C" | "MIXED" | "NEW" | "USED" | "DAMAGED" | "NEAR_EXPIRY";
+            /**
+             * @description City slug (static geo list)
+             * @example tehran
+             */
+            city: string;
+            /**
+             * @description Province slug (static geo list)
+             * @example tehran
+             */
+            province: string;
+            /**
+             * @description Absolute cover thumb (PUBLIC_MEDIA_BASE_URL + thumbKey, falling back to storageKey); null when the lot has no cover
+             * @example http://localhost:3001/media/2026/09/abc…123t.webp
+             */
+            coverThumbUrl?: string | null;
+            /** @description Minimal seller summary for the card */
+            seller: components["schemas"]["LotCardSellerDto"];
+            /**
+             * @description PLACEHOLDER — always false until TRS-001/002 land verification badges (Phase 7); contract slot for the web
+             * @example false
+             */
+            verifiedSeller: boolean;
+            /**
+             * Format: date-time
+             * @example 2026-09-05T00:00:00.000Z
+             */
+            updatedAt: string;
+            /**
+             * Format: date-time
+             * @description Newest-first default sort key
+             * @example 2026-09-05T00:00:00.000Z
+             */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @description Listing expiry — the ending-soon sort key (sort=expiresAt)
+             * @example 2026-10-05T00:00:00.000Z
+             */
+            expiresAt: string;
         };
         CreateLotDto: {
             /**
@@ -1996,6 +2091,29 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ProfileResponseDto"];
                 };
+            };
+        };
+    };
+    LotsController_findPublic: {
+        parameters: {
+            query?: {
+                page?: components["schemas"]["Object"];
+                limit?: components["schemas"]["Object"];
+                /** @description Full sort token with a fixed direction — createdAt (newest, default), updatedAt, priceAsc, priceDesc, quantityAsc, quantityDesc, expiresAt (ending soon) */
+                sort?: "createdAt" | "updatedAt" | "priceAsc" | "priceDesc" | "quantityAsc" | "quantityDesc" | "expiresAt";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated<LotCardResponseDto>: { items, total, page, limit } — ACTIVE lots only, cards carry the cover thumb + seller summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

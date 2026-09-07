@@ -180,8 +180,20 @@ const nowIso = () => new Date();
 
 /** LotMedia row joined with its asset — what the repository's include returns. */
 type LotMediaRow = LotMedia & { mediaAsset: MediaAsset };
-/** A Lot row as the repository's LOT_MEDIA_INCLUDE reads produce it. */
-type LotRowWithMedia = Lot & { media: LotMediaRow[] };
+/**
+ * Seller summary joined on every lot read — mirrors the MKT-001 card include's
+ * `seller` shape ({id, name} + the Profile's businessName). Lenient by design:
+ * specs that seed bare sellerIds ('seller-1') without user rows read back
+ * name: '' / profile: null instead of throwing (a real DB cannot have a
+ * missing seller — FK Restrict — so strictness would only churn fixtures).
+ */
+type LotSellerRow = {
+  id: string;
+  name: string;
+  profile: { businessName: string | null } | null;
+};
+/** A Lot row as the repository's lot reads produce it (seller + gallery). */
+type LotRowWithMedia = Lot & { seller: LotSellerRow; media: LotMediaRow[] };
 /** Exactly the surface LotsRepository's gallery methods compose (MEDIA-005). */
 type LotMediaWhere = { lotId?: string; mediaAssetId?: { notIn: string[] } };
 type LotMediaUpsertInput = {
@@ -1084,15 +1096,30 @@ export class FakePrisma {
     return cloneLotMedia(row);
   }
 
-  /** Lot row with its gallery joined (sorted by sortOrder), mirroring the
-   * production LOT_MEDIA_INCLUDE. Throws on a link whose asset row is missing —
-   * seeded fixtures are expected to be consistent. */
+  /** Lot row with its relations joined (seller summary + gallery sorted by
+   * sortOrder), mirroring the production includes (LOT_MEDIA_INCLUDE /
+   * LOT_CARD_INCLUDE). Throws on a link whose asset row is missing —
+   * seeded fixtures are expected to be consistent; the seller join is lenient
+   * (see LotSellerRow). */
   private withMedia(row: Lot): LotRowWithMedia {
+    const sellerUser = [...this.users.values()].find((user) => user.id === row.sellerId);
+    const profile = sellerUser
+      ? ([...this.profiles.values()].find((candidate) => candidate.userId === sellerUser.id) ??
+        null)
+      : null;
     const media = [...this.lotMediaRows.values()]
       .filter((link) => link.lotId === row.id)
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .map((link) => this.withAsset(link));
-    return { ...cloneLot(row), media };
+    return {
+      ...cloneLot(row),
+      seller: {
+        id: row.sellerId,
+        name: sellerUser?.name ?? '',
+        profile: profile ? { businessName: profile.businessName } : null,
+      },
+      media,
+    };
   }
 
   /** LotMedia row with its asset joined (the gallery include's element shape). */
