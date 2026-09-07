@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import {
   LotList,
+  SearchBar,
   fetchLotsServer,
   parseLotsBrowseParams,
   LOT_LIST_PAGE_SIZE,
@@ -20,6 +21,11 @@ import {
  * once, the cards ship in the HTML (SEO/LCP), pages 2+ load through the BFF
  * on scroll. If the SSR hop fails, the same client list degrades to fetching
  * page 1 itself and shows its error state with retry.
+ *
+ * MKT-007: the SearchBar sits in the listing header — submit lands right back
+ * here with a new q. It is keyed by the URL q so back/forward keeps the input
+ * in URL sync, and `initialQuery` prefills shared /lots?q=… links (which work
+ * logged-out — the page is public). The home page placement is MKT-004.
  */
 export const metadata: Metadata = {
   title: 'فهرست لات‌ها',
@@ -45,6 +51,9 @@ export default async function LotsPage({ searchParams }: LotsPageProps) {
         <h1 className="text-xl font-semibold tracking-tight">
           {filters.q ? `نتایج جستجو برای «${filters.q}»` : 'لات‌ها'}
         </h1>
+        <div className="mt-3">
+          <SearchBar key={filters.q ?? ''} initialQuery={filters.q} />
+        </div>
       </header>
       <Suspense fallback={<p className="text-muted-foreground text-sm">در حال بارگذاری…</p>}>
         <LotList initialPage={initialPage} />

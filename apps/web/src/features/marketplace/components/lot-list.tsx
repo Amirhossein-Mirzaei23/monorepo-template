@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { PackageSearch, RotateCcw } from 'lucide-react';
 import type { LotCardResponseDto, Paginated } from '@monorepo/shared-types';
 import { Button } from '@/components/ui/button';
+import { formatFaDigits } from '@/lib/format';
 import { useCategories } from '@/features/categories';
 import { ApiError } from '@/lib/api-client';
 import { useLotsList } from '../hooks/use-lots';
@@ -21,6 +22,10 @@ import { LotCard, LotCardSkeleton } from './lot-card';
  * page through an IntersectionObserver sentinel; a failed append renders an
  * inline retry row and KEEPS the loaded cards (use-lots.ts doc). No filter UI
  * here — MKT-007/008 write the params this list consumes.
+ *
+ * MKT-007 additions: the fa result count («X لات» from the Paginated total)
+ * above the grid, and a q-aware zero-result state — a search that found
+ * nothing suggests removing the filters and points at the popular categories.
  */
 
 /** Grid rhythm: 2-col at 360px, upgraded on larger viewports (ui-patterns.md). */
@@ -35,7 +40,7 @@ export interface LotListProps {
   scope?: Partial<Pick<LotsBrowseFilter, 'categoryId' | 'subcategoryId'>>;
   /** SSR-fetched first page (RSC handoff); undefined → the hook fetches it. */
   initialPage?: Paginated<LotCardResponseDto>;
-  /** Empty-state headline override (default covers q + filters). */
+  /** Empty-state headline override; default covers both q and no-q cases. */
   emptyTitle?: string;
 }
 
@@ -47,7 +52,7 @@ function errorHint(error: Error | null): string | undefined {
   return undefined;
 }
 
-export function LotList({ scope, initialPage, emptyTitle = 'نتیجه‌ای یافت نشد' }: LotListProps) {
+export function LotList({ scope, initialPage, emptyTitle }: LotListProps) {
   const searchParams = useSearchParams();
   const filters = useMemo(
     () => ({ ...parseLotsBrowseParams(searchParams), ...scope }),
@@ -115,6 +120,16 @@ export function LotList({ scope, initialPage, emptyTitle = 'نتیجه‌ای ی
   }
 
   if (list.items.length === 0) {
+    // MKT-007 — a q that found nothing gets its own headline and a
+    // «remove the filters» suggestion; the popular categories below stay.
+    const hasQuery = Boolean(filters.q);
+    const title =
+      emptyTitle ?? (hasQuery ? `نتیجه‌ای برای «${filters.q}» یافت نشد` : 'نتیجه‌ای یافت نشد');
+    const copy = hasQuery
+      ? 'فیلترها را بردارید یا عبارت دیگری جستجو کنید — یا از دسته‌بندی‌های پرطرفدار شروع کنید:'
+      : suggestions.length > 0
+        ? 'فیلترها را تغییر دهید یا از دسته‌بندی‌های زیر شروع کنید:'
+        : 'فیلترها را تغییر دهید و دوباره تلاش کنید.';
     return (
       <div className="border-border bg-card grid place-items-center gap-3 rounded-xl border p-8 text-center">
         <div
@@ -123,12 +138,8 @@ export function LotList({ scope, initialPage, emptyTitle = 'نتیجه‌ای ی
         >
           <PackageSearch className="size-7" />
         </div>
-        <p className="text-sm font-medium">{emptyTitle}</p>
-        <p className="text-muted-foreground text-xs">
-          {suggestions.length > 0
-            ? 'فیلترها را تغییر دهید یا از دسته‌بندی‌های زیر شروع کنید:'
-            : 'فیلترها را تغییر دهید و دوباره تلاش کنید.'}
-        </p>
+        <p className="text-sm font-medium">{title}</p>
+        <p className="text-muted-foreground text-xs">{copy}</p>
         {suggestions.length > 0 ? (
           <div className="flex max-w-md flex-wrap justify-center gap-2">
             {suggestions.map((category) => (
@@ -148,6 +159,11 @@ export function LotList({ scope, initialPage, emptyTitle = 'نتیجه‌ای ی
 
   return (
     <div>
+      {typeof list.total === 'number' ? (
+        <p aria-live="polite" className="text-muted-foreground mb-3 text-sm">
+          {formatFaDigits(list.total)} لات
+        </p>
+      ) : null}
       <div className={GRID_CLASSES} data-testid="lot-grid">
         {list.items.map((lot) => (
           <LotCard key={lot.id} lot={lot} variant="grid" />

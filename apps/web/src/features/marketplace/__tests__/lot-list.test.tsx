@@ -20,7 +20,8 @@ import { CATEGORY_TREE_FIXTURE, cardPageFixture } from '../testing/fixtures';
  * sentinel walking pages (deduped while appending), and the per-page append
  * failure degrading to an inline retry row that keeps the loaded list. URL
  * state (param dropping, the /c/{slug} scope merge) is asserted on the
- * outgoing BFF request.
+ * outgoing BFF request. MKT-007: the fa result count above the grid and the
+ * q-aware zero-result state (remove-filters suggestion + popular categories).
  */
 
 const fetchMock = jest.fn();
@@ -160,6 +161,17 @@ describe('LotList — data states', () => {
   });
 });
 
+describe('LotList — MKT-007 result count', () => {
+  it('shows the fa total above the grid («X لات»)', async () => {
+    renderList({ initialPage: cardPageFixture(1, ['c-1', 'c-2'], 12) });
+
+    expect(await screen.findByText('۱۲ لات')).toBeInTheDocument();
+    expect(screen.getByTestId('lot-grid')).toBeInTheDocument();
+    // The count is live-region announced as the URL state changes it.
+    expect(screen.getByText('۱۲ لات')).toHaveAttribute('aria-live', 'polite');
+  });
+});
+
 describe('LotList — URL state', () => {
   it('issues the query from the URL params', async () => {
     mockParams.current = new URLSearchParams({ q: 'shirt', sort: 'priceAsc' });
@@ -222,6 +234,17 @@ describe('LotList — URL state', () => {
     const search = new URLSearchParams(lotQueryStrings()[0]);
     expect(search.get('categoryId')).toBe('cat-fixed');
     expect(search.getAll('categoryId')).toEqual(['cat-fixed']);
+  });
+});
+
+describe('LotList — MKT-007 zero-result with q', () => {
+  it('names the q, suggests removing the filters, and keeps popular categories', async () => {
+    mockParams.current = new URLSearchParams({ q: 'چیز ناموجود' });
+    renderList();
+
+    expect(await screen.findByText('نتیجه‌ای برای «چیز ناموجود» یافت نشد')).toBeInTheDocument();
+    expect(screen.getByText(/فیلترها را بردارید/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'پوشاک' })).toHaveAttribute('href', '/c/apparel');
   });
 });
 

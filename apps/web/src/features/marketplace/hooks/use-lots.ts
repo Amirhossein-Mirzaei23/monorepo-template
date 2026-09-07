@@ -37,6 +37,8 @@ export function useLots(filters: LotsBrowseFilter, initialPage?: Paginated<LotCa
 /** Flattened list state the LotList renders (pages → items + the scroll controls). */
 export interface LotsListState {
   items: LotCardResponseDto[];
+  /** Paginated total from the envelope — the fa result count above the grid (MKT-007). */
+  total: number | undefined;
   isLoading: boolean;
   isError: boolean;
   error: Error | null;
@@ -53,6 +55,7 @@ export function useLotsList(
   const query = useLots(filters, initialPage);
   return {
     items: query.data?.pages.flatMap((page) => page.items) ?? [],
+    total: query.data?.pages[0]?.total,
     isLoading: query.isLoading,
     isError: query.isError,
     error: query.error,

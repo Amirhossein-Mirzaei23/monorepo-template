@@ -21,6 +21,18 @@ export {
 // --- MKT-006 browse (listing fetchers, hooks, list UI, URL param contract) ---
 export { LotList, type LotListProps } from './components/lot-list';
 export { useLots, useLotsList, type LotsListState } from './hooks/use-lots';
+// --- MKT-007 search (bar UI, input normalization, recent searches) ---
+export { SearchBar, type SearchBarProps } from './components/search-bar';
+export { normalizeSearchInput, SEARCH_QUERY_MIN_LENGTH } from './lib/search-normalize';
+export {
+  readRecentSearches,
+  addRecentSearch,
+  removeRecentSearch,
+  clearRecentSearches,
+  RECENT_SEARCHES_KEY,
+  RECENT_SEARCHES_MAX,
+  type RecentSearchesStorage,
+} from './lib/recent-searches';
 export {
   fetchLots,
   fetchLotsServer,

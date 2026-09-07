@@ -112,7 +112,7 @@ discovery. Exact seller addresses never appear in public payloads.
 - **Testing:** hook tests (pagination, dedupe), component test for empty/error.
 - **DoD:** suites green.
 
-### MKT-007 — Search UI
+### MKT-007 ✅ — Search UI
 
 **P0 · Phase 4 · Marketplace · S** — Deps: MKT-006, MKT-003
 
