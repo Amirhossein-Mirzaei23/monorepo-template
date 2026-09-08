@@ -298,8 +298,9 @@ type MessageWhere = {
 type MessageOrderBy = Record<string, 'asc' | 'desc'>;
 
 /** Exactly the surface OffersRepository composes (OFR-001): plain row reads by
- * id, the sibling-pending predicate (lot + buyer + PENDING + `id.not`) and the
- * chain walk (parentId lookups). `null` equality arms mean Prisma's IS NULL. */
+ * id, the sibling-pending predicate (lot + buyer + PENDING + `id.not`), the
+ * chain walk (parentId lookups) and the OFR-003 sweep's `expiresAt lt` arm.
+ * `null` equality arms mean Prisma's IS NULL. */
 type OfferIdFilter = string | { not?: string };
 type OfferWhere = {
   id?: OfferIdFilter;
@@ -309,6 +310,7 @@ type OfferWhere = {
   conversationId?: string | null;
   parentId?: string | null;
   status?: OfferStatus;
+  expiresAt?: { lt?: Date };
 };
 type OfferOrderBy = Record<string, 'asc' | 'desc'>;
 /** Create payload: required scalars; status/decidedAt take the DB defaults. */
@@ -1334,8 +1336,9 @@ export class FakePrisma {
       this.offers.set(row.id, next);
       return this.withOfferLot(next, include);
     },
-    /** Batch variant over the same predicate shapes (id `in`/`not`, status):
-     * unmatched rows contribute 0 to the count, matched rows mutate in place. */
+    /** Batch variant over the same predicate shapes (id `in`/`not`, status,
+     * the OFR-003 sweep's expiresAt lt): unmatched rows contribute 0 to the
+     * count, matched rows mutate in place. */
     updateMany: async ({
       where,
       data,
@@ -2212,7 +2215,8 @@ function buildOfferRow(data: OfferCreateData): Offer {
 }
 
 /** Offer matcher (OFR-001): id (equality or `not`), sibling predicates, and
- * IS NULL semantics for the nullable links (null matches null rows only). */
+ * IS NULL semantics for the nullable links (null matches null rows only) —
+ * plus the OFR-003 sweep's strict `expiresAt lt` arm. */
 function matchesOfferWhere(where: OfferWhere | undefined): (row: Offer) => boolean {
   const matchesId = (row: Offer): boolean => {
     const id = where?.id;
@@ -2221,6 +2225,13 @@ function matchesOfferWhere(where: OfferWhere | undefined): (row: Offer) => boole
     }
     return typeof id === 'string' ? row.id === id : id.not === undefined || row.id !== id.not;
   };
+  const matchesExpiry = (row: Offer): boolean => {
+    const expiresAt = where?.expiresAt;
+    if (expiresAt === undefined) {
+      return true;
+    }
+    return expiresAt.lt === undefined || row.expiresAt.getTime() < expiresAt.lt.getTime();
+  };
   return (row) =>
     matchesId(row) &&
     (where?.lotId === undefined || row.lotId === where.lotId) &&
@@ -2228,7 +2239,8 @@ function matchesOfferWhere(where: OfferWhere | undefined): (row: Offer) => boole
     (where?.sellerId === undefined || row.sellerId === where.sellerId) &&
     (where?.conversationId === undefined || row.conversationId === where.conversationId) &&
     (where?.parentId === undefined || row.parentId === where.parentId) &&
-    (where?.status === undefined || row.status === where.status);
+    (where?.status === undefined || row.status === where.status) &&
+    matchesExpiry(row);
 }
 
 /** Partial offer update: undefined keys stay untouched (Prisma semantics). */

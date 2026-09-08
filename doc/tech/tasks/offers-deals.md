@@ -44,7 +44,7 @@ principles 7, 12; decision D9 flags the legal review).
 - **Testing:** service unit matrix; controller e2e.
 - **DoD:** suites green.
 
-### OFR-003 — Offer expiry job
+### OFR-003 ✅ — Offer expiry job
 
 **P0 · Phase 6 · Offers · S** — Deps: OFR-002, LOT-006 (jobs module exists)
 

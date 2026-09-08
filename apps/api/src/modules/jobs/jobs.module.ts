@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { LotsModule } from '../lots/lots.module';
+import { OffersModule } from '../offers/offers.module';
 import { LotExpiryService } from './lot-expiry.service';
+import { OfferExpiryService } from './offer-expiry.service';
 
 /**
  * Shared scheduled-jobs module (LOT-006 created it). Each job is a provider
@@ -9,8 +11,8 @@ import { LotExpiryService } from './lot-expiry.service';
  * LotExpiryService and reuse the repository imports below.
  */
 @Module({
-  imports: [LotsModule],
-  providers: [LotExpiryService],
-  exports: [LotExpiryService],
+  imports: [LotsModule, OffersModule],
+  providers: [LotExpiryService, OfferExpiryService],
+  exports: [LotExpiryService, OfferExpiryService],
 })
 export class JobsModule {}

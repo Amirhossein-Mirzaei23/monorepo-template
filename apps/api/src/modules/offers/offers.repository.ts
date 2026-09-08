@@ -27,7 +27,8 @@ export type OfferListRow = Prisma.OfferGetPayload<{ include: typeof OFFER_LIST_I
  * Surface: create / findById / update (status transitions) / findSiblingsPending /
  * findChain (OFR-001) + the OFR-002 role-scoped paginated listings
  * (findForBuyer / findForSeller / findForLot, lot summary joined for the
- * response mapper). Single-row reads return the bare row — only the LIST page
+ * response mapper) + the OFR-003 hourly expiry sweep (expireDue, one batched
+ * updateMany). Single-row reads return the bare row — only the LIST page
  * joins the lot summary the response DTO carries.
  */
 @Injectable()
@@ -98,6 +99,29 @@ export class OffersRepository {
       cursor = cursor.parentId === null ? null : await this.findById(cursor.parentId, tx);
     }
     return chain;
+  }
+
+  // --- OFR-003 — the hourly expiry sweep's batched write ---
+
+  /**
+   * OFR-003 hourly sweep: flips every PENDING offer past `expiresAt` to
+   * EXPIRED in one batched updateMany, stamping `decidedAt` with the same
+   * `now` (the sweep IS the decision — same shape as the service's
+   * transition writes). Idempotent: an already-decided row fails the status
+   * predicate on the next run. Strict `lt`: an offer expiring exactly at the
+   * sweep instant is still live — the lazy expireIfDue guard (OFR-002) and
+   * this sweep share the one rule. Returns the number of flipped rows for
+   * the job to log.
+   */
+  async expireDue(tx: Tx = undefined, now: Date = new Date()): Promise<number> {
+    const result = await this.client(tx).offer.updateMany({
+      where: {
+        status: OfferStatus.PENDING,
+        expiresAt: { lt: now },
+      },
+      data: { status: OfferStatus.EXPIRED, decidedAt: now },
+    });
+    return result.count;
   }
 
   // --- OFR-002 — role-scoped paginated listings (GET /offers, GET /lots/:lotId/offers) ---
