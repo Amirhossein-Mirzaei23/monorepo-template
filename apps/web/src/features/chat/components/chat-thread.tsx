@@ -1,8 +1,9 @@
 'use client';
 
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { RotateCcw, WifiOff } from 'lucide-react';
 import type { MessageResponseDto } from '@monorepo/shared-types';
+import { OfferActionBubble, OfferSheet } from '@/features/offers';
 import { formatJalali } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/providers/auth-provider';
@@ -41,7 +42,16 @@ import { QuickActions } from './quick-actions';
  * CHT-008 — quick-action chips sit above the composer (role-scoped set;
  * collapsed to a «…» overflow once MY first message exists). Rendered only
  * after the history loads — the collapse rule reads the committed rows — and
- * only when the conversation role is known (chips are role-scoped).
+ * only when the conversation role is known (chips are role-scoped). OFR-004:
+ * the buyer's «پیشنهاد قیمت» chip is wired — it opens the shared offer sheet
+ * with the conversation's lot context (onMakeOffer), and offers created from
+ * here carry this conversationId so the API posts the ACTION message back
+ * into this thread.
+ *
+ * OFR-004 — offer history in the conversation: the API-written ACTION
+ * messages (offer events) render as offer chain cards (OfferActionBubble,
+ * features/offers) instead of plain bubbles; the buyer's offer sheet mounts
+ * beside the thread.
  *
  * Scroll management (the card's "without jump" acceptance):
  * - first load snaps to the newest message instantly;
@@ -67,6 +77,9 @@ export function ChatThread({ conversationId }: { conversationId: string }) {
   });
   const notifyTyping = useTypingEmitter(conversationId);
   const counterpartTyping = useTypingIndicator(conversationId);
+
+  // OFR-004 — the buyer's make-offer sheet (opened from the «پیشنهاد قیمت» chip).
+  const [offerSheetOpen, setOfferSheetOpen] = useState(false);
 
   // Room lifecycle + read receipts (token-gated inside the hooks).
   useConversationChannel(conversationId);
@@ -207,6 +220,18 @@ export function ChatThread({ conversationId }: { conversationId: string }) {
                   />
                 );
               }
+              if (row.kind === 'action') {
+                // OFR-004 — API-written offer events render as offer chain
+                // cards, never as plain chat bubbles.
+                return (
+                  <OfferActionBubble
+                    key={row.key}
+                    body={row.body}
+                    createdAt={row.createdAt}
+                    variant={row.variant === 'own' ? 'own' : 'other'}
+                  />
+                );
+              }
               return (
                 <MessageBubble
                   key={row.key}
@@ -295,6 +320,9 @@ export function ChatThread({ conversationId }: { conversationId: string }) {
           messages={thread.messages}
           myId={myId}
           onSend={send.send}
+          onMakeOffer={
+            context.conversation.role === 'buyer' ? () => setOfferSheetOpen(true) : undefined
+          }
         />
       ) : null}
 
@@ -306,6 +334,18 @@ export function ChatThread({ conversationId }: { conversationId: string }) {
         onAttachImage={attachments.attachImage}
         onAttachVideo={attachments.attachVideo}
       />
+
+      {/* OFR-004 — the buyer's make-offer sheet, pre-filled with this thread's
+       * lot context; created offers carry conversationId so the ACTION message
+       * lands right back here (server-side). */}
+      {context.conversation !== undefined ? (
+        <OfferSheet
+          open={offerSheetOpen}
+          onOpenChange={setOfferSheetOpen}
+          lotCode={context.conversation.lot.code}
+          conversationId={conversationId}
+        />
+      ) : null}
     </section>
   );
 }
@@ -320,6 +360,14 @@ type MessageRow =
       createdAt: string;
       variant: 'own' | 'other';
       readAt?: string | null;
+    }
+  | {
+      kind: 'action';
+      key: string;
+      body: string;
+      createdAt: string;
+      /** The acting side (the API writes seller/ buyer-authored ACTION rows). */
+      variant: 'own' | 'other';
     }
   | {
       kind: 'message';
@@ -343,7 +391,8 @@ interface DayRow {
  * card's separator format) and maps server + optimistic rows to bubble props.
  * SYSTEM rows (server-written welcome/notice) become centered gray pills;
  * IMAGE/VIDEO rows become MediaBubble rows (CHT-007 — WS `message:new`
- * arrivals render through the same mapping).
+ * arrivals render through the same mapping); ACTION rows (the OFR-002 offer
+ * events) become offer chain cards (OFR-004 OfferActionBubble).
  */
 function buildRows(
   messages: MessageResponseDto[],
@@ -380,6 +429,16 @@ function buildRows(
         createdAt: message.createdAt,
         variant: isOwn ? 'own' : 'other',
         ...(isOwn ? { readAt: message.readAt } : {}),
+      });
+      continue;
+    }
+    if (!isSystem && message.type === 'ACTION') {
+      rows.push({
+        kind: 'action',
+        key: message.id,
+        body: message.body ?? '',
+        createdAt: message.createdAt,
+        variant: isOwn ? 'own' : 'other',
       });
       continue;
     }

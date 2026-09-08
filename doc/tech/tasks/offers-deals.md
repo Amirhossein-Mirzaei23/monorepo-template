@@ -57,7 +57,7 @@ principles 7, 12; decision D9 flags the legal review).
 - **Testing:** unit w/ fake clock.
 - **DoD:** registered in jobs module.
 
-### OFR-004 — Offers UI
+### OFR-004 ✅ — Offers UI
 
 **P0 · Phase 6 · Offers · M** — Deps: OFR-002, CHT-006 (sheet context)
 

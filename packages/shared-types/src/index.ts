@@ -64,6 +64,11 @@ export type LotPublicDetailResponseDto = components['schemas']['LotPublicDetailR
 export type LotDetailSellerDto = components['schemas']['LotDetailSellerDto'];
 /** Category NAME row (fa label + slug) for the detail spec block. */
 export type LotDetailCategoryDto = components['schemas']['LotDetailCategoryDto'];
+// --- offers (OFR-002; consumed by the OFR-004 offers UI) ---
+export type OfferLotSummaryDto = components['schemas']['OfferLotSummaryDto'];
+export type OfferResponseDto = components['schemas']['OfferResponseDto'];
+export type CreateOfferDto = components['schemas']['CreateOfferDto'];
+export type CounterOfferDto = components['schemas']['CounterOfferDto'];
 // --- profiles (MKT-004) ---
 /** Public seller strip summary — `verified` is a hard false until TRS-001 (Phase 7). */
 export type PublicSellerSummaryDto = components['schemas']['PublicSellerSummaryDto'];
@@ -230,6 +235,33 @@ export const publicSellerProfileSchema = apiSchemas.PublicSellerProfileDto.exten
   activeLots: sellerLotCardPageSchema,
   soldLots: sellerLotCardPageSchema,
 });
+
+// --- offers (OFR-002) ---
+/**
+ * The same Nest nested-object quirk as `metrics`/`seller` above: the generated
+ * `OfferResponseDto.lot` serializes as a lossy `z.object({})` that would strip
+ * the lot summary on parse. Recompose the real shape (apiSchemas.OfferLotSummaryDto)
+ * so the runtime schema validates and KEEPS what the TS contract
+ * (OfferResponseDto['lot']) already promises.
+ */
+export const offerLotSummarySchema = apiSchemas.OfferLotSummaryDto;
+export const offerResponseSchema = apiSchemas.OfferResponseDto.extend({
+  lot: offerLotSummarySchema,
+});
+/** Offer status — derived from the generated schema (compile-time synced). */
+export const offerStatusSchema = offerResponseSchema.shape.status;
+export type OfferStatus = OfferResponseDto['status'];
+/** The caller's side of an offer, resolved server-side (`myRole`). */
+export type OfferMyRole = OfferResponseDto['myRole'];
+/** The GET /offers and GET /lots/:lotId/offers envelope — Paginated<OfferResponseDto>. */
+export const offersPageSchema = zod.object({
+  items: zod.array(offerResponseSchema),
+  total: zod.number(),
+  page: zod.number(),
+  limit: zod.number(),
+});
+export const createOfferSchema = apiSchemas.CreateOfferDto;
+export const counterOfferSchema = apiSchemas.CounterOfferDto;
 
 // --- shared helpers ---
 

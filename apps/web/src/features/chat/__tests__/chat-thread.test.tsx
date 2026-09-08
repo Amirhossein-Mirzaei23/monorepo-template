@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { io } from 'socket.io-client';
@@ -18,6 +18,10 @@ jest.mock('../../../providers/auth-provider', () => ({
   useAuth: () => mockAuth,
 }));
 jest.mock('socket.io-client', () => ({ io: jest.fn() }));
+
+import { lotDetailFixture } from '@/features/marketplace';
+import { offerStatusFromBody } from '@/features/offers';
+import { ToastProvider } from '@/components/ui/toast';
 
 import { ChatThread } from '../components/chat-thread';
 import { CHAT_FALLBACK_AFTER_MS } from '../hooks/use-chat-socket';
@@ -152,8 +156,14 @@ function routeFetch(input: unknown, init?: RequestInit): Promise<Response> {
 function renderThread() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(<ChatThread conversationId="conv-1" />, {
+    // ToastProvider: the OFR-004 offer sheet mounted by the thread toasts on
+    // submit success (the real shell provides it app-wide).
     wrapper: function Wrapper({ children }: { children: ReactNode }) {
-      return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+      return (
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>{children}</ToastProvider>
+        </QueryClientProvider>
+      );
     },
   });
   return { ...view, queryClient };
@@ -275,5 +285,96 @@ describe('ChatThread (CHT-006 integration)', () => {
     });
     expect(screen.queryByText(/اتصال زنده قطع است/)).not.toBeInTheDocument();
     view.unmount();
+  });
+});
+
+describe('ChatThread — OFR-004 (offer history + CHT-008 wiring)', () => {
+  /** The API-written ACTION bodies (offers.constants.ts templates). */
+  const OFFER_THREAD = [
+    messageFixture({
+      id: 'm-sys',
+      senderId: null,
+      type: 'SYSTEM',
+      body: 'گفتگو درباره: عمده پیراهن مردانه — ۲٬۲۵۰٬۰۰۰ تومان',
+      createdAt: '2026-09-05T09:00:00.000Z',
+    }),
+    messageFixture({
+      id: 'm-offer',
+      senderId: 'user-1',
+      type: 'ACTION',
+      body: 'پیشنهاد ۱۵۰٬۰۰۰٬۰۰۰ تومان برای ۵۰۰ عدد',
+      createdAt: '2026-09-05T10:00:00.000Z',
+    }),
+    messageFixture({
+      id: 'm-accept',
+      senderId: 'user-2',
+      type: 'ACTION',
+      body: 'پیشنهاد پذیرفته شد',
+      createdAt: '2026-09-05T11:00:00.000Z',
+    }),
+  ];
+
+  function stubThreadFetch(messages: typeof OFFER_THREAD, lotResponse?: unknown) {
+    fetchMock.mockImplementation(async (input: unknown) => {
+      const url = String(input);
+      if (url.includes('/read')) {
+        return ok({ readCount: 0 });
+      }
+      if (url.includes('/messages')) {
+        return ok(messagePageFixture(messages));
+      }
+      if (url.startsWith('/api/conversations?')) {
+        return ok({ items: [conversationItemFixture()], total: 1, page: 1, limit: 50 });
+      }
+      if (lotResponse !== undefined && url.startsWith('/api/lots/7Kd2Qm9x')) {
+        return ok(lotResponse);
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    });
+  }
+
+  it('renders ACTION messages as offer chain cards — with the outcome status chip when the body states it', async () => {
+    stubThreadFetch(OFFER_THREAD);
+    const { container } = renderThread();
+
+    const cards = await waitFor(() => {
+      const found = container.querySelectorAll('[data-slot="offer-action-card"]');
+      expect(found).toHaveLength(2);
+      return found;
+    });
+
+    // Both stored fa bodies render inside the cards, never as plain bubbles.
+    expect(cards[0]).toHaveTextContent('پیشنهاد ۱۵۰٬۰۰۰٬۰۰۰ تومان برای ۵۰۰ عدد');
+    expect(cards[1]).toHaveTextContent('پیشنهاد پذیرفته شد');
+
+    // The accept body states the outcome → the ACCEPTED chip; the plain
+    // proposal has no client-known status → tag only.
+    expect(within(cards[1] as HTMLElement).getByText('پذیرفته شده')).toBeInTheDocument();
+    expect(within(cards[0] as HTMLElement).queryByText('پذیرفته شده')).not.toBeInTheDocument();
+
+    // Unit contract of the pragmatic body→status derivation.
+    expect(offerStatusFromBody('پیشنهاد پذیرفته شد')).toBe('ACCEPTED');
+    expect(offerStatusFromBody('پیشنهاد رد شد')).toBe('REJECTED');
+    expect(offerStatusFromBody('پیشنهاد ۱۵۰٬۰۰۰٬۰۰۰ تومان برای ۵۰۰ عدد')).toBeNull();
+  });
+
+  it('wires the buyer «پیشنهاد قیمت» chip to the shared offer sheet (lot context resolved)', async () => {
+    const user = userEvent.setup();
+    stubThreadFetch(OFFER_THREAD, lotDetailFixture({ availableQuantity: 600 }));
+    renderThread();
+
+    await screen.findByText('پیشنهاد پذیرفته شد');
+    // The buyer's own ACTION offer collapsed the chip row (CHT-008 rule) —
+    // open the «…» overflow first, then tap the sheet-opening chip.
+    await user.click(screen.getByRole('button', { name: 'نمایش اقدامات سریع' }));
+    await user.click(screen.getByRole('button', { name: 'پیشنهاد قیمت' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'ثبت پیشنهاد قیمت' });
+    // The sheet resolved the lot context through the public BFF endpoint…
+    expect(global.fetch).toHaveBeenCalledWith('/api/lots/7Kd2Qm9x', expect.anything());
+    // …and seeded the quantity at the lot's minOrderQuantity (10).
+    await waitFor(() => {
+      expect(within(dialog).getByLabelText('تعداد (عدد)')).toHaveValue('10');
+    });
   });
 });

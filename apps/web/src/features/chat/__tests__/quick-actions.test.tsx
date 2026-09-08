@@ -10,11 +10,13 @@ import type { QuickActionsProps } from '../components/quick-actions';
 import { messageFixture } from '../testing/fixtures';
 
 /**
- * QuickActions component tests (CHT-008): the buyer chip set renders with its
- * fa templates and sends them through the CHT-006 send hook, the seller set is
- * the mirrored reduced one, the «پیشنهاد قیمت» offer chip stays hidden until
- * OFR-004, and the row collapses to the «…» overflow toggle once MY first
- * non-SYSTEM message exists (SYSTEM / counterpart messages don't collapse it).
+ * QuickActions component tests (CHT-008 + the OFR-004 wiring): the buyer chip
+ * set renders with its fa templates and sends them through the CHT-006 send
+ * hook, the seller set is the mirrored reduced one, and the «پیشنهاد قیمت»
+ * offer chip opens the OFR-004 sheet through onMakeOffer (it sends NO text and
+ * stays hidden on surfaces that do not wire the callback). The row collapses
+ * to the «…» overflow toggle once MY first non-SYSTEM message exists
+ * (SYSTEM / counterpart messages don't collapse it).
  */
 
 function renderQuickActions(overrides: Partial<QuickActionsProps> = {}) {
@@ -23,10 +25,16 @@ function renderQuickActions(overrides: Partial<QuickActionsProps> = {}) {
     messages: [],
     myId: 'user-1',
     onSend: jest.fn(),
+    onMakeOffer: jest.fn(),
     ...overrides,
   };
   const view = render(<QuickActions {...props} />);
   return { ...view, props };
+}
+
+/** The text-template chips (the sheet opener carries no body). */
+function textActions(role: 'buyer' | 'seller') {
+  return QUICK_ACTIONS_BY_ROLE[role].filter((action) => action.body !== undefined);
 }
 
 /** My own committed TEXT message (the collapse trigger). */
@@ -47,8 +55,9 @@ describe('QuickActions (CHT-008)', () => {
   it('sends the exact fa template of the tapped chip through the send hook', async () => {
     const user = userEvent.setup();
     const onSend = jest.fn();
+    const templates = textActions('buyer');
 
-    for (const action of QUICK_ACTIONS_BY_ROLE.buyer) {
+    for (const action of templates) {
       // Via the helper (not a literal role="…" JSX attr — jsx-a11y/aria-role
       // reads any literal role prop as the ARIA attribute).
       const { unmount } = renderQuickActions({ onSend });
@@ -56,15 +65,29 @@ describe('QuickActions (CHT-008)', () => {
       expect(onSend).toHaveBeenCalledWith(action.body);
       unmount();
     }
-    expect(onSend).toHaveBeenCalledTimes(QUICK_ACTIONS_BY_ROLE.buyer.length);
+    expect(onSend).toHaveBeenCalledTimes(templates.length);
   });
 
-  it('hides the «پیشنهاد قیمت» offer chip until OFR-004 ships the offer sheet', () => {
-    renderQuickActions();
+  it('the «پیشنهاد قیمت» chip opens the offer sheet through onMakeOffer (no text send)', async () => {
+    const user = userEvent.setup();
+    const onSend = jest.fn();
+    const onMakeOffer = jest.fn();
+    renderQuickActions({ onSend, onMakeOffer });
 
-    // Scope guard: the chip opens the OFR-004 sheet (Phase 6) — not a TEXT
-    // template — so it stays out of the set until then.
+    await user.click(screen.getByRole('button', { name: 'پیشنهاد قیمت' }));
+
+    expect(onMakeOffer).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('hides the «پیشنهاد قیمت» chip when no onMakeOffer is wired', () => {
+    renderQuickActions({ onMakeOffer: undefined });
+
+    // Unwired surfaces keep the CHT-008-era hidden state (the chip needs the
+    // OFR-004 sheet host to make sense).
     expect(screen.queryByText('پیشنهاد قیمت')).not.toBeInTheDocument();
+    // The rest of the buyer set still renders.
+    expect(screen.getByRole('button', { name: 'قیمت بپرس' })).toBeInTheDocument();
   });
 
   it('renders the mirrored seller set without the buyer-only chips', async () => {
@@ -74,7 +97,7 @@ describe('QuickActions (CHT-008)', () => {
 
     expect(screen.getByRole('button', { name: 'ارسال عکس بیشتر' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'هماهنگی بازدید' })).toBeInTheDocument();
-    for (const buyerOnly of ['قیمت بپرس', 'عکس بیشتری بفرست', 'ویدیو بفرست']) {
+    for (const buyerOnly of ['قیمت بپرس', 'عکس بیشتری بفرست', 'ویدیو بفرست', 'پیشنهاد قیمت']) {
       expect(screen.queryByText(buyerOnly)).not.toBeInTheDocument();
     }
 
