@@ -14,6 +14,11 @@ import {
   MessageType,
   type Offer,
   OfferStatus,
+  type Deal,
+  DealEvent,
+  DealStatus,
+  DeliveryMethod,
+  PaymentMethodRecorded,
   type OtpCode,
   OtpPurpose,
   type Prisma,
@@ -342,6 +347,69 @@ type OfferInclude = { lot?: unknown };
 /** A lot as OFFER_LIST_INCLUDE selects it ({code, title, unitPrice}). */
 type OfferLotSummaryRow = { code: string; title: string; unitPrice: number };
 
+/** Exactly the surface DealsRepository composes (DEAL-001): the public-code
+ * OR id lookup, the create/update writes. */
+type DealWhere = { id?: string; code?: string };
+/** Create payload: required business scalars; status/stamps take the DB
+ * defaults (NEGOTIATING, no stage stamps yet). */
+type DealCreateData = {
+  code: string;
+  lotId: string;
+  buyerId: string;
+  sellerId: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  deliveryMethod: DeliveryMethod;
+  paymentMethod: PaymentMethodRecorded;
+  offerId?: string | null;
+  conversationId?: string | null;
+  deliveryNote?: string | null;
+  paymentTermsNote?: string | null;
+  paidConfirmedByBuyerAt?: Date | null;
+  commissionRate?: number;
+  commissionAmount?: number | null;
+  status?: DealStatus;
+  cancelReason?: string | null;
+  disputeReason?: string | null;
+  agreedAt?: Date | null;
+  paymentPendingAt?: Date | null;
+  paidAt?: Date | null;
+  preparingAt?: Date | null;
+  shippedAt?: Date | null;
+  deliveredAt?: Date | null;
+  completedAt?: Date | null;
+};
+/** Writable scalar subset for the transition path (DEAL-001 service): status
+ * + stage stamps + reason columns + the payment-mark/commission fields. */
+type DealUpdateData = Partial<{
+  status: DealStatus;
+  agreedAt: Date | null;
+  paymentPendingAt: Date | null;
+  paidAt: Date | null;
+  preparingAt: Date | null;
+  shippedAt: Date | null;
+  deliveredAt: Date | null;
+  completedAt: Date | null;
+  cancelReason: string | null;
+  disputeReason: string | null;
+  paidConfirmedByBuyerAt: Date | null;
+  commissionRate: number;
+  commissionAmount: number | null;
+}>;
+
+/** Exactly the surface DealsRepository composes (DEAL-001): the timeline
+ * append + the (dealId, createdAt asc, id asc) page read. */
+type DealEventWhere = { dealId?: string };
+type DealEventCreateData = {
+  dealId: string;
+  actorId?: string | null;
+  fromStatus: DealStatus;
+  toStatus: DealStatus;
+  note?: string | null;
+  createdAt?: Date;
+};
+
 /** Writable scalar subset for the CHT-003 send/read transactions (unread
  * counters also take the { increment } atomic form, like LotUpdateData). */
 type ConversationUpdateData = Partial<{
@@ -371,6 +439,8 @@ export class FakePrisma {
   private readonly conversations = new Map<string, Conversation>();
   private readonly messages = new Map<string, Message>();
   private readonly offers = new Map<string, Offer>();
+  private readonly deals = new Map<string, Deal>();
+  private readonly dealEvents = new Map<string, DealEvent>();
 
   readonly user = {
     findMany: async ({
@@ -1358,6 +1428,86 @@ export class FakePrisma {
     },
   };
 
+  /** Exactly the surface DealsRepository uses (DEAL-001): the id OR public
+   * code lookup, create and the transition write. Bare rows (no includes yet
+   * — DEAL-002 owns response payloads). Create mirrors the FKs the service
+   * path relies on (the lot must exist — Cascade owner — plus explicit
+   * offer/conversation rows when linked). */
+  readonly deal = {
+    findUnique: async ({ where }: { where: DealWhere }): Promise<Deal | null> => {
+      let found: Deal | undefined;
+      if (where.id !== undefined) {
+        found = this.deals.get(where.id);
+      } else if (where.code !== undefined) {
+        found = [...this.deals.values()].find((row) => row.code === where.code);
+      }
+      return found ? cloneDeal(found) : null;
+    },
+    create: async ({ data }: { data: DealCreateData }): Promise<Deal> => {
+      if (!this.lots.get(data.lotId)) {
+        throw new Error(`FakePrisma: deal references missing lot ${data.lotId}`);
+      }
+      if (data.offerId != null && !this.offers.get(data.offerId)) {
+        throw new Error(`FakePrisma: deal references missing offer ${data.offerId}`);
+      }
+      if (data.conversationId != null && !this.conversations.get(data.conversationId)) {
+        throw new Error(`FakePrisma: deal references missing conversation ${data.conversationId}`);
+      }
+      const row = buildDealRow(data);
+      this.deals.set(row.id, row);
+      return cloneDeal(row);
+    },
+    /** Transition write (DEAL-001 service): partial scalar update — undefined
+     * keys stay untouched, updatedAt moves like Prisma's. */
+    update: async ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: DealUpdateData;
+    }): Promise<Deal> => {
+      const row = this.deals.get(where.id);
+      if (!row) {
+        throw new Error(`FakePrisma: deal ${where.id} not found`);
+      }
+      const next = applyDealUpdate(row, data);
+      this.deals.set(row.id, next);
+      return cloneDeal(next);
+    },
+  };
+
+  /** Exactly the surface DealsRepository uses (DEAL-001): the timeline append
+   * (throws on a missing deal, mirroring the FK) + the oldest-first page
+   * read ((dealId, createdAt asc, id asc) — the plan index). */
+  readonly dealEvent = {
+    create: async ({ data }: { data: DealEventCreateData }): Promise<DealEvent> => {
+      if (!this.deals.get(data.dealId)) {
+        throw new Error(`FakePrisma: dealEvent references missing deal ${data.dealId}`);
+      }
+      const row: DealEvent = {
+        id: randomUUID(),
+        dealId: data.dealId,
+        actorId: data.actorId ?? null,
+        fromStatus: data.fromStatus,
+        toStatus: data.toStatus,
+        note: data.note ?? null,
+        createdAt: data.createdAt ?? nowIso(),
+      };
+      this.dealEvents.set(row.id, row);
+      return cloneDealEvent(row);
+    },
+    findMany: async ({
+      where,
+      orderBy,
+    }: {
+      where?: DealEventWhere;
+      orderBy?: Record<string, 'asc' | 'desc'> | Array<Record<string, 'asc' | 'desc'>>;
+    } = {}): Promise<DealEvent[]> =>
+      sortRows([...this.dealEvents.values()].filter(matchesDealEventWhere(where)), orderBy).map(
+        cloneDealEvent,
+      ),
+  };
+
   /**
    * Conversation list/findFirst predicate: the pure participant matcher plus
    * the CHT-007 `messages.some({ mediaAssetId })` arm (an absent arm never
@@ -1784,6 +1934,53 @@ export class FakePrisma {
     return cloneOffer(row);
   }
 
+  /** Test helper: seeded deals with controlled status/stage stamps/links
+   * (DEAL-001 suites). The lot must be seeded first (the create path throws
+   * on a missing lot, mirroring the FK); offerId/conversationId must
+   * reference seeded rows when provided. `createdAt` controls both the row's
+   * creation stamp and the timeline ordering. */
+  seedDeal(deal: Omit<DealCreateData, 'code'> & { code?: string; createdAt?: Date }): Deal {
+    const { createdAt, ...data } = deal;
+    const row = buildDealRow({
+      ...data,
+      code: data.code ?? randomUUID().replace(/-/g, '').slice(0, 8),
+    });
+    if (!this.lots.get(row.lotId)) {
+      throw new Error(`FakePrisma: seedDeal references missing lot ${row.lotId}`);
+    }
+    if (row.offerId !== null && !this.offers.get(row.offerId)) {
+      throw new Error(`FakePrisma: seedDeal references missing offer ${row.offerId}`);
+    }
+    if (row.conversationId !== null && !this.conversations.get(row.conversationId)) {
+      throw new Error(`FakePrisma: seedDeal references missing conversation ${row.conversationId}`);
+    }
+    if (createdAt !== undefined) {
+      row.createdAt = createdAt;
+    }
+    this.deals.set(row.id, row);
+    return cloneDeal(row);
+  }
+
+  /** Test helper: seeded timeline events with controlled createdAt/from/to
+   * (DEAL-001 timeline suites — ordering + informational events). The deal
+   * must be seeded first (mirroring the FK). */
+  seedDealEvent(event: DealEventCreateData): DealEvent {
+    if (!this.deals.get(event.dealId)) {
+      throw new Error(`FakePrisma: seedDealEvent references missing deal ${event.dealId}`);
+    }
+    const row: DealEvent = {
+      id: randomUUID(),
+      dealId: event.dealId,
+      actorId: event.actorId ?? null,
+      fromStatus: event.fromStatus,
+      toStatus: event.toStatus,
+      note: event.note ?? null,
+      createdAt: event.createdAt ?? nowIso(),
+    };
+    this.dealEvents.set(row.id, row);
+    return cloneDealEvent(row);
+  }
+
   /** Lot row with its relations joined (seller summary + gallery sorted by
    * sortOrder + category NAME rows), mirroring the production includes
    * (LOT_MEDIA_INCLUDE / LOT_CARD_INCLUDE / LOT_PUBLIC_DETAIL_INCLUDE).
@@ -1902,7 +2099,9 @@ function matchesCategoryWhere(where: CategoryWhere | undefined): (row: Category)
 }
 
 /** Multi-key stable sort (orderBy is a single object or an array of them). */
-function sortRows<T extends Category | User | Lot | Conversation | OtpCode | Message | Offer>(
+function sortRows<
+  T extends Category | User | Lot | Conversation | OtpCode | Message | Offer | Deal | DealEvent,
+>(
   rows: T[],
   orderBy: Record<string, 'asc' | 'desc'> | Record<string, 'asc' | 'desc'>[] | undefined,
 ): T[] {
@@ -2267,6 +2466,82 @@ function cloneOffer(row: Offer): Offer {
     createdAt: new Date(row.createdAt),
     updatedAt: new Date(row.updatedAt),
   };
+}
+
+/** Full Deal row from the create payload, applying DB defaults (DEAL-001):
+ * NEGOTIATING, commissionRate 0, no stage stamps, no reasons. */
+function buildDealRow(data: DealCreateData): Deal {
+  const now = nowIso();
+  return {
+    id: randomUUID(),
+    code: data.code,
+    lotId: data.lotId,
+    buyerId: data.buyerId,
+    sellerId: data.sellerId,
+    offerId: data.offerId ?? null,
+    conversationId: data.conversationId ?? null,
+    quantity: data.quantity,
+    unitPrice: data.unitPrice,
+    totalPrice: data.totalPrice,
+    deliveryMethod: data.deliveryMethod,
+    deliveryNote: data.deliveryNote ?? null,
+    paymentMethod: data.paymentMethod,
+    paymentTermsNote: data.paymentTermsNote ?? null,
+    paidConfirmedByBuyerAt: data.paidConfirmedByBuyerAt ?? null,
+    commissionRate: data.commissionRate ?? 0,
+    commissionAmount: data.commissionAmount ?? null,
+    status: data.status ?? DealStatus.NEGOTIATING,
+    cancelReason: data.cancelReason ?? null,
+    disputeReason: data.disputeReason ?? null,
+    agreedAt: data.agreedAt ?? null,
+    paymentPendingAt: data.paymentPendingAt ?? null,
+    paidAt: data.paidAt ?? null,
+    preparingAt: data.preparingAt ?? null,
+    shippedAt: data.shippedAt ?? null,
+    deliveredAt: data.deliveredAt ?? null,
+    completedAt: data.completedAt ?? null,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/** Partial deal update: undefined keys stay untouched (Prisma semantics). */
+function applyDealUpdate(row: Deal, data: DealUpdateData): Deal {
+  const next: Deal = { ...row };
+  for (const [key, value] of Object.entries(data) as Array<[keyof DealUpdateData, unknown]>) {
+    if (value === undefined) {
+      continue;
+    }
+    (next as Record<string, unknown>)[key] = value;
+  }
+  next.updatedAt = nowIso();
+  return next;
+}
+
+function cloneDeal(row: Deal): Deal {
+  return {
+    ...row,
+    paidConfirmedByBuyerAt:
+      row.paidConfirmedByBuyerAt === null ? null : new Date(row.paidConfirmedByBuyerAt),
+    agreedAt: row.agreedAt === null ? null : new Date(row.agreedAt),
+    paymentPendingAt: row.paymentPendingAt === null ? null : new Date(row.paymentPendingAt),
+    paidAt: row.paidAt === null ? null : new Date(row.paidAt),
+    preparingAt: row.preparingAt === null ? null : new Date(row.preparingAt),
+    shippedAt: row.shippedAt === null ? null : new Date(row.shippedAt),
+    deliveredAt: row.deliveredAt === null ? null : new Date(row.deliveredAt),
+    completedAt: row.completedAt === null ? null : new Date(row.completedAt),
+    createdAt: new Date(row.createdAt),
+    updatedAt: new Date(row.updatedAt),
+  };
+}
+
+/** DealEvent matcher (DEAL-001): deal scoping for the timeline page read. */
+function matchesDealEventWhere(where: DealEventWhere | undefined): (row: DealEvent) => boolean {
+  return (row) => where?.dealId === undefined || row.dealId === where.dealId;
+}
+
+function cloneDealEvent(row: DealEvent): DealEvent {
+  return { ...row, createdAt: new Date(row.createdAt) };
 }
 
 function cloneProfile(row: Profile): Profile {

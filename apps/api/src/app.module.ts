@@ -17,6 +17,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { ConversationsModule } from './modules/conversations/conversations.module';
+import { DealsModule } from './modules/deals/deals.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { LotsModule } from './modules/lots/lots.module';
 import { MediaModule } from './modules/media/media.module';
@@ -86,6 +87,7 @@ import { PrismaModule } from './prisma/prisma.module';
     LotsModule,
     ConversationsModule,
     OffersModule,
+    DealsModule,
     MediaModule,
     JobsModule,
   ],

@@ -164,6 +164,13 @@ model User {
   buyerOffers   Offer[]   @relation("OfferBuyer")
   /// Offers on this account's lots as the seller (OFR-001).
   sellerOffers  Offer[]   @relation("OfferSeller")
+  /// Deals where this account is the buyer (DEAL-001).
+  buyerDeals    Deal[]    @relation("DealBuyer")
+  /// Deals where this account is the seller (DEAL-001).
+  sellerDeals   Deal[]    @relation("DealSeller")
+  /// Deal lifecycle events this account acted in (null actorId = system rows,
+  /// e.g. the future 7-day auto-complete job — DEAL-001).
+  dealEvents    DealEvent[]
 
   @@index([status])
 }
@@ -365,6 +372,8 @@ model Lot {
   conversations Conversation[]
   /// Negotiation offers on this lot (OFR-001).
   offers        Offer[]
+  /// Transactions on this lot (DEAL-001).
+  deals         Deal[]
 }
 
 /// An uploaded binary and its storage metadata (MEDIA-001, plan §3). The bytes
@@ -481,6 +490,10 @@ model Conversation {
   /// deletion, offers outlive conversations (see the Offer model doc).
   offers Offer[]
 
+  /// Deals optionally tied to this thread (DEAL-001) — SetNull, the same
+  /// outlives-the-thread decision as offers.
+  deals Deal[]
+
   /// The product's one-thread-per-buyer-per-lot rule (CHT-001).
   @@unique([lotId, buyerId])
   /// Participant inbox feeds (CHT-002): newest-activity first per side.
@@ -573,6 +586,9 @@ model Offer {
   parent         Offer?      @relation("OfferCounterChain", fields: [parentId], references: [id], onDelete: Cascade)
   /// The counters this offer received (the chain's forward links).
   children       Offer[]     @relation("OfferCounterChain")
+  /// Deals grown out of this offer once accepted (DEAL-001/002) — the deal
+  /// side is SetNull: the deal outlives the offer (see the Deal model doc).
+  deals          Deal[]
   /// Offered piece count — must be within lot.minOrderQuantity..lot
   /// .availableQuantity AT OFFER TIME (validated on write; OFR-002 re-checks
   /// availability at accept).
@@ -598,4 +614,174 @@ model Offer {
   @@index([sellerId, status])
   /// Expiry sweep + "live offers" reads (plan §3) — serves the OFR-003 batch.
   @@index([status, expiresAt])
+}
+
+/// Deal lifecycle (plan §3) — the transaction spine. NEGOTIATING is the only
+/// creation state; AGREED..DELIVERED are the live fulfilment stages; terminal
+/// states are COMPLETED | CANCELLED | DISPUTED (DISPUTED is "terminal pending
+/// admin resolution" — only ADMIN moves out of it, endpoints are DEAL-007 P1).
+/// The transition table + role permissions live in the deals module
+/// (DEAL-001, deals.constants.ts); fa labels in the same file.
+enum DealStatus {
+  NEGOTIATING
+  AGREED
+  PAYMENT_PENDING
+  PAID
+  PREPARING
+  SHIPPED
+  DELIVERED
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+/// How the goods change hands (plan §3). Recorded, not processed — the MVP
+/// has no shipment integration (folded Shipment entity, plan §3).
+enum DeliveryMethod {
+  PICKUP
+  SELLER_SHIPS
+  BUYER_TRANSPORT
+  CARRIER
+}
+
+/// How payment happened — RECORDED ONLY (plan §3, decision D9): no gateway,
+/// no wallet, no escrow in MVP; the enum documents the agreed method both
+/// sides see (DEAL-006).
+enum PaymentMethodRecorded {
+  CASH
+  CARD_TO_CARD
+  BANK_TRANSFER
+  CHEQUE
+}
+
+/// The transaction between one buyer and one seller over ONE lot (DEAL-001,
+/// plan §3) — the immutable-terms record: quantity and prices are SNAPSHOT
+/// copies (quantity validated `≤ lot.availableQuantity` at creation; later
+/// lot edits never mutate an existing deal). offerId/conversationId are
+/// optional provenance links (a deal is struck from an accepted offer OR
+/// directly in chat — DEAL-002), both SetNull: the deal is the binding
+/// commercial record and outlives its negotiation context (mirrors the
+/// Offer↔Conversation decisions). Payment is recorded, not processed (D9):
+/// `paidConfirmedByBuyerAt` is the buyer's «پرداخت کردم» mark (a timeline
+/// event + this stamp — NOT a status change; only the SELLER's confirm moves
+/// PAYMENT_PENDING → PAID, DEAL-001 matrix).
+/// commissionRate is RESERVED (0 MVP): basis points (percent × 100, so 250 =
+/// 2.5%) — Int keeps the money math integer-safe; commissionAmount (the
+/// derived Toman take) stays null until commission lands (DEAL-006).
+model Deal {
+  id         String     @id @default(cuid())
+  /// Public, non-sequential URL id — 8-char base62 (`generateDealCode()`,
+  /// deals.constants.ts), same scheme as Lot.code; collisions are retried at
+  /// the service layer (DEAL-002).
+  code       String     @unique
+  lotId      String
+  /// onDelete: Cascade — mirrors Offer.lot: lots are soft-deleted in practice
+  /// (REMOVED + deletedAt, LOT-003), so this fires only on explicit row
+  /// cleanup.
+  lot        Lot        @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  buyerId    String
+  /// onDelete: Restrict — users are soft-deleted (plan §12); the transaction
+  /// history must stay resolvable for BOTH participants (auditability,
+  /// principles 12/13).
+  buyer      User       @relation("DealBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  /// Copied from Lot.sellerId at create — the service derives it, never the
+  /// client (same denormalization as Conversation/Offer); onDelete: Restrict.
+  sellerId   String
+  seller     User       @relation("DealSeller", fields: [sellerId], references: [id], onDelete: Restrict)
+  /// The accepted offer this deal grew out of, when one exists (DEAL-002's
+  /// offer path). onDelete: SetNull — DOCUMENTED DECISION, mirrors
+  /// Offer.conversationId: the deal outlives its offer row.
+  offerId    String?
+  offer      Offer?     @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  /// The thread the deal was struck in (DEAL-002's chat quick path).
+  /// onDelete: SetNull — the same outlives-the-thread decision as offers.
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  // --- terms snapshot (immutable after create — renegotiation is a new deal) ---
+  /// Dealt piece count — ≤ lot.availableQuantity AT CREATION (validated on
+  /// write; the reservation itself is DEAL-002's transactional decrement).
+  quantity       Int
+  /// Agreed per-unit Toman, 1..2,000,000,000 (the same money bounds as offers).
+  unitPrice      Int
+  /// Derived on write: unitPrice × quantity (never client-supplied).
+  totalPrice     Int
+  deliveryMethod DeliveryMethod
+  /// Optional free-text delivery arrangement, ≤ 500 chars (deals.constants).
+  deliveryNote   String?
+  paymentMethod  PaymentMethodRecorded
+  /// Optional free-text payment terms, ≤ 500 chars (deals.constants).
+  paymentTermsNote String?
+  /// The buyer's «پرداخت کردم» mark (DEAL-006 endpoint) — informational, NOT
+  /// a status change: only the seller's confirm performs PAYMENT_PENDING →
+  /// PAID (the DEAL-001 matrix).
+  paidConfirmedByBuyerAt DateTime?
+  /// Reserved commission rate in basis points (percent × 100; 250 = 2.5%) —
+  /// 0 MVP, configurable const in deals.constants (DEAL-006 populates).
+  commissionRate     Int     @default(0)
+  /// Derived Toman take = totalPrice × rate / 10000 — null until commission
+  /// lands (DEAL-006); nullable keeps "not computed" distinct from 0.
+  commissionAmount   Int?
+
+  status        DealStatus @default(NEGOTIATING)
+  /// Why the deal was cancelled — required by every →CANCELLED move
+  /// (deals.constants requiresReason); visible to both parties.
+  cancelReason  String?
+  /// Why the deal is disputed — required by every →DISPUTED move; the
+  /// ≥ 20-char rule is DEAL-003's API-level validation.
+  disputeReason String?
+
+  // --- stage stamps: set exactly when the machine ENTERS that stage ---
+  /// (the creation state NEGOTIATING is covered by createdAt)
+  agreedAt         DateTime?
+  paymentPendingAt DateTime?
+  paidAt           DateTime?
+  preparingAt      DateTime?
+  shippedAt        DateTime?
+  deliveredAt      DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  /// The audit timeline (every transition appends one — DEAL-001).
+  events DealEvent[]
+
+  /// Buyer deal history (plan §3).
+  @@index([buyerId, updatedAt])
+  /// Seller deal history (plan §3).
+  @@index([sellerId, updatedAt])
+  /// Status-filtered lists (plan §3).
+  @@index([status])
+}
+
+/// Append-only lifecycle entry for a Deal (DEAL-001, plan §3) — the
+/// auditability half of the spine (principle 13). Every legal transition
+/// appends one row in the SAME transaction as the status write; actorId is
+/// null for system events (the future 7-day auto-complete job). Creation
+/// itself appends the first event (fromStatus = toStatus = NEGOTIATING), so
+/// the timeline is total; rows are never updated or deleted.
+model DealEvent {
+  id         String     @id @default(cuid())
+  dealId     String
+  /// onDelete: Cascade — an event is meaningless without its deal (mirrors
+  /// Message.conversation; fires only on explicit row cleanup).
+  deal       Deal       @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  /// The acting party — null = system (the auto-complete job; DEAL-007's
+  /// admin resolutions act as the admin User). onDelete: Restrict —
+  /// soft-deleted users stay resolvable as history authors (Message.sender
+  /// precedent).
+  actorId    String?
+  actor      User?      @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  /// Status before the move (== toStatus for informational/creation events).
+  fromStatus DealStatus
+  /// Status after the move.
+  toStatus   DealStatus
+  /// Optional note — the cancel/dispute REASON lands here too (as well as in
+  /// the deal's cancelReason/disputeReason column); fa copy is written by the
+  /// callers (deals.constants owns the templates, DEAL-006).
+  note       String?
+  createdAt  DateTime   @default(now())
+
+  /// Timeline reads for one deal (plan §3) — oldest first.
+  @@index([dealId, createdAt])
 }

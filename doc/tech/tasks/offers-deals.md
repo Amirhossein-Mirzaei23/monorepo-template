@@ -74,7 +74,7 @@ principles 7, 12; decision D9 flags the legal review).
 - **Testing:** sheet component tests; offers page tests.
 - **DoD:** suites green; used by QA-001.
 
-### DEAL-001 — Deal domain + state machine + timeline
+### DEAL-001 ✅ — Deal domain + state machine + timeline
 
 **P0 · Phase 6 · Deals · L** — Deps: OFR-001, LOT-001
 
