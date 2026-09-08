@@ -1,19 +1,34 @@
 import { Injectable } from '@nestjs/common';
 import { OfferStatus, Prisma, type Offer } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { Paginated } from '../../common/dto/pagination-query.dto';
 import { OFFER_MAX_CHAIN_DEPTH } from './offers.constants';
 
 type Tx = Prisma.TransactionClient | undefined;
+
+/**
+ * The lot summary every OfferResponseDto carries (OFR-002 allowlist: lot
+ * {code, title, unitPrice}) — the ONLY join the offer reads need; the mapper
+ * keeps the payload allowlisted from there. Offers never expose buyerId /
+ * sellerId / internal lot ids in list payloads.
+ */
+export const OFFER_LIST_INCLUDE = {
+  lot: { select: { code: true, title: true, unitPrice: true } },
+} satisfies Prisma.OfferInclude;
+
+/** An Offer row as the list reads produce it (lot summary joined). */
+export type OfferListRow = Prisma.OfferGetPayload<{ include: typeof OFFER_LIST_INCLUDE }>;
 
 /**
  * Data access only. Every method accepts an optional transaction client so the
  * repository stays unit-of-work agnostic — services own transaction boundaries
  * (doc/CONVENTIONS.md → Transactions). Repositories never call $transaction.
  *
- * Deliberately narrow (OFR-001 has no endpoints yet — OFR-002 will extend it):
- * create / findById / update (status transitions) / findSiblingsPending /
- * findChain. Reads return the bare row — no response-shaped includes exist
- * until there are response DTOs to feed.
+ * Surface: create / findById / update (status transitions) / findSiblingsPending /
+ * findChain (OFR-001) + the OFR-002 role-scoped paginated listings
+ * (findForBuyer / findForSeller / findForLot, lot summary joined for the
+ * response mapper). Single-row reads return the bare row — only the LIST page
+ * joins the lot summary the response DTO carries.
  */
 @Injectable()
 export class OffersRepository {
@@ -83,5 +98,80 @@ export class OffersRepository {
       cursor = cursor.parentId === null ? null : await this.findById(cursor.parentId, tx);
     }
     return chain;
+  }
+
+  // --- OFR-002 — role-scoped paginated listings (GET /offers, GET /lots/:lotId/offers) ---
+
+  /**
+   * The caller's offers as the BUYER side (GET /offers?role=buyer), one
+   * optional status tab, newest first. Served by the (lotId, buyerId,
+   * createdAt) / (status, expiresAt) plan indexes.
+   */
+  async findForBuyer(
+    buyerId: string,
+    { status, page = 1, limit = 20 }: { status?: OfferStatus; page?: number; limit?: number },
+    tx: Tx = undefined,
+  ): Promise<Paginated<OfferListRow>> {
+    return this.findPage(
+      { buyerId, ...(status !== undefined ? { status } : {}) },
+      { page, limit },
+      tx,
+    );
+  }
+
+  /**
+   * Offers on the caller's lots (GET /offers?role=seller) — the DENORMALIZED
+   * sellerId column (copied from the lot at create) keeps this a plain
+   * indexed lookup, same as Conversation.sellerId. Served by the (sellerId,
+   * status) plan index.
+   */
+  async findForSeller(
+    sellerId: string,
+    { status, page = 1, limit = 20 }: { status?: OfferStatus; page?: number; limit?: number },
+    tx: Tx = undefined,
+  ): Promise<Paginated<OfferListRow>> {
+    return this.findPage(
+      { sellerId, ...(status !== undefined ? { status } : {}) },
+      { page, limit },
+      tx,
+    );
+  }
+
+  /**
+   * Every offer on ONE lot (GET /lots/:lotId/offers, seller-only upstream) —
+   * newest first, no status narrowing (the seller view is the lot's full
+   * negotiation history). Served by the (lotId, buyerId, createdAt) index.
+   */
+  async findForLot(
+    lotId: string,
+    { page = 1, limit = 20 }: { page?: number; limit?: number },
+    tx: Tx = undefined,
+  ): Promise<Paginated<OfferListRow>> {
+    return this.findPage({ lotId }, { page, limit }, tx);
+  }
+
+  /**
+   * The shared 2-query page read (findMany + count, the app's pagination
+   * contract): newest first with id desc as the deterministic tiebreak
+   * (createdAt can tie across offers — pages must never duplicate/skip rows).
+   * Rows come back with the OFFER_LIST_INCLUDE lot summary for the mapper.
+   */
+  private async findPage(
+    where: Prisma.OfferWhereInput,
+    { page, limit }: { page: number; limit: number },
+    tx: Tx = undefined,
+  ): Promise<Paginated<OfferListRow>> {
+    const client = this.client(tx);
+    const [items, total] = await Promise.all([
+      client.offer.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        include: OFFER_LIST_INCLUDE,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      client.offer.count({ where }),
+    ]);
+    return { items, total, page, limit };
   }
 }

@@ -25,7 +25,7 @@ principles 7, 12; decision D9 flags the legal review).
 - **Testing:** state-machine unit suite (required).
 - **DoD:** suites green.
 
-### OFR-002 — Offers API
+### OFR-002 ✅ — Offers API
 
 **P0 · Phase 6 · Offers · M** — Deps: OFR-001, CHT-003
 

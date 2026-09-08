@@ -334,6 +334,12 @@ type OfferUpdateData = Partial<{
   note: string | null;
 }>;
 
+/** OFR-002 — the one include the offers repository composes
+ * (OFFER_LIST_INCLUDE): the lot summary block every list payload carries. */
+type OfferInclude = { lot?: unknown };
+/** A lot as OFFER_LIST_INCLUDE selects it ({code, title, unitPrice}). */
+type OfferLotSummaryRow = { code: string; title: string; unitPrice: number };
+
 /** Writable scalar subset for the CHT-003 send/read transactions (unread
  * counters also take the { increment } atomic form, like LotUpdateData). */
 type ConversationUpdateData = Partial<{
@@ -1229,35 +1235,73 @@ export class FakePrisma {
     return { ...cloneMessage(row), mediaAsset: asset ? cloneMediaAsset(asset) : null };
   }
 
-  /** Exactly the surface OffersRepository uses (OFR-001). Bare-row reads and
-   * writes; create mirrors the FKs the service path relies on (the lot must
-   * exist — Cascade owner — plus an explicit conversation/parent row). */
+  /** OFFER_LIST_INCLUDE join (OFR-002): the lot summary the list payloads
+   * carry. Without the include the row stays bare (the OFR-001 reads). */
+  private withOfferLot(row: Offer, include?: OfferInclude): Offer & { lot?: OfferLotSummaryRow } {
+    if (!include?.lot) {
+      return cloneOffer(row);
+    }
+    const lot = this.lots.get(row.lotId);
+    if (!lot) {
+      throw new Error(`FakePrisma: offer ${row.id} references a missing lot`);
+    }
+    return {
+      ...cloneOffer(row),
+      lot: { code: lot.code, title: lot.title, unitPrice: lot.unitPrice },
+    };
+  }
+
+  /** Exactly the surface OffersRepository uses (OFR-001 core + OFR-002 list
+   * page reads). Bare-row reads unless OFFER_LIST_INCLUDE's `lot` include is
+   * requested (the list payloads' lot summary join); create mirrors the FKs
+   * the service path relies on (the lot must exist — Cascade owner — plus an
+   * explicit conversation/parent row). */
   readonly offer = {
     findMany: async ({
       where,
       orderBy,
       skip = 0,
       take,
+      include,
     }: {
       where?: OfferWhere;
       orderBy?: OfferOrderBy;
       skip?: number;
       take?: number;
-    }): Promise<Offer[]> =>
+      include?: OfferInclude;
+    }): Promise<Array<Offer & { lot?: OfferLotSummaryRow }>> =>
       sortRows([...this.offers.values()].filter(matchesOfferWhere(where)), orderBy)
         .slice(skip, take !== undefined ? skip + take : undefined)
-        .map(cloneOffer),
+        .map((row) => this.withOfferLot(row, include)),
     count: async ({ where }: { where?: OfferWhere } = {}): Promise<number> =>
       [...this.offers.values()].filter(matchesOfferWhere(where)).length,
-    findUnique: async ({ where }: { where: { id: string } }): Promise<Offer | null> => {
+    findUnique: async ({
+      where,
+      include,
+    }: {
+      where: { id: string };
+      include?: OfferInclude;
+    }): Promise<(Offer & { lot?: OfferLotSummaryRow }) | null> => {
       const found = this.offers.get(where.id);
-      return found ? cloneOffer(found) : null;
+      return found ? this.withOfferLot(found, include) : null;
     },
-    findFirst: async ({ where }: { where?: OfferWhere }): Promise<Offer | null> => {
+    findFirst: async ({
+      where,
+      include,
+    }: {
+      where?: OfferWhere;
+      include?: OfferInclude;
+    }): Promise<(Offer & { lot?: OfferLotSummaryRow }) | null> => {
       const found = [...this.offers.values()].find(matchesOfferWhere(where));
-      return found ? cloneOffer(found) : null;
+      return found ? this.withOfferLot(found, include) : null;
     },
-    create: async ({ data }: { data: OfferCreateData }): Promise<Offer> => {
+    create: async ({
+      data,
+      include,
+    }: {
+      data: OfferCreateData;
+      include?: OfferInclude;
+    }): Promise<Offer & { lot?: OfferLotSummaryRow }> => {
       if (!this.lots.get(data.lotId)) {
         throw new Error(`FakePrisma: offer references missing lot ${data.lotId}`);
       }
@@ -1269,24 +1313,26 @@ export class FakePrisma {
       }
       const row = buildOfferRow(data);
       this.offers.set(row.id, row);
-      return cloneOffer(row);
+      return this.withOfferLot(row, include);
     },
     /** Status-transition write (OFR-001 service): partial scalar update —
      * undefined keys stay untouched, updatedAt moves like Prisma's. */
     update: async ({
       where,
       data,
+      include,
     }: {
       where: { id: string };
       data: OfferUpdateData;
-    }): Promise<Offer> => {
+      include?: OfferInclude;
+    }): Promise<Offer & { lot?: OfferLotSummaryRow }> => {
       const row = this.offers.get(where.id);
       if (!row) {
         throw new Error(`FakePrisma: offer ${where.id} not found`);
       }
       const next = applyOfferUpdate(row, data);
       this.offers.set(row.id, next);
-      return cloneOffer(next);
+      return this.withOfferLot(next, include);
     },
     /** Batch variant over the same predicate shapes (id `in`/`not`, status):
      * unmatched rows contribute 0 to the count, matched rows mutate in place. */

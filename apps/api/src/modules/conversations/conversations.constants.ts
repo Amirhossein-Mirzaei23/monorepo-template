@@ -107,8 +107,19 @@ export const MESSAGES_MAX_LIMIT = 50;
  */
 const faNumberFormat = new Intl.NumberFormat('fa-IR');
 
-function formatTomanFa(amount: number): string {
+/**
+ * fa-IR formatted Toman amount («۱۵۰٬۰۰۰٬۰۰۰ تومان») — exported since OFR-002:
+ * the offers module's ACTION message bodies reuse THIS formatter so every
+ * chat-visible price reads identically (the API keeps its own copy because
+ * messages are written once, server-side — see welcomeMessageBody).
+ */
+export function formatTomanFa(amount: number): string {
   return `${faNumberFormat.format(amount)} تومان`;
+}
+
+/** fa-IR formatted number («۵۰۰») — the quantity half of fa ACTION bodies. */
+export function formatFaNumber(value: number): string {
+  return faNumberFormat.format(value);
 }
 
 export function welcomeMessageBody(title: string, unitPrice: number): string {

@@ -302,6 +302,26 @@ export const markConversationReadResponseDtoSchema = z.object({
   readCount: z.number(),
 });
 
+export const offerLotSummaryDtoSchema = z.object({
+  code: z.string(),
+  title: z.string(),
+  unitPrice: z.number(),
+});
+
+export const createOfferDtoSchema = z.object({
+  lotId: z.string(),
+  quantity: z.number(),
+  unitPrice: z.number(),
+  note: z.string().optional(),
+  conversationId: z.string().optional(),
+});
+
+export const counterOfferDtoSchema = z.object({
+  quantity: z.number(),
+  unitPrice: z.number(),
+  note: z.string().optional(),
+});
+
 export const otpVerifyResponseDtoSchema = z.object({
   accessToken: z.string(),
   user: userResponseDtoSchema,
@@ -465,6 +485,22 @@ export const messagePageDtoSchema = z.object({
   nextCursor: z.string().nullable().optional(),
 });
 
+export const offerResponseDtoSchema = z.object({
+  id: z.string(),
+  lot:   z.object({
+
+    }),
+  quantity: z.number(),
+  unitPrice: z.number(),
+  totalPrice: z.number(),
+  note: z.string().nullable().optional(),
+  status: z.enum(['PENDING', 'COUNTERED', 'ACCEPTED', 'REJECTED', 'CANCELLED', 'EXPIRED']),
+  expiresAt: z.iso.datetime(),
+  decidedAt: z.iso.datetime().nullable().optional(),
+  createdAt: z.iso.datetime(),
+  myRole: z.enum(['buyer', 'seller']),
+});
+
 export const publicSellerProfileDtoSchema = z.object({
   id: z.string(),
   displayName: z.string(),
@@ -577,4 +613,8 @@ export const apiSchemas = {
   MessageResponseDto: messageResponseDtoSchema,
   MessagePageDto: messagePageDtoSchema,
   MarkConversationReadResponseDto: markConversationReadResponseDtoSchema,
+  OfferLotSummaryDto: offerLotSummaryDtoSchema,
+  OfferResponseDto: offerResponseDtoSchema,
+  CreateOfferDto: createOfferDtoSchema,
+  CounterOfferDto: counterOfferDtoSchema,
 } as const;

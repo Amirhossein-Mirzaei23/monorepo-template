@@ -1,7 +1,13 @@
 import { ConflictException } from '@nestjs/common';
 // OfferStatus is used as a VALUE below (transition-table targets), unlike the
 // label maps which only type it.
-import { OfferStatus } from '@prisma/client';
+import { OfferStatus, type LotUnit } from '@prisma/client';
+// Pure cross-module constants (no DI): the fa unit labels are the ONE source
+// the lots module keeps, and the Toman/number formatters are the ONE copy the
+// conversations module keeps for chat-visible copy — importing beats
+// duplicating (duplication is how fa copy drifts).
+import { LOT_UNIT_LABELS_FA } from '../lots/lots.constants';
+import { formatFaNumber, formatTomanFa } from '../conversations/conversations.constants';
 
 /**
  * Persian display labels for the Offer enums (plan §3) — the single source the
@@ -127,9 +133,99 @@ export const OFFER_ERROR_CODES = {
    * money ceiling. */
   PRICE_OUT_OF_RANGE: 'PRICE_OUT_OF_RANGE',
   /** quantity outside lot.minOrderQuantity..lot.availableQuantity at offer
-   * time (card: "quantity within minOrder..availableQuantity at offer time";
-   * OFR-002 revalidates at accept → 409). */
+   * time (card: "quantity within minOrder..availableQuantity at offer time");
+   * on ACCEPT the same code path answers STALE_QUANTITY below — the quantity
+   * was valid when written but the lot has moved since (OFR-002 revalidation). */
   QUANTITY_OUT_OF_RANGE: 'QUANTITY_OUT_OF_RANGE',
   /** note longer than OFFER_NOTE_MAX_LENGTH code points. */
   NOTE_TOO_LONG: 'NOTE_TOO_LONG',
+
+  // --- OFR-002 (Offers API) codes ---
+
+  /** POST /offers without the BUYER hat (403) — the conversations module's
+   * get-or-create gate, same code string so the web renders one copy. */
+  BUYER_REQUIRED: 'BUYER_REQUIRED',
+  /** POST /offers by the lot's own seller (403) — buyer ≠ seller (card). */
+  SELF_OFFER: 'SELF_OFFER',
+  /** Authenticated user without the SELLER hat on the seller-side actions
+   * (counter/accept/reject + the lot-offers listing) — the lots module's
+   * convention code (LOT_ERROR_CODES.SELLER_REQUIRED), same string. */
+  SELLER_REQUIRED: 'SELLER_REQUIRED',
+  /** A seller-side action on an offer whose lot the caller does NOT sell
+   * (403) — known-but-foreign, the CHT-003 NOT_PARTICIPANT precedent. */
+  OFFER_NOT_SELLER: 'OFFER_NOT_SELLER',
+  /** POST /offers/:id/cancel by anyone but the offer's own buyer (403). */
+  OFFER_NOT_BUYER: 'OFFER_NOT_BUYER',
+  /** A mutating action on a PENDING offer past `expiresAt` (409). The EXPIRED
+   * flip is persisted lazily before answering (documented on the service) —
+   * the 409 says "this negotiation deadline passed". */
+  OFFER_EXPIRED: 'OFFER_EXPIRED',
+  /** accept() against a lot whose CURRENT availableQuantity no longer covers
+   * the offered quantity (409) — the OFR-002 "revalidate, 409 w/ fa message"
+   * rule (the message carries both counts; fa copy renders web-side). */
+  STALE_QUANTITY: 'STALE_QUANTITY',
+  /** POST /offers with a conversationId that does not exist OR is not a
+   * thread the caller owns as the BUYER (403) — deliberately uniform (no
+   * existence oracle for unguessable conversation ids; MEDIA_NOT_OWNED's
+   * documented precedent). */
+  CONVERSATION_NOT_YOURS: 'CONVERSATION_NOT_YOURS',
+  /** POST /offers whose conversationId references ANOTHER lot's thread
+   * (400) — a client bug, not a probeable resource. */
+  CONVERSATION_LOT_MISMATCH: 'CONVERSATION_LOT_MISMATCH',
 } as const;
+
+/**
+ * Per-route throttle on the offer WRITE endpoints (POST /offers,
+ * POST /offers/:id/{counter|accept|reject|cancel}) — backend.md: offers are a
+ * rate-limit-sensitive route. Mirrors MESSAGE_SEND_THROTTLE's shape (30/min),
+ * the same per-IP approximation every other throttled route in this app uses.
+ */
+export const OFFER_WRITE_THROTTLE = {
+  limit: 30,
+  ttlMs: 60_000,
+} as const;
+
+/**
+ * OFR-002 — the buyer's view of the requester's side on offer responses
+ * (`myRole` in OfferResponseDto): the caller made the offer (BUYER side) or
+ * owns the lot it was made on (SELLER side).
+ */
+export const OFFER_MY_ROLES = ['buyer', 'seller'] as const;
+
+export type OfferMyRole = (typeof OFFER_MY_ROLES)[number];
+
+/**
+ * The ACTION message bodies (OFR-002) — CONTENT copy in fa by design (the
+ * same documented exception as the SYSTEM welcome message: these bodies are
+ * stored in the DB and shown in the thread, so they are Persian; all other
+ * API messages stay English machine copy + a `code`).
+ *
+ * STRUCTURED PAYLOADS ARE DELIBERATELY ABSENT: Message has no offerId column
+ * and feature #19 (structured actions, CHT-008's architecture note) owns the
+ * machine-readable payload format — for now the message is TEXT-in-ACTION
+ * (type ACTION, body = the fa template below, sender = the acting party).
+ * When #19 lands, add its payload reference here without changing the body.
+ *
+ * The price shown is the offer's totalPrice (the headline amount — the card's
+ * example «پیشنهاد ۱۵۰ میلیون برای ۵۰۰ عدد» reads as a total, and the unit
+ * price stays the negotiation key in the offer payloads themselves). The
+ * formatting reuses the conversations module's fa-IR formatters (the welcome
+ * message approach) so prices read identically across the thread.
+ */
+export function offerActionMessageBody(
+  totalPrice: number,
+  quantity: number,
+  unit: LotUnit,
+): string {
+  return `پیشنهاد ${formatTomanFa(totalPrice)} برای ${formatFaNumber(quantity)} ${LOT_UNIT_LABELS_FA[unit]}`;
+}
+
+/** accept() posts this into the tied thread (sender = the seller). */
+export function offerAcceptedActionBody(): string {
+  return 'پیشنهاد پذیرفته شد';
+}
+
+/** reject() posts this into the tied thread (sender = the seller). */
+export function offerRejectedActionBody(): string {
+  return 'پیشنهاد رد شد';
+}

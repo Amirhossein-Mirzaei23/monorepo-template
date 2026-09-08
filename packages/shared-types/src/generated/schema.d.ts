@@ -624,6 +624,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/offers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List my offers by side — ?role=buyer|seller (required) with optional ?status= tab and standard pagination */
+        get: operations["OffersController_list"];
+        put?: never;
+        /** Make an offer on an ACTIVE lot as a buyer (403 BUYER_REQUIRED/SELF_OFFER/CONVERSATION_NOT_YOURS, 400 CONVERSATION_LOT_MISMATCH/price/note, 404 unknown lot, 409 LOT_NOT_ACTIVE/QUANTITY_OUT_OF_RANGE, 429 over 30/min) */
+        post: operations["OffersController_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/offers/{id}/counter": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Counter an offer on my lot as its seller (403 role-gated, 409 OFFER_EXPIRED/ILLEGAL_TRANSITION/LOT_NOT_ACTIVE/stale terms, 400 price/note) */
+        post: operations["OffersController_counter"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/offers/{id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept an offer on my lot as its seller (403 role-gated, 409 OFFER_EXPIRED/LOT_NOT_ACTIVE/STALE_QUANTITY/ILLEGAL_TRANSITION) */
+        post: operations["OffersController_accept"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/offers/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject an offer on my lot as its seller (403 role-gated, 409 OFFER_EXPIRED/ILLEGAL_TRANSITION) */
+        post: operations["OffersController_reject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/offers/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Withdraw my own offer as the buyer who made it (403 OFFER_NOT_BUYER, 409 OFFER_EXPIRED/ILLEGAL_TRANSITION) */
+        post: operations["OffersController_cancel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lots/{lotId}/offers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the offers on my lot (owner only; 403 SELLER_REQUIRED without the seller hat, 404 unknown or foreign lot) */
+        get: operations["LotOffersController_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2110,6 +2213,121 @@ export interface components {
              */
             readCount: number;
         };
+        OfferLotSummaryDto: {
+            /**
+             * @description Public, non-sequential lot code — the only lot reference the offer payload carries
+             * @example 7Kd2Qm9x
+             */
+            code: string;
+            /** @example عمده پیراهن مردانه — ۵۰ عدد */
+            title: string;
+            /**
+             * @description The lot’s asking per-unit price — the baseline the negotiation moves against
+             * @example 2250000
+             */
+            unitPrice: number;
+        };
+        OfferResponseDto: {
+            /**
+             * @description Offer id — the :id of every action route
+             * @example clx…cuid
+             */
+            id: string;
+            /** @description The offered lot’s public summary */
+            lot: components["schemas"]["OfferLotSummaryDto"];
+            /**
+             * @description Offered piece count
+             * @example 500
+             */
+            quantity: number;
+            /**
+             * @description Negotiated per-unit Toman price — the number the counters move
+             * @example 300000
+             */
+            unitPrice: number;
+            /**
+             * @description Derived on write server-side: unitPrice × quantity (the headline amount)
+             * @example 150000000
+             */
+            totalPrice: number;
+            /**
+             * @description The maker’s optional note (null when absent)
+             * @example لطفاً تا آخر هفته ارسال شود
+             */
+            note?: string | null;
+            /**
+             * @example PENDING
+             * @enum {string}
+             */
+            status: "PENDING" | "COUNTERED" | "ACCEPTED" | "REJECTED" | "CANCELLED" | "EXPIRED";
+            /**
+             * Format: date-time
+             * @description Decision deadline (+72 h from creation, fresh on every counter)
+             * @example 2026-09-08T10:00:00.000Z
+             */
+            expiresAt: string;
+            /**
+             * Format: date-time
+             * @description Decision stamp — set by every legal transition (all leave PENDING)
+             * @example 2026-09-05T12:00:00.000Z
+             */
+            decidedAt?: string | null;
+            /**
+             * Format: date-time
+             * @example 2026-09-05T10:00:00.000Z
+             */
+            createdAt: string;
+            /**
+             * @description The CALLER’s side of this offer — buyer: I made it; seller: my lot received it
+             * @example buyer
+             * @enum {string}
+             */
+            myRole: "buyer" | "seller";
+        };
+        CreateOfferDto: {
+            /**
+             * @description The lot to offer on — must be ACTIVE (409 LOT_NOT_ACTIVE) and not the caller’s own (403 SELF_OFFER)
+             * @example clx…cuid
+             */
+            lotId: string;
+            /**
+             * @description Offered piece count — validated against lot.minOrderQuantity..availableQuantity AT OFFER TIME (409 QUANTITY_OUT_OF_RANGE)
+             * @example 500
+             */
+            quantity: number;
+            /**
+             * @description Negotiated per-unit Toman price (1..2B, integer) — totalPrice is derived server-side (unitPrice × quantity) and shares the money ceiling
+             * @example 300000
+             */
+            unitPrice: number;
+            /**
+             * @description Optional free-text note — ≤ 500 characters (code points, service-checked); trimmed, empty → null
+             * @example لطفاً تا آخر هفته ارسال شود
+             */
+            note?: string;
+            /**
+             * @description Optional negotiation thread to post the ACTION message into — must exist AND be owned by the caller as the buyer (403 CONVERSATION_NOT_YOURS for unknown/foreign, uniform: no existence oracle) AND belong to the same lot (400 CONVERSATION_LOT_MISMATCH)
+             * @example clx…cuid
+             */
+            conversationId?: string;
+        };
+        CounterOfferDto: {
+            /**
+             * @description Countered piece count — re-validated against the CURRENT lot bounds (409 when stale)
+             * @example 500
+             */
+            quantity: number;
+            /**
+             * @description Countered per-unit Toman price (1..2B integer) — totalPrice derived server-side
+             * @example 330000
+             */
+            unitPrice: number;
+            /**
+             * @description Optional free-text note — ≤ 500 characters (code points, service-checked)
+             * @example با این قیمت موافقم ولی تعداد کمتر
+             */
+            note?: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -3192,6 +3410,172 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["MarkConversationReadResponseDto"];
                 };
+            };
+        };
+    };
+    OffersController_list: {
+        parameters: {
+            query: {
+                page?: components["schemas"]["Object"];
+                limit?: components["schemas"]["Object"];
+                sort?: string;
+                /** @description Which side of the negotiation to list — buyer: offers I made; seller: offers on my lots */
+                role: "buyer" | "seller";
+                /** @description Optional single-status tab filter (omitted = every status) */
+                status?: "PENDING" | "COUNTERED" | "ACCEPTED" | "REJECTED" | "CANCELLED" | "EXPIRED";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated<OfferResponseDto>: { items, total, page, limit } — role=buyer: offers I made; role=seller: offers on my lots; newest first; myRole mirrors the requested role */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    OffersController_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateOfferDto"];
+            };
+        };
+        responses: {
+            /** @description The created PENDING offer (+72 h expiry); when tied to a conversation, its ACTION message + thread lockstep committed in the same transaction */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OfferResponseDto"];
+                };
+            };
+        };
+    };
+    OffersController_counter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CounterOfferDto"];
+            };
+        };
+        responses: {
+            /** @description The NEW PENDING child offer (parentId → the countered row, own fresh 72 h expiry); the countered row flips COUNTERED and the ACTION message lands in the tied thread — all in one transaction */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OfferResponseDto"];
+                };
+            };
+        };
+    };
+    OffersController_accept: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The ACCEPTED offer — the buyer’s other PENDING offers on the lot auto-REJECTED in the same transaction; this acceptance is the DEAL-002 deal-creation eligibility */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OfferResponseDto"];
+                };
+            };
+        };
+    };
+    OffersController_reject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The REJECTED offer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OfferResponseDto"];
+                };
+            };
+        };
+    };
+    OffersController_cancel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The CANCELLED offer (silent — no ACTION message) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OfferResponseDto"];
+                };
+            };
+        };
+    };
+    LotOffersController_list: {
+        parameters: {
+            query?: {
+                page?: components["schemas"]["Object"];
+                limit?: components["schemas"]["Object"];
+                sort?: string;
+            };
+            header?: never;
+            path: {
+                lotId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated<OfferResponseDto>: { items, total, page, limit } — every offer on this lot, newest first, myRole = seller */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
