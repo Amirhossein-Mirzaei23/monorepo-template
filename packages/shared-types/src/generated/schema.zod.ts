@@ -322,6 +322,20 @@ export const counterOfferDtoSchema = z.object({
   note: z.string().optional(),
 });
 
+export const dealLotSummaryDtoSchema = z.object({
+  code: z.string(),
+  title: z.string(),
+});
+
+export const dealEventViewDtoSchema = z.object({
+  id: z.string(),
+  actorRole: z.enum(['buyer', 'seller']).nullable(),
+  fromStatus: z.enum(['NEGOTIATING', 'AGREED', 'PAYMENT_PENDING', 'PAID', 'PREPARING', 'SHIPPED', 'DELIVERED', 'COMPLETED', 'CANCELLED', 'DISPUTED']),
+  toStatus: z.enum(['NEGOTIATING', 'AGREED', 'PAYMENT_PENDING', 'PAID', 'PREPARING', 'SHIPPED', 'DELIVERED', 'COMPLETED', 'CANCELLED', 'DISPUTED']),
+  note: z.string().nullable(),
+  createdAt: z.iso.datetime(),
+});
+
 export const createDealDtoSchema = z.object({
   offerId: z.string().optional(),
   conversationId: z.string().optional(),
@@ -331,11 +345,6 @@ export const createDealDtoSchema = z.object({
   paymentMethod: z.enum(['CASH', 'CARD_TO_CARD', 'BANK_TRANSFER', 'CHEQUE']),
   deliveryNote: z.string().optional(),
   paymentTermsNote: z.string().optional(),
-});
-
-export const dealLotSummaryDtoSchema = z.object({
-  code: z.string(),
-  title: z.string(),
 });
 
 export const transitionDealDtoSchema = z.object({
@@ -536,16 +545,31 @@ export const dealResponseDtoSchema = z.object({
   unitPrice: z.number(),
   totalPrice: z.number(),
   deliveryMethod: z.enum(['PICKUP', 'SELLER_SHIPS', 'BUYER_TRANSPORT', 'CARRIER']),
-  deliveryNote:   z.object({
-
-    }).nullable(),
+  deliveryNote: z.string().nullable(),
   paymentMethod: z.enum(['CASH', 'CARD_TO_CARD', 'BANK_TRANSFER', 'CHEQUE']),
-  paymentTermsNote:   z.object({
-
-    }).nullable(),
+  paymentTermsNote: z.string().nullable(),
   status: z.enum(['NEGOTIATING', 'AGREED', 'PAYMENT_PENDING', 'PAID', 'PREPARING', 'SHIPPED', 'DELIVERED', 'COMPLETED', 'CANCELLED', 'DISPUTED']),
   createdAt: z.iso.datetime(),
   myRole: z.enum(['buyer', 'seller']),
+});
+
+export const dealDetailResponseDtoSchema = z.object({
+  id: z.string(),
+  code: z.string(),
+  lot:   z.object({
+
+    }),
+  quantity: z.number(),
+  unitPrice: z.number(),
+  totalPrice: z.number(),
+  deliveryMethod: z.enum(['PICKUP', 'SELLER_SHIPS', 'BUYER_TRANSPORT', 'CARRIER']),
+  deliveryNote: z.string().nullable(),
+  paymentMethod: z.enum(['CASH', 'CARD_TO_CARD', 'BANK_TRANSFER', 'CHEQUE']),
+  paymentTermsNote: z.string().nullable(),
+  status: z.enum(['NEGOTIATING', 'AGREED', 'PAYMENT_PENDING', 'PAID', 'PREPARING', 'SHIPPED', 'DELIVERED', 'COMPLETED', 'CANCELLED', 'DISPUTED']),
+  createdAt: z.iso.datetime(),
+  myRole: z.enum(['buyer', 'seller']),
+  events: z.array(dealEventViewDtoSchema),
 });
 
 export const publicSellerProfileDtoSchema = z.object({
@@ -664,9 +688,11 @@ export const apiSchemas = {
   OfferResponseDto: offerResponseDtoSchema,
   CreateOfferDto: createOfferDtoSchema,
   CounterOfferDto: counterOfferDtoSchema,
-  CreateDealDto: createDealDtoSchema,
   DealLotSummaryDto: dealLotSummaryDtoSchema,
   DealResponseDto: dealResponseDtoSchema,
+  DealEventViewDto: dealEventViewDtoSchema,
+  DealDetailResponseDto: dealDetailResponseDtoSchema,
+  CreateDealDto: createDealDtoSchema,
   TransitionDealDto: transitionDealDtoSchema,
   CancelDealDto: cancelDealDtoSchema,
 } as const;

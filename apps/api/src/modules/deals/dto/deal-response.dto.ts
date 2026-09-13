@@ -82,6 +82,7 @@ export class DealResponseDto {
   @ApiProperty({
     example: 'بسته‌بندی کارتنی',
     nullable: true,
+    type: String,
     description: 'The locked delivery arrangement (null when the payload sent none)',
   })
   deliveryNote!: string | null;
@@ -92,6 +93,7 @@ export class DealResponseDto {
   @ApiProperty({
     example: '۳ قسط در سه ماه',
     nullable: true,
+    type: String,
     description: 'The locked payment terms (null when the payload sent none)',
   })
   paymentTermsNote!: string | null;

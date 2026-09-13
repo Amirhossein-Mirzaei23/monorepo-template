@@ -1359,3 +1359,141 @@ describe('DealsService DEAL-003 — transitionFromCode / cancelFromCode / confir
     });
   });
 });
+
+describe('DealsService DEAL-004 — listMine / detailByCode', () => {
+  let fake: FakePrisma;
+  let service: DealsService;
+  let repository: DealsRepository;
+  let lotId: string;
+  // Real seeded users: listMine/detailByCode run behind requireUser.
+  let buyerId: string;
+  let sellerId: string;
+
+  beforeEach(() => {
+    fake = new FakePrisma();
+    repository = new DealsRepository(fake as unknown as PrismaService);
+    service = new DealsService(
+      repository,
+      fake as unknown as PrismaService,
+      new LotsRepository(fake as unknown as PrismaService),
+      new OffersRepository(fake as unknown as PrismaService),
+      new ConversationsRepository(fake as unknown as PrismaService),
+      new UsersRepository(fake as unknown as PrismaService),
+    );
+    buyerId = fake.seedUser({
+      phone: `0912${Math.random().toString().slice(2, 9)}`,
+      name: 'خریدار',
+      accountRoles: [AccountRole.BUYER],
+    }).id;
+    sellerId = fake.seedUser({
+      phone: `0913${Math.random().toString().slice(2, 9)}`,
+      name: 'فروشنده',
+      accountRoles: [AccountRole.SELLER],
+    }).id;
+    lotId = fake.seedLot({
+      sellerId: sellerId,
+      categoryId: 'cat-1',
+      title: 'عمده پیراهن مردانه — ۵۰ عدد',
+      quantity: 50,
+      availableQuantity: 30,
+      minOrderQuantity: 10,
+      pricingType: PricingType.FIXED,
+      totalPrice: 50_000_000,
+      unitPrice: 1_000_000,
+      condition: LotCondition.GRADE_A,
+      liquidationReason: LiquidationReason.OVERSTOCK,
+      province: 'tehran',
+      city: 'tehran',
+      status: LotStatus.ACTIVE,
+      expiresAt: new Date(Date.now() + 30 * DAY_MS),
+    }).id;
+  });
+
+  const seedDealAt = (
+    status: DealStatus,
+    overrides: Partial<Parameters<FakePrisma['seedDeal']>[0]> = {},
+  ) =>
+    fake.seedDeal({
+      lotId,
+      buyerId: buyerId,
+      sellerId: sellerId,
+      quantity: 10,
+      unitPrice: 1_000_000,
+      totalPrice: 10_000_000,
+      deliveryMethod: DeliveryMethod.SELLER_SHIPS,
+      paymentMethod: PaymentMethodRecorded.CARD_TO_CARD,
+      status,
+      ...overrides,
+    });
+
+  it('listMine: role=buyer answers the buyer’s deals with myRole buyer (+ lot summary + status chip filter)', async () => {
+    const live = seedDealAt(DealStatus.NEGOTIATING);
+    seedDealAt(DealStatus.CANCELLED);
+    const lot = (await fake.lot.findUnique({ where: { id: lotId } }))!;
+
+    const page = await service.listMine(buyerId, { role: 'buyer', page: 1, limit: 20 });
+    expect(page.total).toBe(2);
+    expect(page.items).toHaveLength(2);
+    for (const item of page.items) {
+      expect(item.myRole).toBe('buyer');
+      expect(item.lot).toEqual({ code: lot.code, title: lot.title });
+    }
+    // Most-recent-activity first is the page order (both seeded now — stable
+    // assertions stay on membership, not order).
+
+    const filtered = await service.listMine(buyerId, {
+      role: 'buyer',
+      status: DealStatus.CANCELLED,
+      page: 1,
+      limit: 20,
+    });
+    expect(filtered.total).toBe(1);
+    expect(filtered.items[0]?.status).toBe(DealStatus.CANCELLED);
+    expect(live).toBeDefined();
+  });
+
+  it('listMine: role=seller answers the lot owner’s side with myRole seller and never the buyer arm', async () => {
+    seedDealAt(DealStatus.NEGOTIATING);
+
+    const sellerPage = await service.listMine(sellerId, { role: 'seller', page: 1, limit: 20 });
+    expect(sellerPage.total).toBe(1);
+    expect(sellerPage.items[0]?.myRole).toBe('seller');
+
+    // Another account sees nothing on either arm (a user row, but no deals).
+    const strangerId = fake.seedUser({
+      phone: `0915${Math.random().toString().slice(2, 9)}`,
+      name: 'غریبه',
+    }).id;
+    const stranger = await service.listMine(strangerId, { role: 'buyer', page: 1, limit: 20 });
+    expect(stranger.total).toBe(0);
+  });
+
+  it('detailByCode: the allowlisted deal + the timeline with actorRole resolved server-side', async () => {
+    const deal = seedDealAt(DealStatus.NEGOTIATING);
+    // One real move: the seller agrees (the event's actorId is the seller).
+    await service.transition(deal, DealStatus.AGREED, 'SELLER', { actorId: sellerId });
+
+    const detail = await service.detailByCode(deal.code, buyerId);
+
+    expect(detail.status).toBe(DealStatus.AGREED);
+    expect(detail.myRole).toBe('buyer');
+    expect(detail.events).toHaveLength(1);
+    expect(detail.events[0]).toMatchObject({
+      actorRole: 'seller',
+      fromStatus: DealStatus.NEGOTIATING,
+      toStatus: DealStatus.AGREED,
+    });
+    // No raw ids leak through the timeline view.
+    expect(JSON.stringify(detail.events[0])).not.toContain(sellerId);
+  });
+
+  it('detailByCode: the participant gate (404 unknown, 403 outsider)', async () => {
+    const deal = seedDealAt(DealStatus.NEGOTIATING);
+
+    const missing = await rejectsOf(() => service.detailByCode('no-such-code', buyerId));
+    expect(errorCode(missing)).toBe(DEAL_ERROR_CODES.DEAL_NOT_FOUND);
+
+    const foreign = await rejectsOf(() => service.detailByCode(deal.code, 'someone-else'));
+    expect(errorCode(foreign)).toBe(DEAL_ERROR_CODES.DEAL_NOT_PARTICIPANT);
+  });
+});

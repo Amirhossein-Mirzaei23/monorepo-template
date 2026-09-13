@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DealStatus, type Deal, type DealEvent, type Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { Paginated } from '../../common/dto/pagination-query.dto';
 import type { DealResponseRow } from './dto/deal-response.dto';
 
 type Tx = Prisma.TransactionClient | undefined;
@@ -70,6 +71,61 @@ export class DealsRepository {
       where: { code },
       include: { lot: { select: { code: true, title: true } } },
     });
+  }
+
+  /**
+   * DEAL-004 — the role-aware page reads behind GET /deals (the offers
+   * findForBuyer/findForSeller pair, mirrored): buyerId/sellerId arm +
+   * optional status chip, served by the (buyerId, updatedAt) /
+   * (sellerId, updatedAt) plan indexes. Rows come back with the lot summary
+   * joined for the response mapper.
+   */
+  async findForBuyer(
+    buyerId: string,
+    { status, page = 1, limit = 20 }: { status?: DealStatus; page?: number; limit?: number },
+    tx: Tx = undefined,
+  ): Promise<Paginated<DealResponseRow>> {
+    return this.findPage(
+      { buyerId, ...(status !== undefined ? { status } : {}) },
+      { page, limit },
+      tx,
+    );
+  }
+
+  async findForSeller(
+    sellerId: string,
+    { status, page = 1, limit = 20 }: { status?: DealStatus; page?: number; limit?: number },
+    tx: Tx = undefined,
+  ): Promise<Paginated<DealResponseRow>> {
+    return this.findPage(
+      { sellerId, ...(status !== undefined ? { status } : {}) },
+      { page, limit },
+      tx,
+    );
+  }
+
+  /**
+   * The shared 2-query page read (findMany + count): most-recent-activity
+   * first (updatedAt desc — a deal you just moved jumps to the top) with id
+   * desc as the deterministic tiebreak.
+   */
+  private async findPage(
+    where: Prisma.DealWhereInput,
+    { page, limit }: { page: number; limit: number },
+    tx: Tx = undefined,
+  ): Promise<Paginated<DealResponseRow>> {
+    const client = this.client(tx);
+    const [items, total] = await Promise.all([
+      client.deal.findMany({
+        where,
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+        skip: (page - 1) * limit,
+        take: limit,
+        include: { lot: { select: { code: true, title: true } } },
+      }),
+      client.deal.count({ where }),
+    ]);
+    return { items, total, page, limit };
   }
 
   /**

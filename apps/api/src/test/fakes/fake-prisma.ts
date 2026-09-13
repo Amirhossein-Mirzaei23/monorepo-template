@@ -355,8 +355,25 @@ type OfferInclude = { lot?: unknown };
 type OfferLotSummaryRow = { code: string; title: string; unitPrice: number };
 
 /** Exactly the surface DealsRepository composes (DEAL-001): the public-code
- * OR id lookup, the create/update writes. */
-type DealWhere = { id?: string; code?: string };
+ * OR id lookup, the create/update writes; DEAL-004 adds the list-page arms
+ * (buyerId/sellerId/status). */
+type DealWhere = {
+  id?: string;
+  code?: string;
+  buyerId?: string;
+  sellerId?: string;
+  status?: DealStatus;
+};
+
+/** Deal list matcher (DEAL-004): every PROVIDED predicate must hold. */
+function matchesDealWhere(where: DealWhere | undefined): (row: Deal) => boolean {
+  return (row) =>
+    (where?.id === undefined || row.id === where.id) &&
+    (where?.code === undefined || row.code === where.code) &&
+    (where?.buyerId === undefined || row.buyerId === where.buyerId) &&
+    (where?.sellerId === undefined || row.sellerId === where.sellerId) &&
+    (where?.status === undefined || row.status === where.status);
+}
 /** Create payload: required business scalars; status/stamps take the DB
  * defaults (NEGOTIATING, no stage stamps yet). */
 type DealCreateData = {
@@ -1413,7 +1430,39 @@ export class FakePrisma {
    * — DEAL-002 owns response payloads). Create mirrors the FKs the service
    * path relies on (the lot must exist — Cascade owner — plus explicit
    * offer/conversation rows when linked). */
+  /** The deal lot-summary join (DEAL-003/004): {code, title} for the response
+   * mapper. Real Prisma returns the relation for a live FK; a missing lot
+   * means a broken fixture, so the summary is simply absent (no fabrication). */
+  private withDealLot(
+    row: Deal,
+    include?: { lot?: { select?: { code?: boolean; title?: boolean } } },
+  ): Deal & { lot?: { code: string; title: string } } {
+    if (!include?.lot) {
+      return row;
+    }
+    const lot = this.lots.get(row.lotId);
+    return lot ? { ...row, lot: { code: lot.code, title: lot.title } } : row;
+  }
+
   readonly deal = {
+    findMany: async ({
+      where,
+      orderBy,
+      skip = 0,
+      take,
+      include,
+    }: {
+      where?: DealWhere;
+      orderBy?: Record<string, 'asc' | 'desc'> | Record<string, 'asc' | 'desc'>[];
+      skip?: number;
+      take?: number;
+      include?: { lot?: { select?: { code?: boolean; title?: boolean } } };
+    }): Promise<Array<Deal & { lot?: { code: string; title: string } }>> =>
+      sortRows([...this.deals.values()].filter(matchesDealWhere(where)), orderBy)
+        .slice(skip, take !== undefined ? skip + take : undefined)
+        .map((row) => this.withDealLot(cloneDeal(row), include)),
+    count: async ({ where }: { where?: DealWhere } = {}): Promise<number> =>
+      [...this.deals.values()].filter(matchesDealWhere(where)).length,
     findUnique: async ({
       where,
       include,
@@ -1429,22 +1478,7 @@ export class FakePrisma {
       } else if (where.code !== undefined) {
         found = [...this.deals.values()].find((row) => row.code === where.code);
       }
-      if (!found) {
-        return null;
-      }
-      const row = cloneDeal(found);
-      if (include?.lot) {
-        // Real Prisma returns the relation for a live FK; a missing lot means
-        // a broken fixture, so the summary is simply absent (no fabrication).
-        const lot = this.lots.get(row.lotId);
-        if (lot) {
-          (row as Deal & { lot?: { code: string; title: string } }).lot = {
-            code: lot.code,
-            title: lot.title,
-          };
-        }
-      }
-      return row;
+      return found ? this.withDealLot(cloneDeal(found), include) : null;
     },
     create: async ({ data }: { data: DealCreateData }): Promise<Deal> => {
       if (!this.lots.get(data.lotId)) {

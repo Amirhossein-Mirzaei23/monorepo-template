@@ -734,7 +734,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List my deals by side — ?role=buyer|seller (required) with optional ?status= chip filter and standard pagination */
+        get: operations["DealsController_list"];
         put?: never;
         /** Create a deal as a buyer from an accepted offer (offerId) or a fixed-price conversation (conversationId) — 403 BUYER_REQUIRED/OFFER_NOT_BUYER/CONVERSATION_NOT_YOURS, 400 provenance/terms, 404 unknown offer, 409 lot/offer state or quantity, 429 over 30/min */
         post: operations["DealsController_create"];
@@ -789,6 +790,23 @@ export interface paths {
         put?: never;
         /** As the buyer, announce «پرداخت کردم» on a PAYMENT_PENDING deal (404 DEAL_NOT_FOUND, 403 DEAL_NOT_PARTICIPANT/PAYMENT_CONFIRM_BUYER_ONLY, 409 PAYMENT_NOT_PENDING/PAYMENT_ALREADY_CONFIRMED) */
         post: operations["DealsController_paymentConfirm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deals/{code}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Fetch one deal I participate in, by its public code, with the full timeline (404 DEAL_NOT_FOUND, 403 DEAL_NOT_PARTICIPANT) */
+        get: operations["DealsController_detail"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2396,50 +2414,6 @@ export interface components {
              */
             note?: string;
         };
-        CreateDealDto: {
-            /**
-             * @description Path (a): an ACCEPTED offer of the caller — its quantity/unitPrice are snapshotted onto the deal and the payload may only confirm them (400 OFFER_TERMS_MISMATCH). Mutually exclusive with conversationId (400)
-             * @example clx…cuid
-             */
-            offerId?: string;
-            /**
-             * @description Path (b): the caller’s own negotiation thread — FIXED-price lots only (409 LOT_NOT_FIXED_PRICE); the price locks to lot.unitPrice. Unknown and foreign threads answer the uniform 403 CONVERSATION_NOT_YOURS. Mutually exclusive with offerId (400)
-             * @example clx…cuid
-             */
-            conversationId?: string;
-            /**
-             * @description Dealt piece count — on the offer path it MUST equal offer.quantity; on the quick path it is the buyer’s choice, validated 1..availableQuantity (409)
-             * @example 500
-             */
-            quantity: number;
-            /**
-             * @description Optional price CONFIRMATION echo — on the offer path it must equal offer.unitPrice, on the quick path lot.unitPrice (400 on disagreement); the deal’s actual price is always snapshotted server-side and totalPrice is derived (unitPrice × quantity)
-             * @example 300000
-             */
-            unitPrice?: number;
-            /**
-             * @description How the goods change hands — recorded terms (plan §3)
-             * @example SELLER_SHIPS
-             * @enum {string}
-             */
-            deliveryMethod: "PICKUP" | "SELLER_SHIPS" | "BUYER_TRANSPORT" | "CARRIER";
-            /**
-             * @description How payment happened — RECORDED ONLY (plan §3, D9): no gateway, no wallet, no escrow
-             * @example CARD_TO_CARD
-             * @enum {string}
-             */
-            paymentMethod: "CASH" | "CARD_TO_CARD" | "BANK_TRANSFER" | "CHEQUE";
-            /**
-             * @description Optional free-text delivery arrangement — ≤ 500 characters (code points, service-checked); trimmed, empty → null
-             * @example لطفاً تا آخر هفته ارسال شود
-             */
-            deliveryNote?: string;
-            /**
-             * @description Optional free-text payment terms — ≤ 500 characters (code points, service-checked); trimmed, empty → null
-             * @example ۳ قسط در سه ماه
-             */
-            paymentTermsNote?: string;
-        };
         DealLotSummaryDto: {
             /**
              * @description Public, non-sequential lot code — the only lot reference the deal payload carries
@@ -2486,7 +2460,7 @@ export interface components {
              * @description The locked delivery arrangement (null when the payload sent none)
              * @example بسته‌بندی کارتنی
              */
-            deliveryNote: Record<string, never> | null;
+            deliveryNote: string | null;
             /**
              * @example CARD_TO_CARD
              * @enum {string}
@@ -2496,7 +2470,7 @@ export interface components {
              * @description The locked payment terms (null when the payload sent none)
              * @example ۳ قسط در سه ماه
              */
-            paymentTermsNote: Record<string, never> | null;
+            paymentTermsNote: string | null;
             /**
              * @example NEGOTIATING
              * @enum {string}
@@ -2513,6 +2487,143 @@ export interface components {
              * @enum {string}
              */
             myRole: "buyer" | "seller";
+        };
+        DealEventViewDto: {
+            /** @example clx…cuid */
+            id: string;
+            /**
+             * @description The acting side, resolved server-side from the actor id (null = system)
+             * @enum {string|null}
+             */
+            actorRole: "buyer" | "seller" | null;
+            /**
+             * @description Status before the move (birth event repeats it)
+             * @enum {string}
+             */
+            fromStatus: "NEGOTIATING" | "AGREED" | "PAYMENT_PENDING" | "PAID" | "PREPARING" | "SHIPPED" | "DELIVERED" | "COMPLETED" | "CANCELLED" | "DISPUTED";
+            /** @enum {string} */
+            toStatus: "NEGOTIATING" | "AGREED" | "PAYMENT_PENDING" | "PAID" | "PREPARING" | "SHIPPED" | "DELIVERED" | "COMPLETED" | "CANCELLED" | "DISPUTED";
+            /**
+             * @description The fa note the move carried (creation + payment announcements, reasons)
+             * @example معامله ایجاد شد #9Xk2Qm7b
+             */
+            note: string | null;
+            /**
+             * Format: date-time
+             * @example 2026-09-05T10:00:00.000Z
+             */
+            createdAt: string;
+        };
+        DealDetailResponseDto: {
+            /**
+             * @description Deal id — internal; the :code is the URL handle
+             * @example clx…cuid
+             */
+            id: string;
+            /**
+             * @description Public, non-sequential code (nanoid-8 scheme) — the deal’s URL id
+             * @example 9Xk2Qm7b
+             */
+            code: string;
+            /** @description The deal’s lot — public summary */
+            lot: components["schemas"]["DealLotSummaryDto"];
+            /**
+             * @description Dealt piece count (the creation snapshot)
+             * @example 500
+             */
+            quantity: number;
+            /**
+             * @description Agreed per-unit Toman price (the creation snapshot — lot edits never mutate it)
+             * @example 300000
+             */
+            unitPrice: number;
+            /**
+             * @description Derived on write server-side: unitPrice × quantity (the headline amount)
+             * @example 150000000
+             */
+            totalPrice: number;
+            /**
+             * @example SELLER_SHIPS
+             * @enum {string}
+             */
+            deliveryMethod: "PICKUP" | "SELLER_SHIPS" | "BUYER_TRANSPORT" | "CARRIER";
+            /**
+             * @description The locked delivery arrangement (null when the payload sent none)
+             * @example بسته‌بندی کارتنی
+             */
+            deliveryNote: string | null;
+            /**
+             * @example CARD_TO_CARD
+             * @enum {string}
+             */
+            paymentMethod: "CASH" | "CARD_TO_CARD" | "BANK_TRANSFER" | "CHEQUE";
+            /**
+             * @description The locked payment terms (null when the payload sent none)
+             * @example ۳ قسط در سه ماه
+             */
+            paymentTermsNote: string | null;
+            /**
+             * @example NEGOTIATING
+             * @enum {string}
+             */
+            status: "NEGOTIATING" | "AGREED" | "PAYMENT_PENDING" | "PAID" | "PREPARING" | "SHIPPED" | "DELIVERED" | "COMPLETED" | "CANCELLED" | "DISPUTED";
+            /**
+             * Format: date-time
+             * @example 2026-09-05T10:00:00.000Z
+             */
+            createdAt: string;
+            /**
+             * @description The CALLER’s side of this deal — buyer on creation; seller views come via DEAL-003
+             * @example buyer
+             * @enum {string}
+             */
+            myRole: "buyer" | "seller";
+            /** @description The audit timeline, oldest first */
+            events: components["schemas"]["DealEventViewDto"][];
+        };
+        CreateDealDto: {
+            /**
+             * @description Path (a): an ACCEPTED offer of the caller — its quantity/unitPrice are snapshotted onto the deal and the payload may only confirm them (400 OFFER_TERMS_MISMATCH). Mutually exclusive with conversationId (400)
+             * @example clx…cuid
+             */
+            offerId?: string;
+            /**
+             * @description Path (b): the caller’s own negotiation thread — FIXED-price lots only (409 LOT_NOT_FIXED_PRICE); the price locks to lot.unitPrice. Unknown and foreign threads answer the uniform 403 CONVERSATION_NOT_YOURS. Mutually exclusive with offerId (400)
+             * @example clx…cuid
+             */
+            conversationId?: string;
+            /**
+             * @description Dealt piece count — on the offer path it MUST equal offer.quantity; on the quick path it is the buyer’s choice, validated 1..availableQuantity (409)
+             * @example 500
+             */
+            quantity: number;
+            /**
+             * @description Optional price CONFIRMATION echo — on the offer path it must equal offer.unitPrice, on the quick path lot.unitPrice (400 on disagreement); the deal’s actual price is always snapshotted server-side and totalPrice is derived (unitPrice × quantity)
+             * @example 300000
+             */
+            unitPrice?: number;
+            /**
+             * @description How the goods change hands — recorded terms (plan §3)
+             * @example SELLER_SHIPS
+             * @enum {string}
+             */
+            deliveryMethod: "PICKUP" | "SELLER_SHIPS" | "BUYER_TRANSPORT" | "CARRIER";
+            /**
+             * @description How payment happened — RECORDED ONLY (plan §3, D9): no gateway, no wallet, no escrow
+             * @example CARD_TO_CARD
+             * @enum {string}
+             */
+            paymentMethod: "CASH" | "CARD_TO_CARD" | "BANK_TRANSFER" | "CHEQUE";
+            /**
+             * @description Optional free-text delivery arrangement — ≤ 500 characters (code points, service-checked); trimmed, empty → null
+             * @example لطفاً تا آخر هفته ارسال شود
+             */
+            deliveryNote?: string;
+            /**
+             * @description Optional free-text payment terms — ≤ 500 characters (code points, service-checked); trimmed, empty → null
+             * @example ۳ قسط در سه ماه
+             */
+            paymentTermsNote?: string;
         };
         TransitionDealDto: {
             /**
@@ -3785,6 +3896,32 @@ export interface operations {
             };
         };
     };
+    DealsController_list: {
+        parameters: {
+            query: {
+                page?: components["schemas"]["Object"];
+                limit?: components["schemas"]["Object"];
+                sort?: string;
+                /** @description Which side of the deal to list — buyer: deals I made as the buyer; seller: deals on my lots */
+                role: "buyer" | "seller";
+                /** @description Optional single-status chip filter (omitted = every status) */
+                status?: "NEGOTIATING" | "AGREED" | "PAYMENT_PENDING" | "PAID" | "PREPARING" | "SHIPPED" | "DELIVERED" | "COMPLETED" | "CANCELLED" | "DISPUTED";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated<DealResponseDto>: { items, total, page, limit } — role=buyer: deals I struck (خرید tab); role=seller: deals on my lots (فروش tab); most-recent-activity first; myRole mirrors the requested role */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     DealsController_create: {
         parameters: {
             query?: never;
@@ -3879,6 +4016,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DealResponseDto"];
+                };
+            };
+        };
+    };
+    DealsController_detail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The allowlisted deal plus its audit timeline (oldest first) with actorRole resolved server-side — the DEAL-004 detail page's single read */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DealDetailResponseDto"];
                 };
             };
         };

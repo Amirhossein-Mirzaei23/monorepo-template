@@ -550,4 +550,86 @@ describe('DealsController (e2e)', () => {
     const events = await prisma.dealEvent.findMany({ where: { dealId: deal.id } });
     expect(events.filter((event) => event.note === 'خریدار پرداخت را اعلام کرد')).toHaveLength(1);
   });
+
+  it('serves the deals UI reads: role-aware list, status chip, detail timeline (DEAL-004)', async () => {
+    const { buyer, seller, lot, deal } = await createDealViaOffer();
+
+    // The buyer's خرید tab sees the deal, myRole mirroring the requested role.
+    const buyerList = await request(app.getHttpServer())
+      .get('/deals?role=buyer')
+      .set('Authorization', `Bearer ${buyer.token}`)
+      .set('X-Forwarded-For', nextIp())
+      .expect(200);
+    expect(buyerList.body.total).toBe(1);
+    expect(buyerList.body.items[0]).toMatchObject({
+      code: deal.code,
+      status: 'NEGOTIATING',
+      myRole: 'buyer',
+      lot: { code: lot.code, title: lot.title },
+    });
+
+    // The seller's فروش tab mirrors the same deal from the other side.
+    const sellerList = await request(app.getHttpServer())
+      .get('/deals?role=seller')
+      .set('Authorization', `Bearer ${seller.token}`)
+      .set('X-Forwarded-For', nextIp())
+      .expect(200);
+    expect(sellerList.body.total).toBe(1);
+    expect(sellerList.body.items[0]?.myRole).toBe('seller');
+
+    // The chip filter narrows by status.
+    const filtered = await request(app.getHttpServer())
+      .get('/deals?role=buyer&status=COMPLETED')
+      .set('Authorization', `Bearer ${buyer.token}`)
+      .set('X-Forwarded-For', nextIp())
+      .expect(200);
+    expect(filtered.body.total).toBe(0);
+
+    // The detail: allowlisted base + the events array; the birth event's
+    // actorRole resolves to buyer (the buyer struck the deal).
+    const detail = await request(app.getHttpServer())
+      .get(`/deals/${deal.code}`)
+      .set('Authorization', `Bearer ${buyer.token}`)
+      .set('X-Forwarded-For', nextIp())
+      .expect(200);
+    expect(Object.keys(detail.body).sort()).toEqual(
+      [
+        'code',
+        'createdAt',
+        'deliveryMethod',
+        'deliveryNote',
+        'events',
+        'id',
+        'lot',
+        'myRole',
+        'paymentMethod',
+        'paymentTermsNote',
+        'quantity',
+        'status',
+        'totalPrice',
+        'unitPrice',
+      ].sort(),
+    );
+    expect(detail.body.events).toHaveLength(1);
+    expect(detail.body.events[0]).toMatchObject({
+      actorRole: 'buyer',
+      toStatus: 'NEGOTIATING',
+    });
+    expect(Object.keys(detail.body.events[0]).sort()).toEqual(
+      ['actorRole', 'createdAt', 'fromStatus', 'id', 'note', 'toStatus'].sort(),
+    );
+
+    // The gates over HTTP.
+    await request(app.getHttpServer())
+      .get('/deals/no-such-code')
+      .set('Authorization', `Bearer ${buyer.token}`)
+      .set('X-Forwarded-For', nextIp())
+      .expect(404);
+    const outsider = await loginAsBuyer();
+    await request(app.getHttpServer())
+      .get(`/deals/${deal.code}`)
+      .set('Authorization', `Bearer ${outsider.token}`)
+      .set('X-Forwarded-For', nextIp())
+      .expect(403);
+  });
 });

@@ -28,6 +28,7 @@ import { truncatePreview } from '../conversations/conversations.constants';
 import { LotsRepository, type LotWithMedia } from '../lots/lots.repository';
 import { OffersRepository } from '../offers/offers.repository';
 import { UsersRepository } from '../users/users.repository';
+import type { Paginated } from '../../common/dto/pagination-query.dto';
 import { DealsRepository } from './deals.repository';
 import {
   DEAL_CODE_CREATE_ATTEMPTS,
@@ -54,6 +55,8 @@ import {
   type DealResponseDto,
   type DealResponseRow,
 } from './dto/deal-response.dto';
+import type { DealDetailResponseDto } from './dto/deal-detail-response.dto';
+import type { DealListQueryDto } from './dto/deal-query.dto';
 import type { TransitionDealDto } from './dto/transition-deal.dto';
 import type { CreateDealDto } from './dto/create-deal.dto';
 
@@ -917,6 +920,53 @@ export class DealsService {
       return row;
     });
     return this.toParticipantResponse({ ...updated, lot: deal.lot }, role);
+  }
+
+  // --- DEAL-004 (the UI's reads) ---
+
+  /**
+   * GET /deals — the role-aware page read (GET /offers' listMine, mirrored):
+   * `role=buyer` → deals I struck (خرید tab), `role=seller` → deals on my lots
+   * (فروش tab); optional status chip; myRole mirrors the requested role (the
+   * payload and the scope must never disagree).
+   */
+  async listMine(userId: string, query: DealListQueryDto): Promise<Paginated<DealResponseDto>> {
+    await this.requireUser(userId);
+    const { items, total, page, limit } =
+      query.role === 'buyer'
+        ? await this.repository.findForBuyer(userId, query)
+        : await this.repository.findForSeller(userId, query);
+    const myRole = query.role;
+    return { items: items.map((row) => toDealResponse(row, myRole)), total, page, limit };
+  }
+
+  /**
+   * GET /deals/:code — the detail payload: the allowlisted deal + the audit
+   * timeline (oldest first) with actorRole resolved server-side. The same
+   * participant gate as every :code route (404 DEAL_NOT_FOUND, 403
+   * DEAL_NOT_PARTICIPANT).
+   */
+  async detailByCode(code: string, userId: string): Promise<DealDetailResponseDto> {
+    const { deal, role } = await this.resolveParticipant(code, userId);
+    const events = await this.repository.findEvents(deal.id);
+    return {
+      ...this.toParticipantResponse(deal, role),
+      events: events.map((event) => ({
+        id: event.id,
+        actorRole:
+          event.actorId === null
+            ? null
+            : event.actorId === deal.buyerId
+              ? 'buyer'
+              : event.actorId === deal.sellerId
+                ? 'seller'
+                : null,
+        fromStatus: event.fromStatus,
+        toStatus: event.toStatus,
+        note: event.note,
+        createdAt: event.createdAt,
+      })),
+    };
   }
 
   /**

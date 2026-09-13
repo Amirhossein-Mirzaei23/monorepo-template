@@ -263,6 +263,37 @@ export const offersPageSchema = zod.object({
 export const createOfferSchema = apiSchemas.CreateOfferDto;
 export const counterOfferSchema = apiSchemas.CounterOfferDto;
 
+// --- Deals (DEAL-002/003/004) ---
+
+/** Deal payloads (DEAL-002) — the recomposed lot summary, the SAME nested-object
+ * quirk as the offers schema above: the generated `DealResponseDto.lot`
+ * serializes as a lossy `z.object({})` that would strip the block on parse. */
+export const dealLotSummarySchema = apiSchemas.DealLotSummaryDto;
+export const dealResponseSchema = apiSchemas.DealResponseDto.extend({
+  lot: dealLotSummarySchema,
+});
+export type DealResponseDto = components['schemas']['DealResponseDto'];
+export type DealStatus = components['schemas']['DealResponseDto']['status'];
+/** The caller's side of a deal, resolved server-side (`myRole`). */
+export type DealMyRole = components['schemas']['DealResponseDto']['myRole'];
+/** One timeline entry of the deal detail (DEAL-004). */
+export const dealEventViewSchema = apiSchemas.DealEventViewDto;
+/** GET /deals/:code — the deal plus its audit timeline. */
+export const dealDetailResponseSchema = apiSchemas.DealDetailResponseDto.extend({
+  lot: dealLotSummarySchema,
+});
+export type DealDetailResponseDto = components['schemas']['DealDetailResponseDto'];
+export type DealEventViewDto = components['schemas']['DealEventViewDto'];
+/** POST /deals/:code/transition body (DEAL-003). */
+export type TransitionDealDto = components['schemas']['TransitionDealDto'];
+/** The GET /deals envelope — Paginated<DealResponseDto>. */
+export const dealsPageSchema = zod.object({
+  items: zod.array(dealResponseSchema),
+  total: zod.number(),
+  page: zod.number(),
+  limit: zod.number(),
+});
+
 // --- shared helpers ---
 
 /** Standard list-endpoint envelope (mirrors the API's Paginated<T>). */

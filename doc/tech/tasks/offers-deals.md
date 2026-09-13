@@ -135,7 +135,7 @@ principles 7, 12; decision D9 flags the legal review).
 - **Testing:** controller e2e matrix sample + unit full matrix.
 - **DoD:** suites green.
 
-### DEAL-004 — Deals UI
+### DEAL-004 ✅ — Deals UI
 
 **P0 · Phase 6 · Deals · M** — Deps: DEAL-003, PLAT-001
 

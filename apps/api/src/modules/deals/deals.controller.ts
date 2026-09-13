@@ -1,15 +1,19 @@
-import { Body, Controller, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
+  ApiExtraModels,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { type AuthUser, CurrentUser } from '../../common/decorators/current-user.decorator';
+import type { Paginated } from '../../common/dto/pagination-query.dto';
 import { CancelDealDto } from './dto/cancel-deal.dto';
 import { CreateDealDto } from './dto/create-deal.dto';
+import { DealDetailResponseDto } from './dto/deal-detail-response.dto';
+import { DealListQueryDto } from './dto/deal-query.dto';
 import { DealResponseDto } from './dto/deal-response.dto';
 import { TransitionDealDto } from './dto/transition-deal.dto';
 import { DEAL_WRITE_THROTTLE } from './deals.constants';
@@ -50,6 +54,9 @@ import { DealsService } from './deals.service';
  */
 @ApiTags('deals')
 @ApiBearerAuth('access-token')
+// Gen:types contract: the detail DTO extends the base response — both are
+// registered so the generated schemas carry the full detail shape.
+@ApiExtraModels(DealResponseDto, DealDetailResponseDto)
 @Controller('deals')
 export class DealsController {
   constructor(private readonly deals: DealsService) {}
@@ -137,5 +144,40 @@ export class DealsController {
     @Param('code') code: string,
   ): Promise<DealResponseDto> {
     return this.deals.confirmPaymentFromCode(code, user.sub);
+  }
+
+  // --- DEAL-004: the reads the deals UI consumes ---
+
+  @Get()
+  @ApiOkResponse({
+    description:
+      'Paginated<DealResponseDto>: { items, total, page, limit } — role=buyer: deals I struck (خرید tab); role=seller: deals on my lots (فروش tab); most-recent-activity first; myRole mirrors the requested role',
+  })
+  @ApiOperation({
+    summary:
+      'List my deals by side — ?role=buyer|seller (required) with optional ?status= chip filter and standard pagination',
+  })
+  async list(
+    @CurrentUser() user: AuthUser,
+    @Query() query: DealListQueryDto,
+  ): Promise<Paginated<DealResponseDto>> {
+    return this.deals.listMine(user.sub, query);
+  }
+
+  @Get(':code')
+  @ApiOkResponse({
+    type: DealDetailResponseDto,
+    description:
+      "The allowlisted deal plus its audit timeline (oldest first) with actorRole resolved server-side — the DEAL-004 detail page's single read",
+  })
+  @ApiOperation({
+    summary:
+      'Fetch one deal I participate in, by its public code, with the full timeline (404 DEAL_NOT_FOUND, 403 DEAL_NOT_PARTICIPANT)',
+  })
+  async detail(
+    @CurrentUser() user: AuthUser,
+    @Param('code') code: string,
+  ): Promise<DealDetailResponseDto> {
+    return this.deals.detailByCode(code, user.sub);
   }
 }
