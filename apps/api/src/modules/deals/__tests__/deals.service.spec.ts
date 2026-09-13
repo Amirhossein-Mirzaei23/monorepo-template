@@ -28,6 +28,7 @@ import { UsersRepository } from '../../users/users.repository';
 import { DealsRepository } from '../deals.repository';
 import {
   DEAL_ERROR_CODES,
+  PAYMENT_METHOD_LABELS_FA,
   STAGE_TIMESTAMP_FIELDS,
   dealCreatedActionBody,
   type DealRole,
@@ -98,6 +99,7 @@ describe('validateDealInput (pure validation matrix, DEAL-001 card)', () => {
       paymentMethod: PaymentMethodRecorded.CARD_TO_CARD,
       paymentTermsNote: '۳ قسط',
       commissionRate: 0,
+      commissionAmount: 0,
     });
   });
 
@@ -223,6 +225,7 @@ describe('validateDealInput (pure validation matrix, DEAL-001 card)', () => {
       paymentMethod: PaymentMethodRecorded.CARD_TO_CARD,
       paymentTermsNote: null,
       commissionRate: 0,
+      commissionAmount: 0,
     });
   });
 });
@@ -737,7 +740,10 @@ describe('DealsService.create — DEAL-002 (offer path, quick path, reservation)
         buyerId: buyer.id,
         sellerId: SELLER_ID,
         offerId: offer.id,
+        // DEAL-006: the derived take, written on the snapshot (0 at the 0%
+        // dial — the gateway-less recorded-terms architecture).
         commissionRate: 0,
+        commissionAmount: 0,
       });
 
       // The reservation: 40 − 10.
@@ -750,7 +756,7 @@ describe('DealsService.create — DEAL-002 (offer path, quick path, reservation)
         actorId: buyer.id,
         fromStatus: DealStatus.NEGOTIATING,
         toStatus: DealStatus.NEGOTIATING,
-        note: dealCreatedActionBody(response.code),
+        note: dealCreatedActionBody(response.code, PAYMENT_METHOD_LABELS_FA.CARD_TO_CARD),
       });
     });
 
@@ -866,7 +872,7 @@ describe('DealsService.create — DEAL-002 (offer path, quick path, reservation)
       expect(messages[0]).toMatchObject({
         type: MessageType.ACTION,
         senderId: buyer.id,
-        body: dealCreatedActionBody(response.code),
+        body: dealCreatedActionBody(response.code, PAYMENT_METHOD_LABELS_FA.CARD_TO_CARD),
       });
       const row = await repository.findByCode(response.code);
       expect(row?.conversationId).toBe(conversation.id);
@@ -988,11 +994,11 @@ describe('DealsService.create — DEAL-002 (offer path, quick path, reservation)
       expect(messages[0]).toMatchObject({
         type: MessageType.ACTION,
         senderId: buyer.id,
-        body: dealCreatedActionBody(response.code),
+        body: dealCreatedActionBody(response.code, PAYMENT_METHOD_LABELS_FA.CASH),
       });
       const thread = await fake.conversation.findUnique({ where: { id: conversation.id } });
       expect(thread).toMatchObject({
-        lastMessagePreview: dealCreatedActionBody(response.code),
+        lastMessagePreview: dealCreatedActionBody(response.code, PAYMENT_METHOD_LABELS_FA.CASH),
         sellerUnreadCount: 1,
         buyerUnreadCount: 0,
       });

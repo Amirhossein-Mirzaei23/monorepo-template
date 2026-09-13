@@ -51,7 +51,7 @@ Complexity: XS 1 · S 22 · M 71 · L 12 · XL 1.
 | PROF-001  | ✅ My profile view/edit                  | P0  | 1   | M   |     | DEAL-003 | ✅ Deal transitions API                | P0  | 6   | M   |
 | PROF-002  | ✅ Public seller profile page            | P0  | 1   | M   |     | DEAL-004 | ✅ Deals UI                            | P0  | 6   | M   |
 | PROF-003  | Public buyer profile                     | P1  | 9   | S   |     | DEAL-005 | ✅ Completion effects                  | P0  | 6   | M   |
-| PROF-004  | Avatar upload                            | P1  | 9   | M   |     | DEAL-006 | Payment recording + commission         | P0  | 6   | S   |
+| PROF-004  | Avatar upload                            | P1  | 9   | M   |     | DEAL-006 | ✅ Payment recording + commission      | P0  | 6   | S   |
 | PROF-005  | Seller metrics rollup job                | P1  | 9   | M   |     | DEAL-007 | Dispute handling                       | P1  | 9   | M   |
 | CAT-001   | ✅ Category domain + seed                | P0  | 2   | M   |     | TRS-001  | Verification domain + admin API        | P0  | 7   | M   |
 | CAT-002   | _(folded into CAT-001)_                  | —   | —   | —   |     | TRS-002  | Badge display                          | P0  | 7   | S   |

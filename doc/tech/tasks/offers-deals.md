@@ -170,7 +170,7 @@ principles 7, 12; decision D9 flags the legal review).
 - **Testing:** service unit (transaction, idempotency), e2e completion path.
 - **DoD:** suites green.
 
-### DEAL-006 — Payment recording + commission fields
+### DEAL-006 ✅ — Payment recording + commission fields
 
 **P0 · Phase 6 · Deals · S** — Deps: DEAL-001
 

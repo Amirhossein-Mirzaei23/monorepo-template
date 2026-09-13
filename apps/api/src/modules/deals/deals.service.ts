@@ -40,9 +40,11 @@ import {
   DEAL_MAX_UNIT_PRICE,
   DEAL_MIN_UNIT_PRICE,
   DEAL_NOTE_MAX_LENGTH,
+  PAYMENT_METHOD_LABELS_FA,
   REASON_FIELDS,
   STAGE_TIMESTAMP_FIELDS,
   assertTransition,
+  commissionAmountFor,
   dealCreatedActionBody,
   generateDealCode,
   paymentConfirmedActionBody,
@@ -103,6 +105,9 @@ export interface ValidatedDealTerms {
   paymentTermsNote: string | null;
   /** Reserved field — written as the module constant (0 MVP). */
   commissionRate: number;
+  /** Derived take: commissionAmountFor(totalPrice) — written on create,
+   * never re-derived later (rate changes must not mutate history). */
+  commissionAmount: number;
 }
 
 /** The slice of the lot the deal rules read (the LotsRepository row satisfies
@@ -230,6 +235,7 @@ export function validateDealInput(
     paymentMethod: input.paymentMethod,
     paymentTermsNote,
     commissionRate: DEAL_COMMISSION_RATE_BASIS_POINTS,
+    commissionAmount: commissionAmountFor(totalPrice),
   };
 }
 
@@ -735,8 +741,13 @@ export class DealsService {
             });
           }
           // 2. THE DEAL + its birth event (timeline total from birth; the
-          // fa note doubles as the thread announcement copy).
+          // fa note doubles as the thread announcement copy and — DEAL-006 —
+          // names the recorded payment method).
           const code = generateDealCode();
+          const announcement = dealCreatedActionBody(
+            code,
+            PAYMENT_METHOD_LABELS_FA[validated.paymentMethod],
+          );
           const deal = await this.repository.create(
             {
               deal: {
@@ -754,14 +765,15 @@ export class DealsService {
                 paymentMethod: validated.paymentMethod,
                 paymentTermsNote: validated.paymentTermsNote,
                 commissionRate: validated.commissionRate,
+                commissionAmount: validated.commissionAmount,
               },
-              event: creationEvent({ actorId: buyerId, note: dealCreatedActionBody(code) }),
+              event: creationEvent({ actorId: buyerId, note: announcement }),
             },
             tx,
           );
           // 3. The thread announcement + lockstep (atomic with the deal).
           if (conversationId !== null) {
-            await this.postActionMessage(conversationId, buyerId, dealCreatedActionBody(code), tx);
+            await this.postActionMessage(conversationId, buyerId, announcement, tx);
           }
           return deal;
         });

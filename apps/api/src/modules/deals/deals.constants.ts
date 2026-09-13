@@ -256,13 +256,25 @@ export const REASON_FIELDS: Record<DealStatus, DealReasonField | null> = {
 export type DealReasonField = 'cancelReason' | 'disputeReason';
 
 /**
- * RESERVED commission rate, in basis points (percent × 100 — 250 = 2.5%;
- * Int keeps the money math integer-safe). 0% for the MVP (card: "configurable
- * const (0% MVP, field reserved)"); DEAL-006 turns the dial and populates
- * commissionAmount = floor(totalPrice × rate / 10_000). Until then the field
- * is written as this constant and the amount stays null.
+ * Commission rate, in basis points (percent × 100 — 250 = 2.5%; Int keeps the
+ * money math integer-safe). 0% for the MVP (card: "configurable const (0% MVP,
+ * field reserved)"); DEAL-006 populates commissionAmount = floor(totalPrice ×
+ * rate / 10_000) on every create via commissionAmountFor — the ARCHITECTURE
+ * is payment-ready, but there is deliberately NO gateway, wallet or escrow:
+ * payments are RECORDED on deals (plan §3 PaymentMethodRecorded, D9 review
+ * decision), and turning this dial up is a business decision, not code work.
  */
 export const DEAL_COMMISSION_RATE_BASIS_POINTS = 0;
+
+/**
+ * DEAL-006 — the derived commission take for one deal:
+ * floor(totalPrice × rate / 10_000). Written on create next to the snapshot
+ * (never re-derived later — rate changes must not mutate history); 0 while
+ * the dial sits at 0%.
+ */
+export function commissionAmountFor(totalPrice: number): number {
+  return Math.floor((totalPrice * DEAL_COMMISSION_RATE_BASIS_POINTS) / 10_000);
+}
 
 /**
  * Create-validation bounds (DEAL-001, card "Validation"). DTOs do not exist
@@ -424,13 +436,15 @@ export const DEAL_WRITE_THROTTLE = {
 
 /**
  * The ACTION message body posted into the tied conversation when a deal is
- * created (DEAL-002, card: «معامله ایجاد شد #CODE»). CONTENT copy in fa by
- * design — the same documented exception as the offers ACTION bodies and the
- * SYSTEM welcome message: these bodies live in the thread, so they are
- * Persian; all other API messages stay English machine copy + a `code`.
+ * created (DEAL-002, card: «معامله ایجاد شد #CODE»; DEAL-006 appends the
+ * RECORDED payment method's fa label so the announcement names the payment
+ * terms both parties agreed to). CONTENT copy in fa by design — the same
+ * documented exception as the offers ACTION bodies and the SYSTEM welcome
+ * message: these bodies live in the thread, so they are Persian; all other
+ * API messages stay English machine copy + a `code`.
  */
-export function dealCreatedActionBody(code: string): string {
-  return `معامله ایجاد شد #${code}`;
+export function dealCreatedActionBody(code: string, paymentMethodFa: string): string {
+  return `معامله ایجاد شد #${code} · پرداخت: ${paymentMethodFa}`;
 }
 
 /**

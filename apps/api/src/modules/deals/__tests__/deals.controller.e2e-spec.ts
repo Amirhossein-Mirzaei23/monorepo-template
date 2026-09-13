@@ -13,7 +13,7 @@ import {
 import request from 'supertest';
 import type { FakePrisma } from '../../../test/fakes/fake-prisma';
 import { createTestApp } from '../../../test/utils/create-test-app';
-import { dealCreatedActionBody } from '../deals.constants';
+import { PAYMENT_METHOD_LABELS_FA, dealCreatedActionBody } from '../deals.constants';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -290,10 +290,14 @@ describe('DealsController (e2e)', () => {
     const action = history.body.items.find(
       (message: { type: string }) => message.type === MessageType.ACTION,
     );
-    expect(action.body).toBe(dealCreatedActionBody(response.body.code));
+    expect(action.body).toBe(
+      dealCreatedActionBody(response.body.code, PAYMENT_METHOD_LABELS_FA.CASH),
+    );
     const thread = await prisma.conversation.findUnique({ where: { id: conversationId } });
     expect(thread?.sellerUnreadCount).toBe(1);
-    expect(thread?.lastMessagePreview).toBe(dealCreatedActionBody(response.body.code));
+    expect(thread?.lastMessagePreview).toBe(
+      dealCreatedActionBody(response.body.code, PAYMENT_METHOD_LABELS_FA.CASH),
+    );
   });
 
   it('rejects the quick path for a NEGOTIABLE lot (409 LOT_NOT_FIXED_PRICE) and a wrong price echo (400 DEAL_PRICE_LOCKED)', async () => {
