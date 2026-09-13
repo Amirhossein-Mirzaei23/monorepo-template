@@ -744,6 +744,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/deals/{code}/transition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move a deal I am the buyer or seller of to `to` (404 DEAL_NOT_FOUND, 403 DEAL_NOT_PARTICIPANT/TRANSITION_ROLE_FORBIDDEN, 409 ILLEGAL_TRANSITION with the allowed next states, 400 REASON_REQUIRED/DISPUTE_REASON_TOO_SHORT/NOTE_TOO_LONG) */
+        post: operations["DealsController_transition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deals/{code}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel a deal I am a participant of, with a reason (404 DEAL_NOT_FOUND, 403 DEAL_NOT_PARTICIPANT/TRANSITION_ROLE_FORBIDDEN per the matrix, 400 REASON_REQUIRED) */
+        post: operations["DealsController_cancel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deals/{code}/payment-confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** As the buyer, announce «پرداخت کردم» on a PAYMENT_PENDING deal (404 DEAL_NOT_FOUND, 403 DEAL_NOT_PARTICIPANT/PAYMENT_CONFIRM_BUYER_ONLY, 409 PAYMENT_NOT_PENDING/PAYMENT_ALREADY_CONFIRMED) */
+        post: operations["DealsController_paymentConfirm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2463,6 +2514,26 @@ export interface components {
              */
             myRole: "buyer" | "seller";
         };
+        TransitionDealDto: {
+            /**
+             * @description The target status — must be a legal move from the deal’s current status (409 with the allowed list) for the caller’s role (403)
+             * @example AGREED
+             * @enum {string}
+             */
+            to: "NEGOTIATING" | "AGREED" | "PAYMENT_PENDING" | "PAID" | "PREPARING" | "SHIPPED" | "DELIVERED" | "COMPLETED" | "CANCELLED" | "DISPUTED";
+            /**
+             * @description Required for →CANCELLED / →DISPUTED (the reason; ≥ 20 code points for disputes); optional context elsewhere — ≤ 500 characters, trimmed, empty → null
+             * @example خریدار مذاکره را می‌پذیرد
+             */
+            note?: string;
+        };
+        CancelDealDto: {
+            /**
+             * @description Why the deal is cancelled — required (400 REASON_REQUIRED on empty), ≤ 500 characters; stored on the deal and carried by the timeline event
+             * @example خریدار پاسخگو نبود
+             */
+            reason: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -3729,6 +3800,80 @@ export interface operations {
         responses: {
             /** @description The created NEGOTIATING deal — terms locked (lot/qty/price snapshot, delivery/payment), quantity RESERVED on the lot; when tied to a conversation, its ACTION message + thread lockstep committed in the same transaction */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DealResponseDto"];
+                };
+            };
+        };
+    };
+    DealsController_transition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransitionDealDto"];
+            };
+        };
+        responses: {
+            /** @description The deal in its new status — the DEAL-001 matrix row executed (stage stamp + DealEvent appended, clean cancellations restore the reserved quantity) in one transaction */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DealResponseDto"];
+                };
+            };
+        };
+    };
+    DealsController_cancel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CancelDealDto"];
+            };
+        };
+        responses: {
+            /** @description The CANCELLED deal — the reason stored on cancelReason + the timeline event; cancellations from the pre-fulfilment stages (NEGOTIATING/AGREED/PAYMENT_PENDING) restore the reserved quantity in the same transaction */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DealResponseDto"];
+                };
+            };
+        };
+    };
+    DealsController_paymentConfirm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The deal with the buyer’s payment mark (paidConfirmedByBuyerAt) and the informational «خریدار پرداخت را اعلام کرد» timeline event — the STATUS only moves when the seller confirms (PAYMENT_PENDING→PAID) */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

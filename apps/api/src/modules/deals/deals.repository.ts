@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import type { Deal, DealEvent, Prisma } from '@prisma/client';
+import { DealStatus, type Deal, type DealEvent, type Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { DealResponseRow } from './dto/deal-response.dto';
 
 type Tx = Prisma.TransactionClient | undefined;
 
@@ -58,16 +59,41 @@ export class DealsRepository {
   }
 
   /**
-   * Status transitions (status + stage stamp + reason column) and nothing
-   * else today — the service asserts the move against DEAL_TRANSITIONS
-   * BEFORE calling this; the repository does not guard (data access only).
+   * findByCode + the lot summary joined (DEAL-003): the transition endpoints
+   * answer with the full DealResponseDto, whose allowlist carries the lot
+   * {code, title} block — one read instead of a second lot lookup. The bare
+   * findByCode stays for callers that do not render the deal (the create
+   * path already holds the lot).
    */
-  async update(
+  async findByCodeWithLot(code: string, tx: Tx = undefined): Promise<DealResponseRow | null> {
+    return this.client(tx).deal.findUnique({
+      where: { code },
+      include: { lot: { select: { code: true, title: true } } },
+    });
+  }
+
+  /**
+   * The GUARDED transition write (DEAL-003): ONE conditional updateMany over
+   * (id, status = fromStatus) — plan §12's never-read-modify-write shape. The
+   * service asserts the matrix BEFORE this call, but its row was read outside
+   * the transaction: a concurrent move (both parties cancelling at once, a
+   * cancel racing a stage advance) makes the count 0, and the caller answers
+   * 409 instead of double-applying a move — the quantity-restore invariant
+   * ("a double-restore is unreachable") leans on this predicate. Returns the
+   * matched-row count; the refreshed row is read back in the same transaction
+   * (the write's row lock holds until commit).
+   */
+  async updateIfStatus(
     id: string,
+    fromStatus: DealStatus,
     data: Prisma.DealUncheckedUpdateInput,
     tx: Tx = undefined,
-  ): Promise<Deal> {
-    return this.client(tx).deal.update({ where: { id }, data });
+  ): Promise<number> {
+    const result = await this.client(tx).deal.updateMany({
+      where: { id, status: fromStatus },
+      data,
+    });
+    return result.count;
   }
 
   /** The timeline append — always paired with the status write in one tx
@@ -86,5 +112,22 @@ export class DealsRepository {
       where: { dealId },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
+  }
+
+  /**
+   * DEAL-003 payment-confirm write: ONE conditional updateMany (plan §12 —
+   * never read-modify-write) over the whole precondition (live row, still
+   * PAYMENT_PENDING, not yet marked), so two concurrent «پرداخت کردم» marks
+   * cannot both append the announcement event. 0 matched rows means the
+   * precondition is gone — the CALLER re-reads to name which one (already
+   * marked vs left the stage). Data access only; the status decision was the
+   * service's.
+   */
+  async markPaymentConfirmed(id: string, at: Date, tx: Tx = undefined): Promise<number> {
+    const result = await this.client(tx).deal.updateMany({
+      where: { id, status: DealStatus.PAYMENT_PENDING, paidConfirmedByBuyerAt: null },
+      data: { paidConfirmedByBuyerAt: at },
+    });
+    return result.count;
   }
 }

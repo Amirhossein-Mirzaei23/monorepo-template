@@ -110,28 +110,43 @@ describe('DealsRepository (vs FakePrisma — data access only)', () => {
     });
   });
 
-  describe('update (status transitions + stage stamps)', () => {
-    it('writes only the provided scalars and bumps updatedAt', async () => {
+  describe('updateIfStatus (the guarded transition write — DEAL-003)', () => {
+    it('writes only the provided scalars, bumps updatedAt, and answers count 1 on the matching status', async () => {
       const deal = await repository.create(createArgs());
       const before = await repository.findById(deal.id);
       const now = new Date();
 
-      const updated = await repository.update(deal.id, {
+      const moved = await repository.updateIfStatus(deal.id, DealStatus.NEGOTIATING, {
         status: DealStatus.AGREED,
         agreedAt: now,
       });
 
-      expect(updated.status).toBe(DealStatus.AGREED);
-      expect(updated.agreedAt).toEqual(now);
-      expect(updated.unitPrice).toBe(before?.unitPrice); // untouched
-      expect(updated.quantity).toBe(before?.quantity);
-      expect(updated.updatedAt.getTime()).toBeGreaterThanOrEqual(before?.updatedAt.getTime() ?? 0);
+      expect(moved).toBe(1);
+      const updated = await repository.findById(deal.id);
+      expect(updated?.status).toBe(DealStatus.AGREED);
+      expect(updated?.agreedAt).toEqual(now);
+      expect(updated?.unitPrice).toBe(before?.unitPrice); // untouched
+      expect(updated?.quantity).toBe(before?.quantity);
+      expect(updated?.updatedAt.getTime()).toBeGreaterThanOrEqual(before?.updatedAt.getTime() ?? 0);
     });
 
-    it('throws for an unknown id (mirrors Prisma P2025)', async () => {
+    it('answers count 0 when the row is gone or its status moved on (the race guard)', async () => {
+      const deal = await repository.create(createArgs());
+
+      // Unknown id — nothing matches.
       await expect(
-        repository.update('missing-id', { status: DealStatus.CANCELLED }),
-      ).rejects.toThrow('FakePrisma: deal missing-id not found');
+        repository.updateIfStatus('missing-id', DealStatus.NEGOTIATING, {
+          status: DealStatus.CANCELLED,
+        }),
+      ).resolves.toBe(0);
+
+      // Status precondition violated — the concurrent-writer shape.
+      const stale = await repository.updateIfStatus(deal.id, DealStatus.PAID, {
+        status: DealStatus.CANCELLED,
+      });
+      expect(stale).toBe(0);
+      const untouched = await repository.findById(deal.id);
+      expect(untouched?.status).toBe(DealStatus.NEGOTIATING);
     });
   });
 

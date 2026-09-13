@@ -1414,14 +1414,37 @@ export class FakePrisma {
    * path relies on (the lot must exist — Cascade owner — plus explicit
    * offer/conversation rows when linked). */
   readonly deal = {
-    findUnique: async ({ where }: { where: DealWhere }): Promise<Deal | null> => {
+    findUnique: async ({
+      where,
+      include,
+    }: {
+      where: DealWhere;
+      /** Only DealsRepository.findByCodeWithLot's shape (DEAL-003) — the lot
+       * summary {code, title} the response mapper reads. */
+      include?: { lot?: { select?: { code?: boolean; title?: boolean } } };
+    }): Promise<Deal | null> => {
       let found: Deal | undefined;
       if (where.id !== undefined) {
         found = this.deals.get(where.id);
       } else if (where.code !== undefined) {
         found = [...this.deals.values()].find((row) => row.code === where.code);
       }
-      return found ? cloneDeal(found) : null;
+      if (!found) {
+        return null;
+      }
+      const row = cloneDeal(found);
+      if (include?.lot) {
+        // Real Prisma returns the relation for a live FK; a missing lot means
+        // a broken fixture, so the summary is simply absent (no fabrication).
+        const lot = this.lots.get(row.lotId);
+        if (lot) {
+          (row as Deal & { lot?: { code: string; title: string } }).lot = {
+            code: lot.code,
+            title: lot.title,
+          };
+        }
+      }
+      return row;
     },
     create: async ({ data }: { data: DealCreateData }): Promise<Deal> => {
       if (!this.lots.get(data.lotId)) {
@@ -1463,6 +1486,37 @@ export class FakePrisma {
       const next = applyDealUpdate(row, data);
       this.deals.set(row.id, next);
       return cloneDeal(next);
+    },
+    /** The guarded writes (DEAL-003): matches every PROVIDED predicate —
+     * status, paidConfirmedByBuyerAt (null matches null) — over the id, then
+     * applies the partial update. Mirrors updateMany's count-only return. */
+    updateMany: async ({
+      where,
+      data,
+    }: {
+      where: {
+        id: string;
+        status?: DealStatus;
+        paidConfirmedByBuyerAt?: Date | null;
+      };
+      data: DealUpdateData;
+    }): Promise<{ count: number }> => {
+      const row = this.deals.get(where.id);
+      if (!row) {
+        return { count: 0 };
+      }
+      if (where.status !== undefined && row.status !== where.status) {
+        return { count: 0 };
+      }
+      if (
+        where.paidConfirmedByBuyerAt !== undefined &&
+        row.paidConfirmedByBuyerAt !== where.paidConfirmedByBuyerAt
+      ) {
+        return { count: 0 };
+      }
+      const next = applyDealUpdate(row, data);
+      this.deals.set(row.id, next);
+      return { count: 1 };
     },
   };
 

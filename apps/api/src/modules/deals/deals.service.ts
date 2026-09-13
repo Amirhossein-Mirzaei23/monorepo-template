@@ -32,6 +32,7 @@ import { DealsRepository } from './deals.repository';
 import {
   DEAL_CODE_CREATE_ATTEMPTS,
   DEAL_COMMISSION_RATE_BASIS_POINTS,
+  DEAL_DISPUTE_REASON_MIN_LENGTH,
   DEAL_ERROR_CODES,
   DEAL_MAX_TOTAL_PRICE,
   DEAL_MAX_UNIT_PRICE,
@@ -42,12 +43,18 @@ import {
   assertTransition,
   dealCreatedActionBody,
   generateDealCode,
+  paymentConfirmedActionBody,
   transitionRuleFor,
   type DealReasonField,
   type DealRole,
   type DealStageTimestampField,
 } from './deals.constants';
-import { toDealResponse, type DealResponseDto } from './dto/deal-response.dto';
+import {
+  toDealResponse,
+  type DealResponseDto,
+  type DealResponseRow,
+} from './dto/deal-response.dto';
+import type { TransitionDealDto } from './dto/transition-deal.dto';
 import type { CreateDealDto } from './dto/create-deal.dto';
 
 type Tx = Prisma.TransactionClient | undefined;
@@ -317,6 +324,19 @@ export class DealsService {
     if (note !== null) {
       assertNoteCap(note);
     }
+    // The dispute-reason floor (DEAL-003, card: "reason ≥ 20 chars"): a
+    // dispute opens the P1 support flow, so a too-short reason is rejected up
+    // front — for EVERY →DISPUTED writer (participants now, the DEAL-007
+    // admin flow included), the shared gate owns the rule.
+    if (to === DealStatus.DISPUTED && note !== null) {
+      const length = codePointLength(note);
+      if (length < DEAL_DISPUTE_REASON_MIN_LENGTH) {
+        throw new BadRequestException({
+          code: DEAL_ERROR_CODES.DISPUTE_REASON_TOO_SHORT,
+          message: `A dispute reason must be at least ${DEAL_DISPUTE_REASON_MIN_LENGTH} characters`,
+        });
+      }
+    }
 
     const data: Prisma.DealUncheckedUpdateInput = { status: to };
     const stageField: DealStageTimestampField | null = STAGE_TIMESTAMP_FIELDS[to];
@@ -353,7 +373,18 @@ export class DealsService {
     }
 
     const run = async (client: Tx): Promise<Deal> => {
-      const updated = await this.repository.update(deal.id, data, client);
+      // The GUARDED write (DEAL-003): the matrix was asserted against a row
+      // read OUTSIDE this transaction, so the write re-checks the status —
+      // a concurrent move (both parties cancelling at once, a cancel racing
+      // a stage advance) answers 409 here instead of double-applying a move
+      // (the restore below stays single-fire with it).
+      const moved = await this.repository.updateIfStatus(deal.id, deal.status, data, client);
+      if (moved === 0) {
+        throw new ConflictException({
+          code: DEAL_ERROR_CODES.DEAL_STALE_STATE,
+          message: `The deal is no longer ${deal.status} — reload it and retry`,
+        });
+      }
       await this.repository.appendEvent(
         {
           dealId: deal.id,
@@ -379,6 +410,13 @@ export class DealsService {
       // unreachable.
       if (to === DealStatus.CANCELLED && deal.status !== DealStatus.DISPUTED) {
         await this.lots.restoreQuantity(deal.lotId, deal.quantity, client);
+      }
+      // Read back INSIDE the transaction — the write's row lock holds until
+      // commit, so this reflects this writer's move, not a racer's.
+      const updated = await this.repository.findById(deal.id, client);
+      if (!updated) {
+        // Unreachable: the guarded write just matched this row.
+        throw new Error('Unreachable: the transition tx lost its own deal row');
       }
       return updated;
     };
@@ -738,6 +776,147 @@ export class DealsService {
       },
       tx,
     );
+  }
+
+  // --- DEAL-003 (transition endpoints) ---
+
+  /**
+   * The participant gate every /deals/:code route shares: load the row (+ the
+   * lot summary the response carries), then resolve the caller's hat —
+   * unknown code → 404 DEAL_NOT_FOUND (codes are unguessable capability
+   * handles), anyone but the two participants → 403 DEAL_NOT_PARTICIPANT
+   * (admin surfaces come with DEAL-007; the matrix's ADMIN rows stay
+   * endpoint-less until then).
+   */
+  private async resolveParticipant(
+    code: string,
+    userId: string,
+  ): Promise<{ deal: DealResponseRow; role: DealRole }> {
+    const deal = await this.repository.findByCodeWithLot(code);
+    if (!deal) {
+      throw new NotFoundException({
+        code: DEAL_ERROR_CODES.DEAL_NOT_FOUND,
+        message: 'Deal not found',
+      });
+    }
+    const role: DealRole | null =
+      deal.buyerId === userId ? 'BUYER' : deal.sellerId === userId ? 'SELLER' : null;
+    if (role === null) {
+      throw new ForbiddenException({
+        code: DEAL_ERROR_CODES.DEAL_NOT_PARTICIPANT,
+        message: 'Only the deal’s buyer or seller can do this',
+      });
+    }
+    return { deal, role };
+  }
+
+  /** The allowlisted response for a resolved participant (myRole mirrors the
+   * hat — lowercase in the payload contract). resolveParticipant only yields
+   * the two participant hats; ADMIN arrives with DEAL-007's endpoints, which
+   * get their own mapping then. */
+  private toParticipantResponse(row: DealResponseRow, role: DealRole): DealResponseDto {
+    return toDealResponse(row, role === 'SELLER' ? 'seller' : 'buyer');
+  }
+
+  /**
+   * POST /deals/:code/transition — participant gate, then the ONE matrix gate
+   * (this.transition: 409 ILLEGAL_TRANSITION with the allowed-next-states
+   * payload, 403 TRANSITION_ROLE_FORBIDDEN, 400 REASON_REQUIRED /
+   * DISPUTE_REASON_TOO_SHORT, the guarded write + DealEvent append, the
+   * clean-cancel quantity restore). The answer is the freshly-written
+   * allowlisted deal.
+   */
+  async transitionFromCode(
+    code: string,
+    userId: string,
+    dto: TransitionDealDto,
+  ): Promise<DealResponseDto> {
+    const { deal, role } = await this.resolveParticipant(code, userId);
+    const updated = await this.transition(deal, dto.to, role, {
+      actorId: userId,
+      note: dto.note,
+    });
+    return this.toParticipantResponse({ ...updated, lot: deal.lot }, role);
+  }
+
+  /**
+   * POST /deals/:code/cancel — the reason-shaped shorthand for
+   * `to: CANCELLED`: same matrix row (WHO may cancel depends on the current
+   * status), the reason lands in cancelReason + the timeline note, and clean
+   * cancellations get their reserved quantity back (transition's restore).
+   */
+  async cancelFromCode(code: string, userId: string, reason: string): Promise<DealResponseDto> {
+    return this.transitionFromCode(code, userId, { to: DealStatus.CANCELLED, note: reason });
+  }
+
+  /**
+   * POST /deals/:code/payment-confirm — the buyer's «پرداخت کردم» mark.
+   * Deliberately NOT a transition (the class doc): the status only moves when
+   * the SELLER confirms (PAYMENT_PENDING→PAID, the matrix row); this stamps
+   * `paidConfirmedByBuyerAt` + appends the informational event
+   * (PAYMENT_PENDING→PAYMENT_PENDING, «خریدار پرداخت را اعلام کرد») so the
+   * timeline shows the announcement. The write is one conditional
+   * updateMany (repository.markPaymentConfirmed) + the event in ONE
+   * transaction — a race loser answers 409 with the re-read reason.
+   *
+   * NTF hook point (deal.paymentAnnounced — notify the seller) — realized P1.
+   */
+  async confirmPaymentFromCode(
+    code: string,
+    userId: string,
+    now: Date = new Date(),
+  ): Promise<DealResponseDto> {
+    const { deal, role } = await this.resolveParticipant(code, userId);
+    if (role !== 'BUYER') {
+      throw new ForbiddenException({
+        code: DEAL_ERROR_CODES.PAYMENT_CONFIRM_BUYER_ONLY,
+        message: 'Only the buyer can announce payment',
+      });
+    }
+    const reject = (reason: 'NOT_PENDING' | 'ALREADY_CONFIRMED'): ConflictException =>
+      new ConflictException(
+        reason === 'ALREADY_CONFIRMED'
+          ? {
+              code: DEAL_ERROR_CODES.PAYMENT_ALREADY_CONFIRMED,
+              message: 'Payment was already announced for this deal',
+            }
+          : {
+              code: DEAL_ERROR_CODES.PAYMENT_NOT_PENDING,
+              message: `Payment can only be announced while the deal is PAYMENT_PENDING — it is ${deal.status}`,
+            },
+      );
+    if (deal.status !== DealStatus.PAYMENT_PENDING) {
+      throw reject('NOT_PENDING');
+    }
+    if (deal.paidConfirmedByBuyerAt !== null) {
+      throw reject('ALREADY_CONFIRMED');
+    }
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const marked = await this.repository.markPaymentConfirmed(deal.id, now, tx);
+      if (marked === 0) {
+        // The race loser: re-read to name which precondition vanished.
+        const fresh = (await this.repository.findById(deal.id, tx)) ?? deal;
+        throw reject(fresh.paidConfirmedByBuyerAt !== null ? 'ALREADY_CONFIRMED' : 'NOT_PENDING');
+      }
+      await this.repository.appendEvent(
+        {
+          dealId: deal.id,
+          actorId: userId,
+          fromStatus: DealStatus.PAYMENT_PENDING,
+          toStatus: DealStatus.PAYMENT_PENDING,
+          note: paymentConfirmedActionBody(),
+          createdAt: now,
+        },
+        tx,
+      );
+      const row = await this.repository.findById(deal.id, tx);
+      if (!row) {
+        // Unreachable: the row was just updated inside this transaction.
+        throw new Error('Unreachable: the payment-confirm tx lost its own deal row');
+      }
+      return row;
+    });
+    return this.toParticipantResponse({ ...updated, lot: deal.lot }, role);
   }
 
   /**

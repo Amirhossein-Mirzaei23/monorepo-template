@@ -117,7 +117,7 @@ principles 7, 12; decision D9 flags the legal review).
 - **Testing:** service unit (reservation transaction incl. rollback), e2e both paths.
 - **DoD:** suites green.
 
-### DEAL-003 — Deal transitions API
+### DEAL-003 ✅ — Deal transitions API
 
 **P0 · Phase 6 · Deals · M** — Deps: DEAL-002
 

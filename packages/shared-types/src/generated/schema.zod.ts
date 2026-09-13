@@ -338,6 +338,15 @@ export const dealLotSummaryDtoSchema = z.object({
   title: z.string(),
 });
 
+export const transitionDealDtoSchema = z.object({
+  to: z.enum(['NEGOTIATING', 'AGREED', 'PAYMENT_PENDING', 'PAID', 'PREPARING', 'SHIPPED', 'DELIVERED', 'COMPLETED', 'CANCELLED', 'DISPUTED']),
+  note: z.string().optional(),
+});
+
+export const cancelDealDtoSchema = z.object({
+  reason: z.string(),
+});
+
 export const otpVerifyResponseDtoSchema = z.object({
   accessToken: z.string(),
   user: userResponseDtoSchema,
@@ -658,4 +667,6 @@ export const apiSchemas = {
   CreateDealDto: createDealDtoSchema,
   DealLotSummaryDto: dealLotSummaryDtoSchema,
   DealResponseDto: dealResponseDtoSchema,
+  TransitionDealDto: transitionDealDtoSchema,
+  CancelDealDto: cancelDealDtoSchema,
 } as const;

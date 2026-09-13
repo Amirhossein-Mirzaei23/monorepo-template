@@ -181,9 +181,17 @@ export function canTransition(from: DealStatus, to: DealStatus, role: DealRole):
 export function assertTransition(from: DealStatus, to: DealStatus, role: DealRole): void {
   const rule = transitionRuleFor(from, to);
   if (rule === undefined) {
+    // The card's "409 illegal transition (fa message w/ allowed next states)":
+    // the payload carries the machine `allowed` list AND its fa rendering
+    // (DEAL_STATUS_LABELS_FA is the single label source) so the web can show
+    // «وضعیت‌های مجاز: …» without a second request. The English `message`
+    // stays the repo-wide machine copy.
+    const allowed = DEAL_TRANSITIONS[from].map((r) => r.to);
     throw new ConflictException({
       code: DEAL_ERROR_CODES.ILLEGAL_TRANSITION,
       message: `Cannot move a deal from ${from} to ${to}`,
+      allowed,
+      allowedFa: allowed.map((status) => DEAL_STATUS_LABELS_FA[status]),
     });
   }
   if (!rule.roles.includes(role)) {
@@ -364,6 +372,35 @@ export const DEAL_ERROR_CODES = {
    * string as OFR-002's CONVERSATION_NOT_YOURS (no existence oracle for
    * unguessable conversation ids). */
   CONVERSATION_NOT_YOURS: 'CONVERSATION_NOT_YOURS',
+
+  // --- DEAL-003 (Deal transitions API) codes ---
+
+  /** POST /deals/:code/* with a code no deal row carries (404) — deal codes
+   * are unguessable capability handles, so an unknown one is a plain miss
+   * (404 missing; the participant gate answers the KNOWN-code case below). */
+  DEAL_NOT_FOUND: 'DEAL_NOT_FOUND',
+  /** A transitions/payment-confirm call by a user who is neither the deal's
+   * buyer nor its seller (403) — the participants-only gate; admin surfaces
+   * come with DEAL-007. */
+  DEAL_NOT_PARTICIPANT: 'DEAL_NOT_PARTICIPANT',
+  /** →DISPUTED with a reason shorter than DEAL_DISPUTE_REASON_MIN_LENGTH code
+   * points (400) — the card's "dispute … w/ reason ≥ 20 chars" (a dispute
+   * opens a P1 support case; a one-word reason cannot be investigated). */
+  DISPUTE_REASON_TOO_SHORT: 'DISPUTE_REASON_TOO_SHORT',
+  /** POST /deals/:code/payment-confirm by a participant who is not the BUYER
+   * (403) — the mark records the BUYER's payment announcement; the seller's
+   * status confirm is the separate PAYMENT_PENDING→PAID matrix row. */
+  PAYMENT_CONFIRM_BUYER_ONLY: 'PAYMENT_CONFIRM_BUYER_ONLY',
+  /** payment-confirm while the deal is not in PAYMENT_PENDING (409) — the
+   * «پرداخت کردم» mark only makes sense while payment is the live stage. */
+  PAYMENT_NOT_PENDING: 'PAYMENT_NOT_PENDING',
+  /** payment-confirm on a deal the buyer already marked (409) — one mark per
+   * deal keeps the timeline honest (the informational event would duplicate). */
+  PAYMENT_ALREADY_CONFIRMED: 'PAYMENT_ALREADY_CONFIRMED',
+  /** The guarded transition write matched 0 rows (409): the deal moved between
+   * the caller's read and the write (a concurrent transition by the other
+   * party). The client's view is stale — reload and retry. */
+  DEAL_STALE_STATE: 'DEAL_STALE_STATE',
 } as const;
 
 /**
@@ -395,6 +432,24 @@ export const DEAL_WRITE_THROTTLE = {
 export function dealCreatedActionBody(code: string): string {
   return `معامله ایجاد شد #${code}`;
 }
+
+/**
+ * The informational DealEvent note the payment-confirm endpoint appends when
+ * the buyer marks «پرداخت کردم» (DEAL-003's endpoint per its card; DEAL-006's
+ * copy). fa content copy — the same documented exception as
+ * dealCreatedActionBody: it lives in the timeline/thread, Persian by design.
+ */
+export function paymentConfirmedActionBody(): string {
+  return 'خریدار پرداخت را اعلام کرد';
+}
+
+/**
+ * The dispute-reason floor (DEAL-003, card: "dispute allowed pre-completion
+ * w/ reason ≥ 20 chars") — code points, fa-aware, mirroring the note caps. A
+ * dispute opens the P1 support flow (DEAL-007); a one-word reason cannot be
+ * investigated, so the machine rejects it up front.
+ */
+export const DEAL_DISPUTE_REASON_MIN_LENGTH = 20;
 
 /**
  * `code` is the public URL id of a deal (plan §3): 8 base62 chars from

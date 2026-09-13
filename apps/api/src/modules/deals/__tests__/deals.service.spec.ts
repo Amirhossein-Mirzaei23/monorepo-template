@@ -394,19 +394,20 @@ describe('DealsService.transition (the matrix executor + timeline append)', () =
     expect(events[0]?.note).toBe('قیمت مناسب نبود');
   });
 
-  it('dispute stores disputeReason the same way', async () => {
+  it('dispute stores disputeReason the same way (reason past the ≥ 20-char floor — DEAL-003)', async () => {
     const deal = seedDealAt(DealStatus.AGREED);
+    const reason = 'خریدار چند روز است پاسخگو نیست و پیامی نمی‌فرستد';
 
     const updated = await service.transition(
       deal,
       DealStatus.DISPUTED,
       'SELLER',
-      { actorId: SELLER_ID, note: 'خریدار پاسخگو نیست' },
+      { actorId: SELLER_ID, note: reason },
       NOW,
     );
 
     expect(updated.status).toBe(DealStatus.DISPUTED);
-    expect(updated.disputeReason).toBe('خریدار پاسخگو نیست');
+    expect(updated.disputeReason).toBe(reason);
   });
 
   it.each([
@@ -1130,5 +1131,231 @@ describe('DealsService.create — DEAL-002 (offer path, quick path, reservation)
     expect(await repository.findByCode(response.code)).not.toBeNull();
     const messages = await fake.message.findMany({ where: { conversationId: conversation.id } });
     expect(messages).toHaveLength(1);
+  });
+});
+
+describe('DealsService DEAL-003 — transitionFromCode / cancelFromCode / confirmPaymentFromCode', () => {
+  let fake: FakePrisma;
+  let service: DealsService;
+  let repository: DealsRepository;
+  let lotId: string;
+
+  beforeEach(() => {
+    fake = new FakePrisma();
+    repository = new DealsRepository(fake as unknown as PrismaService);
+    service = new DealsService(
+      repository,
+      fake as unknown as PrismaService,
+      new LotsRepository(fake as unknown as PrismaService),
+      new OffersRepository(fake as unknown as PrismaService),
+      new ConversationsRepository(fake as unknown as PrismaService),
+      new UsersRepository(fake as unknown as PrismaService),
+    );
+    lotId = fake.seedLot({
+      sellerId: SELLER_ID,
+      categoryId: 'cat-1',
+      title: 'عمده پیراهن مردانه — ۵۰ عدد',
+      quantity: 50,
+      availableQuantity: 30,
+      minOrderQuantity: 10,
+      pricingType: PricingType.FIXED,
+      totalPrice: 50_000_000,
+      unitPrice: 1_000_000,
+      condition: LotCondition.GRADE_A,
+      liquidationReason: LiquidationReason.OVERSTOCK,
+      province: 'tehran',
+      city: 'tehran',
+      status: LotStatus.ACTIVE,
+      expiresAt: new Date(Date.now() + 30 * DAY_MS),
+    }).id;
+  });
+
+  const seedDealAt = (
+    status: DealStatus,
+    overrides: Partial<Parameters<FakePrisma['seedDeal']>[0]> = {},
+  ) =>
+    fake.seedDeal({
+      lotId,
+      buyerId: BUYER_ID,
+      sellerId: SELLER_ID,
+      quantity: 10,
+      unitPrice: 1_000_000,
+      totalPrice: 10_000_000,
+      deliveryMethod: DeliveryMethod.SELLER_SHIPS,
+      paymentMethod: PaymentMethodRecorded.CARD_TO_CARD,
+      status,
+      ...overrides,
+    });
+
+  const availability = async (id: string): Promise<number | undefined> =>
+    (await fake.lot.findUnique({ where: { id } }))?.availableQuantity;
+
+  describe('the gates (participant resolution + stale-state guard)', () => {
+    it('answers 409 DEAL_STALE_STATE when the row moved between the read and the write', async () => {
+      const deal = seedDealAt(DealStatus.NEGOTIATING);
+      // A concurrent writer wins: the stored row is AGREED while this caller
+      // still holds the NEGOTIATING snapshot (a legal move on their view).
+      await fake.deal.update({
+        where: { id: deal.id },
+        data: { status: DealStatus.AGREED, agreedAt: new Date() },
+      });
+
+      const thrown = await rejectsOf(() =>
+        service.transition(deal, DealStatus.CANCELLED, 'SELLER', {
+          actorId: SELLER_ID,
+          note: 'خریدار منصرف شد',
+        }),
+      );
+
+      expect(thrown).toBeInstanceOf(ConflictException);
+      expect(errorCode(thrown)).toBe(DEAL_ERROR_CODES.DEAL_STALE_STATE);
+      // Nothing leaked: no event, no cancellation, no quantity restore.
+      expect(await repository.findEvents(deal.id)).toHaveLength(0);
+      expect((await repository.findById(deal.id))?.status).toBe(DealStatus.AGREED);
+      expect(await availability(lotId)).toBe(30);
+    });
+
+    it('404 DEAL_NOT_FOUND for an unknown code', async () => {
+      const thrown = await rejectsOf(() =>
+        service.transitionFromCode('no-such-code', BUYER_ID, { to: DealStatus.AGREED }),
+      );
+      expect(thrown).toBeInstanceOf(NotFoundException);
+      expect(errorCode(thrown)).toBe(DEAL_ERROR_CODES.DEAL_NOT_FOUND);
+    });
+
+    it('403 DEAL_NOT_PARTICIPANT for a user who is neither buyer nor seller', async () => {
+      const deal = seedDealAt(DealStatus.NEGOTIATING);
+      const outsider = 'someone-else';
+      const thrown = await rejectsOf(() =>
+        service.transitionFromCode(deal.code, outsider, { to: DealStatus.AGREED }),
+      );
+      expect(thrown).toBeInstanceOf(ForbiddenException);
+      expect(errorCode(thrown)).toBe(DEAL_ERROR_CODES.DEAL_NOT_PARTICIPANT);
+    });
+  });
+
+  describe('transitionFromCode (matrix + response)', () => {
+    it('moves the deal and answers the allowlisted payload with myRole + lot summary', async () => {
+      const deal = seedDealAt(DealStatus.NEGOTIATING);
+      const lot = (await fake.lot.findUnique({ where: { id: lotId } }))!;
+
+      const response = await service.transitionFromCode(deal.code, SELLER_ID, {
+        to: DealStatus.AGREED,
+      });
+
+      expect(response.status).toBe(DealStatus.AGREED);
+      expect(response.myRole).toBe('seller');
+      expect(response.lot).toEqual({ code: lot.code, title: lot.title });
+      // The stage stamp lives on the row (the payload allowlist doesn't carry it).
+      const stamped = await repository.findByCode(deal.code);
+      expect(stamped?.agreedAt).toBeDefined();
+      // Row moved + timeline appended.
+      const row = await repository.findByCode(deal.code);
+      expect(row?.status).toBe(DealStatus.AGREED);
+      const events = await repository.findEvents(deal.id);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        actorId: SELLER_ID,
+        fromStatus: DealStatus.NEGOTIATING,
+        toStatus: DealStatus.AGREED,
+      });
+    });
+
+    it('surfaces the matrix role denial through the code route (403)', async () => {
+      const deal = seedDealAt(DealStatus.PAYMENT_PENDING);
+      // The buyer may NOT confirm payment received — that is the seller's row.
+      const thrown = await rejectsOf(() =>
+        service.transitionFromCode(deal.code, BUYER_ID, { to: DealStatus.PAID }),
+      );
+      expect(thrown).toBeInstanceOf(ForbiddenException);
+      expect(errorCode(thrown)).toBe(DEAL_ERROR_CODES.TRANSITION_ROLE_FORBIDDEN);
+    });
+
+    it('rejects a too-short dispute reason with 400 DISPUTE_REASON_TOO_SHORT (the ≥ 20-char rule)', async () => {
+      const deal = seedDealAt(DealStatus.AGREED);
+      const short = await rejectsOf(() =>
+        service.transitionFromCode(deal.code, BUYER_ID, {
+          to: DealStatus.DISPUTED,
+          note: 'خیلی کوتاه',
+        }),
+      );
+      expect(short).toBeInstanceOf(BadRequestException);
+      expect(errorCode(short)).toBe(DEAL_ERROR_CODES.DISPUTE_REASON_TOO_SHORT);
+
+      // A reason past the floor goes through and lands on the row + timeline.
+      const reason = 'کالا با آنچه در عکس‌ها نشان داده شده بود تفاوت اساسی دارد';
+      const response = await service.transitionFromCode(deal.code, BUYER_ID, {
+        to: DealStatus.DISPUTED,
+        note: reason,
+      });
+      expect(response.status).toBe(DealStatus.DISPUTED);
+      const row = await repository.findByCode(deal.code);
+      expect(row?.disputeReason).toBe(reason);
+    });
+  });
+
+  describe('cancelFromCode (the →CANCELLED shorthand)', () => {
+    it('writes the reason to cancelReason + the timeline and RESTORES the reserved quantity', async () => {
+      const deal = seedDealAt(DealStatus.NEGOTIATING);
+      const before = await availability(lotId);
+
+      const response = await service.cancelFromCode(deal.code, BUYER_ID, 'خریدار منصرف شد');
+
+      expect(response.status).toBe(DealStatus.CANCELLED);
+      expect(response.myRole).toBe('buyer');
+      const row = await repository.findByCode(deal.code);
+      expect(row).toMatchObject({ status: DealStatus.CANCELLED, cancelReason: 'خریدار منصرف شد' });
+      expect(await availability(lotId)).toBe((before ?? 0) + deal.quantity);
+      const events = await repository.findEvents(deal.id);
+      expect(events[events.length - 1]).toMatchObject({
+        toStatus: DealStatus.CANCELLED,
+        note: 'خریدار منصرف شد',
+      });
+    });
+  });
+
+  describe('confirmPaymentFromCode (the buyer’s «پرداخت کردم» mark)', () => {
+    it('stamps paidConfirmedByBuyerAt + appends the informational event, status unchanged', async () => {
+      const deal = seedDealAt(DealStatus.PAYMENT_PENDING);
+
+      const response = await service.confirmPaymentFromCode(deal.code, BUYER_ID, NOW);
+
+      expect(response.status).toBe(DealStatus.PAYMENT_PENDING);
+      expect(response.myRole).toBe('buyer');
+      const row = await repository.findByCode(deal.code);
+      expect(row?.paidConfirmedByBuyerAt?.getTime()).toBe(NOW.getTime());
+      const events = await repository.findEvents(deal.id);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        actorId: BUYER_ID,
+        fromStatus: DealStatus.PAYMENT_PENDING,
+        toStatus: DealStatus.PAYMENT_PENDING,
+        note: 'خریدار پرداخت را اعلام کرد',
+      });
+    });
+
+    it('403 PAYMENT_CONFIRM_BUYER_ONLY for the seller', async () => {
+      const deal = seedDealAt(DealStatus.PAYMENT_PENDING);
+      const thrown = await rejectsOf(() => service.confirmPaymentFromCode(deal.code, SELLER_ID));
+      expect(thrown).toBeInstanceOf(ForbiddenException);
+      expect(errorCode(thrown)).toBe(DEAL_ERROR_CODES.PAYMENT_CONFIRM_BUYER_ONLY);
+    });
+
+    it('409 PAYMENT_NOT_PENDING outside the payment stage', async () => {
+      const deal = seedDealAt(DealStatus.NEGOTIATING);
+      const thrown = await rejectsOf(() => service.confirmPaymentFromCode(deal.code, BUYER_ID));
+      expect(thrown).toBeInstanceOf(ConflictException);
+      expect(errorCode(thrown)).toBe(DEAL_ERROR_CODES.PAYMENT_NOT_PENDING);
+    });
+
+    it('409 PAYMENT_ALREADY_CONFIRMED on the second mark (one event, not two)', async () => {
+      const deal = seedDealAt(DealStatus.PAYMENT_PENDING);
+      await service.confirmPaymentFromCode(deal.code, BUYER_ID, NOW);
+
+      const thrown = await rejectsOf(() => service.confirmPaymentFromCode(deal.code, BUYER_ID));
+      expect(thrown).toBeInstanceOf(ConflictException);
+      expect(errorCode(thrown)).toBe(DEAL_ERROR_CODES.PAYMENT_ALREADY_CONFIRMED);
+      expect(await repository.findEvents(deal.id)).toHaveLength(1);
+    });
   });
 });

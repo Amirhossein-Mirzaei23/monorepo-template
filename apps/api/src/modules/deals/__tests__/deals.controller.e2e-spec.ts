@@ -381,4 +381,173 @@ describe('DealsController (e2e)', () => {
       paymentMethod: PaymentMethodRecorded.CASH,
     }).expect(400);
   });
+
+  // ---------------------------------------------------------------
+  // DEAL-003: the transition endpoints (matrix + participant gates)
+  // ---------------------------------------------------------------
+
+  const transition = (token: string, code: string, body: object) =>
+    request(app.getHttpServer())
+      .post(`/deals/${code}/transition`)
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Forwarded-For', nextIp())
+      .send(body);
+
+  const paymentConfirm = (token: string, code: string) =>
+    request(app.getHttpServer())
+      .post(`/deals/${code}/payment-confirm`)
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Forwarded-For', nextIp())
+      .send();
+
+  /** A live deal through the offer path: negotiate → accept → POST /deals. */
+  const createDealViaOffer = async () => {
+    const { buyer, seller, lot } = await setupNegotiation();
+    const offer = await request(app.getHttpServer())
+      .post('/offers')
+      .set('Authorization', `Bearer ${buyer.token}`)
+      .set('X-Forwarded-For', nextIp())
+      .send(createOfferBody(lot.id))
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/offers/${offer.body.id}/accept`)
+      .set('Authorization', `Bearer ${seller.token}`)
+      .set('X-Forwarded-For', nextIp())
+      .expect(200);
+    const deal = await postDeal(buyer.token, { offerId: offer.body.id, ...dealTerms }).expect(201);
+    return { buyer, seller, lot, deal: deal.body as { code: string; id: string } };
+  };
+
+  it('walks the full happy path NEGOTIATING→…→COMPLETED through the endpoints, timeline total', async () => {
+    const { buyer, seller, lot, deal } = await createDealViaOffer();
+
+    await transition(seller.token, deal.code, { to: 'AGREED' }).expect(200);
+    await transition(buyer.token, deal.code, { to: 'PAYMENT_PENDING' }).expect(200);
+
+    // The payment announcement does NOT move the status (the seller's row does).
+    await paymentConfirm(buyer.token, deal.code).expect(200);
+    const marked = await prisma.deal.findUnique({ where: { code: deal.code } });
+    expect(marked?.status).toBe('PAYMENT_PENDING');
+    expect(marked?.paidConfirmedByBuyerAt).not.toBeNull();
+
+    await transition(seller.token, deal.code, { to: 'PAID' }).expect(200);
+    await transition(seller.token, deal.code, { to: 'PREPARING' }).expect(200);
+    await transition(seller.token, deal.code, { to: 'SHIPPED' }).expect(200);
+    await transition(seller.token, deal.code, { to: 'DELIVERED' }).expect(200);
+    const completed = await transition(buyer.token, deal.code, {
+      to: 'COMPLETED',
+    }).expect(200);
+
+    expect(completed.body.status).toBe('COMPLETED');
+    expect(completed.body.myRole).toBe('buyer');
+    // The reservation stands at COMPLETED (lot SOLD effects are DEAL-005).
+    expect(await availabilityOf(lot.id)).toBe(30);
+
+    // The timeline is total: birth + announcement + 7 moves.
+    const events = await prisma.dealEvent.findMany({ where: { dealId: deal.id } });
+    expect(events).toHaveLength(9);
+    const statuses = events.map((event) => event.toStatus);
+    expect(statuses).toEqual([
+      'NEGOTIATING',
+      'AGREED',
+      'PAYMENT_PENDING',
+      'PAYMENT_PENDING',
+      'PAID',
+      'PREPARING',
+      'SHIPPED',
+      'DELIVERED',
+      'COMPLETED',
+    ]);
+    expect(events[3]?.note).toBe('خریدار پرداخت را اعلام کرد');
+  });
+
+  it('enforces the matrix over HTTP: role denials 403, illegal pair 409 with the allowed list', async () => {
+    const { buyer, seller, deal } = await createDealViaOffer();
+
+    // The buyer may not confirm payment received (the seller's row): walk to
+    // PAYMENT_PENDING where the (from, to) pair exists but excludes the buyer.
+    await transition(seller.token, deal.code, { to: 'AGREED' }).expect(200);
+    await transition(buyer.token, deal.code, { to: 'PAYMENT_PENDING' }).expect(200);
+    const roleDenied = await transition(buyer.token, deal.code, { to: 'PAID' }).expect(403);
+    expect(roleDenied.body.code).toBe('TRANSITION_ROLE_FORBIDDEN');
+
+    // Walk to DELIVERED — receipt confirmation is the BUYER's row alone.
+    await transition(seller.token, deal.code, { to: 'PAID' }).expect(200);
+    await transition(seller.token, deal.code, { to: 'PREPARING' }).expect(200);
+    await transition(seller.token, deal.code, { to: 'SHIPPED' }).expect(200);
+    await transition(seller.token, deal.code, { to: 'DELIVERED' }).expect(200);
+    const sellerDenied = await transition(seller.token, deal.code, {
+      to: 'COMPLETED',
+    }).expect(403);
+    expect(sellerDenied.body.code).toBe('TRANSITION_ROLE_FORBIDDEN');
+
+    // A move the table does not know → 409 carrying the allowed next states.
+    const illegal = await transition(seller.token, deal.code, { to: 'PAID' }).expect(409);
+    expect(illegal.body.code).toBe('ILLEGAL_TRANSITION');
+    expect(illegal.body.allowed).toEqual(['COMPLETED', 'DISPUTED']);
+    expect(illegal.body.allowedFa).toEqual(['تکمیل شده', 'در اختلاف']);
+  });
+
+  it('gates :code routes: 404 unknown code, 403 non-participant', async () => {
+    const { buyer, deal } = await createDealViaOffer();
+    const outsider = await loginAsBuyer();
+
+    const missing = await transition(buyer.token, 'no-such-code', {
+      to: 'AGREED',
+    }).expect(404);
+    expect(missing.body.code).toBe('DEAL_NOT_FOUND');
+
+    const foreign = await transition(outsider.token, deal.code, {
+      to: 'AGREED',
+    }).expect(403);
+    expect(foreign.body.code).toBe('DEAL_NOT_PARTICIPANT');
+    await paymentConfirm(outsider.token, deal.code).expect(403);
+  });
+
+  it('rejects a too-short dispute reason with 400 DISPUTE_REASON_TOO_SHORT', async () => {
+    const { buyer, deal } = await createDealViaOffer();
+
+    const short = await transition(buyer.token, deal.code, {
+      to: 'DISPUTED',
+      note: 'خیلی کوتاه',
+    }).expect(400);
+    expect(short.body.code).toBe('DISPUTE_REASON_TOO_SHORT');
+
+    const enough = await transition(buyer.token, deal.code, {
+      to: 'DISPUTED',
+      note: 'کالا با آنچه در عکس‌ها نشان داده شده بود تفاوت اساسی دارد',
+    }).expect(200);
+    expect(enough.body.status).toBe('DISPUTED');
+  });
+
+  it('restores the reserved quantity on an early cancel (the DEAL-002 pair, over HTTP)', async () => {
+    const { buyer, lot, deal } = await createDealViaOffer();
+    expect(await availabilityOf(lot.id)).toBe(30);
+
+    const cancelled = await request(app.getHttpServer())
+      .post(`/deals/${deal.code}/cancel`)
+      .set('Authorization', `Bearer ${buyer.token}`)
+      .set('X-Forwarded-For', nextIp())
+      .send({ reason: 'خریدار منصرف شد' })
+      .expect(200);
+
+    expect(cancelled.body.status).toBe('CANCELLED');
+    expect(await availabilityOf(lot.id)).toBe(40);
+  });
+
+  it('guards payment-confirm: 409 outside PAYMENT_PENDING, 409 on the second mark', async () => {
+    const { buyer, deal } = await createDealViaOffer();
+
+    // NEGOTIATING — not the payment stage yet.
+    const early = await paymentConfirm(buyer.token, deal.code).expect(409);
+    expect(early.body.code).toBe('PAYMENT_NOT_PENDING');
+
+    await transition(buyer.token, deal.code, { to: 'AGREED' }).expect(200);
+    await transition(buyer.token, deal.code, { to: 'PAYMENT_PENDING' }).expect(200);
+    await paymentConfirm(buyer.token, deal.code).expect(200);
+    const twice = await paymentConfirm(buyer.token, deal.code).expect(409);
+    expect(twice.body.code).toBe('PAYMENT_ALREADY_CONFIRMED');
+    const events = await prisma.dealEvent.findMany({ where: { dealId: deal.id } });
+    expect(events.filter((event) => event.note === 'خریدار پرداخت را اعلام کرد')).toHaveLength(1);
+  });
 });
