@@ -45,6 +45,21 @@ export class ProfilesRepository {
     return tx ?? this.prisma;
   }
 
+  /**
+   * DEAL-005 — the seller's completed-deals counter: ONE atomic increment
+   * (plan §12 — never read-modify-write) inside the caller's transaction (the
+   * deals completion handler's tx). 0 matched rows is fine (a seller without
+   * an onboarded profile row simply has no counter to move — the deals where
+   * they were the seller stay the derived truth for PROF-005's rollup).
+   */
+  async incrementSuccessfulDeals(userId: string, tx: Tx = undefined): Promise<number> {
+    const result = await this.client(tx).profile.updateMany({
+      where: { userId },
+      data: { successfulDeals: { increment: 1 } },
+    });
+    return result.count;
+  }
+
   /** Own-profile read: interests included, insertion order. */
   async findByUserId(userId: string, tx: Tx = undefined): Promise<ProfileWithInterests | null> {
     return this.client(tx).profile.findUnique({

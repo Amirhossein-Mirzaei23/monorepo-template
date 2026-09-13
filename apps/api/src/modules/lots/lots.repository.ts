@@ -728,6 +728,27 @@ export class LotsRepository {
   }
 
   /**
+   * DEAL-005 — the completion side-effect: when the LAST reserved stock has
+   * just been consumed (availableQuantity = 0), the lot leaves the market —
+   * SOLD + soldAt, ONE conditional updateMany over the whole precondition
+   * (plan §12; the lots transition table's legal ACTIVE/PAUSED → SOLD arms).
+   * 0 matched rows is normal (stock remains, or the lot is already SOLD) —
+   * the caller does not branch on it. Runs inside the CALLER's transaction
+   * (the deals completion handler's tx).
+   */
+  async markSoldIfDepleted(lotId: string, at: Date, tx: Tx = undefined): Promise<number> {
+    const result = await this.client(tx).lot.updateMany({
+      where: {
+        id: lotId,
+        availableQuantity: 0,
+        status: { in: [LotStatus.ACTIVE, LotStatus.PAUSED] },
+      },
+      data: { status: LotStatus.SOLD, soldAt: at },
+    });
+    return result.count;
+  }
+
+  /**
    * Atomic counter bumps (plan §12: updateMany, never read-modify-write).
    * Only the provided counters move; returns the number of matched rows
    * (0 for an unknown id).

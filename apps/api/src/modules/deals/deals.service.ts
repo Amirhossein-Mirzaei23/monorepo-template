@@ -27,6 +27,7 @@ import { ConversationsRepository } from '../conversations/conversations.reposito
 import { truncatePreview } from '../conversations/conversations.constants';
 import { LotsRepository, type LotWithMedia } from '../lots/lots.repository';
 import { OffersRepository } from '../offers/offers.repository';
+import { ProfilesRepository } from '../profiles/profiles.repository';
 import { UsersRepository } from '../users/users.repository';
 import type { Paginated } from '../../common/dto/pagination-query.dto';
 import { DealsRepository } from './deals.repository';
@@ -292,6 +293,7 @@ export class DealsService {
     private readonly offers: OffersRepository,
     private readonly conversations: ConversationsRepository,
     private readonly users: UsersRepository,
+    private readonly profiles: ProfilesRepository,
   ) {}
 
   /**
@@ -414,6 +416,17 @@ export class DealsService {
       if (to === DealStatus.CANCELLED && deal.status !== DealStatus.DISPUTED) {
         await this.lots.restoreQuantity(deal.lotId, deal.quantity, client);
       }
+      // The COMPLETION effects (DEAL-005) — the same transaction, so a
+      // failure rolls the status write back too (the card's atomicity rule).
+      // Idempotency does not need its own guard here: the guarded write above
+      // pinned this move to status = DELIVERED, so a raced or repeated
+      // completion never reaches this line. The CANCELLED side of the card is
+      // already the restore above (purchase history + review eligibility are
+      // DERIVED states — deals where buyer = me & COMPLETED /
+      // deal.completedAt != null — no extra tables).
+      if (to === DealStatus.COMPLETED) {
+        await this.completeSideEffects(deal, now, client);
+      }
       // Read back INSIDE the transaction — the write's row lock holds until
       // commit, so this reflects this writer's move, not a racer's.
       const updated = await this.repository.findById(deal.id, client);
@@ -423,7 +436,32 @@ export class DealsService {
       }
       return updated;
     };
+
     return tx !== undefined ? run(tx) : this.prisma.$transaction(async (client) => run(client));
+  }
+
+  /**
+   * DEAL-005 — the completion side-effects, INSIDE the transition's
+   * transaction (a failure here rolls the status write back):
+   *
+   * 1. LOT LEDGER — when the deal consumed the final stock
+   *    (availableQuantity = 0) the lot leaves the market: SOLD + soldAt
+   *    (LotsRepository.markSoldIfDepleted's conditional updateMany; 0 matched
+   *    rows is the normal "stock remains" case, not an error).
+   * 2. SELLER COUNTER — the Profile.successfulDeals atomic increment (the
+   *    metrics-strip number; PROF-005's rollup owns the remaining metric
+   *    columns). A missing profile row is tolerated (0 rows).
+   * 3. Review eligibility + purchase history are DERIVED states
+   *    (deal.completedAt non-null / deals where buyer = me & COMPLETED) —
+   *    no extra writes by design (the card's "derived" note).
+   *
+   * NTF hook point (deal.completed — both parties) — realized P1 (NTF-001).
+   */
+  private async completeSideEffects(deal: Deal, now: Date, client: Tx): Promise<void> {
+    // The conditional write IS the depleted guard (0 available + still
+    // sellable) — no read needed; 0 matched rows is the normal case.
+    await this.lots.markSoldIfDepleted(deal.lotId, now, client);
+    await this.profiles.incrementSuccessfulDeals(deal.sellerId, client);
   }
 
   /**

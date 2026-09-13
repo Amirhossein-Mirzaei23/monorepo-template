@@ -152,7 +152,7 @@ principles 7, 12; decision D9 flags the legal review).
 - **Testing:** component tests (action visibility matrix), page tests.
 - **DoD:** suites green; used by QA-001.
 
-### DEAL-005 — Completion effects
+### DEAL-005 ✅ — Completion effects
 
 **P0 · Phase 6 · Deals · M** — Deps: DEAL-003, LOT-003, NTF hooks (realized P1)
 

@@ -270,9 +270,13 @@ model Profile {
   sellerYearsActive  Int?
   sellerBusinessType String?
   sellerDescription  String?
+  /// Completed-deal counter for the seller metrics strip (DEAL-005's atomic
+  /// increment on every COMPLETED deal; PROF-005's rollup owns the REST of
+  /// the metric columns — rating/response/cancellation stay its scope).
+  successfulDeals    Int     @default(0)
   interests          ProfileInterest[]
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 }
 
 /// Explicit profile↔category interests join (ONB-001) — a real FK table, not a

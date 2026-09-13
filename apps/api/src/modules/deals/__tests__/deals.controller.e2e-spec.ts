@@ -632,4 +632,61 @@ describe('DealsController (e2e)', () => {
       .set('X-Forwarded-For', nextIp())
       .expect(403);
   });
+
+  it('completion effects: the final deal marks the lot SOLD and bumps the seller counter (DEAL-005)', async () => {
+    // A lot whose WHOLE stock this one deal consumes → completion depletes it.
+    const { buyer, seller, lot, deal } = await (async () => {
+      const setup = await setupNegotiation({
+        availableQuantity: 10,
+        quantity: 10,
+        minOrderQuantity: 10,
+      });
+      const offer = await request(app.getHttpServer())
+        .post('/offers')
+        .set('Authorization', `Bearer ${setup.buyer.token}`)
+        .set('X-Forwarded-For', nextIp())
+        .send(createOfferBody(setup.lot.id))
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/offers/${offer.body.id}/accept`)
+        .set('Authorization', `Bearer ${setup.seller.token}`)
+        .set('X-Forwarded-For', nextIp())
+        .expect(200);
+      const created = await postDeal(setup.buyer.token, {
+        offerId: offer.body.id,
+        ...dealTerms,
+      }).expect(201);
+      return { ...setup, deal: created.body as { code: string; id: string } };
+    })();
+
+    // The creation reserved the entire stock.
+    expect(await availabilityOf(lot.id)).toBe(0);
+
+    // Give the seller a profile row (onboarding normally does).
+    prisma.seedProfile({ userId: seller.user.id, displayName: 'فروشنده نمونه' });
+
+    for (const [token, to] of [
+      [seller.token, 'AGREED'],
+      [buyer.token, 'PAYMENT_PENDING'],
+      [seller.token, 'PAID'],
+      [seller.token, 'PREPARING'],
+      [seller.token, 'SHIPPED'],
+      [seller.token, 'DELIVERED'],
+      [buyer.token, 'COMPLETED'],
+    ] as const) {
+      await transition(token, deal.code, { to }).expect(200);
+    }
+
+    // The completion ledger: the depleted lot is SOLD (stamped), the seller's
+    // counter moved, and the deal's completedAt is set.
+    const soldLot = await prisma.lot.findUnique({ where: { id: lot.id } });
+    expect(soldLot?.status).toBe('SOLD');
+    expect(soldLot?.soldAt).not.toBeNull();
+    const profile = await prisma.profile.findUnique({ where: { userId: seller.user.id } });
+    expect(profile?.successfulDeals).toBe(1);
+    const row = await prisma.deal.findUnique({ where: { code: deal.code } });
+    expect(row?.completedAt).not.toBeNull();
+    // Review eligibility + purchase history stay DERIVED (completedAt non-null
+    // / COMPLETED buyer deals) — nothing else to assert structurally.
+  });
 });

@@ -912,6 +912,27 @@ export class FakePrisma {
       this.profiles.set(existing.id, next);
       return cloneProfile(next);
     },
+    /** The DEAL-005 successful-deals counter: atomic increment (mirrors
+     * updateMany — count-only return, 0 when no profile row exists). */
+    updateMany: async ({
+      where,
+      data,
+    }: {
+      where: { userId: string };
+      data: { successfulDeals?: { increment: number } };
+    }): Promise<{ count: number }> => {
+      const existing = [...this.profiles.values()].find((row) => row.userId === where.userId);
+      if (!existing) {
+        return { count: 0 };
+      }
+      const next: Profile = {
+        ...existing,
+        successfulDeals: existing.successfulDeals + (data.successfulDeals?.increment ?? 0),
+        updatedAt: nowIso(),
+      };
+      this.profiles.set(existing.id, next);
+      return { count: 1 };
+    },
   };
 
   readonly profileInterest = {
@@ -1868,6 +1889,7 @@ export class FakePrisma {
     sellerYearsActive?: number | null;
     sellerBusinessType?: string | null;
     sellerDescription?: string | null;
+    successfulDeals?: number;
     interestCategoryIds?: string[];
     createdAt?: Date;
   }): ProfileWithInterestsRow {
@@ -1886,6 +1908,7 @@ export class FakePrisma {
       sellerYearsActive: profile.sellerYearsActive ?? null,
       sellerBusinessType: profile.sellerBusinessType ?? null,
       sellerDescription: profile.sellerDescription ?? null,
+      successfulDeals: profile.successfulDeals ?? 0,
       createdAt: profile.createdAt ?? nowIso(),
       updatedAt: nowIso(),
     };
@@ -2368,7 +2391,14 @@ function matchesLotWhere(where: LotWhere | undefined): (row: Lot) => boolean {
  * availableQuantity): an absent range never narrows; each bound is inclusive
  * (Prisma gte/lte semantics — the DEAL-002 reservation predicate's
  * availableQuantity ≥ quantity arm relies on this). */
-function rangeMatches(value: number, range: { gte?: number; lte?: number } | undefined): boolean {
+function rangeMatches(
+  value: number,
+  range: number | { gte?: number; lte?: number } | undefined,
+): boolean {
+  // A bare scalar is exact equality (DEAL-005's availableQuantity: 0 arm).
+  if (typeof range === 'number') {
+    return value === range;
+  }
   if (range === undefined) {
     return true;
   }

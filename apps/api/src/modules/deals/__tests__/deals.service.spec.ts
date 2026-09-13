@@ -23,6 +23,7 @@ import { FakePrisma } from '../../../test/fakes/fake-prisma';
 import { ConversationsRepository } from '../../conversations/conversations.repository';
 import { LotsRepository } from '../../lots/lots.repository';
 import { OffersRepository } from '../../offers/offers.repository';
+import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { UsersRepository } from '../../users/users.repository';
 import { DealsRepository } from '../deals.repository';
 import {
@@ -262,6 +263,7 @@ describe('DealsService.transition (the matrix executor + timeline append)', () =
       new OffersRepository(fake as unknown as PrismaService),
       new ConversationsRepository(fake as unknown as PrismaService),
       new UsersRepository(fake as unknown as PrismaService),
+      new ProfilesRepository(fake as unknown as PrismaService),
     );
     lotId = fake.seedLot({
       sellerId: SELLER_ID,
@@ -536,6 +538,7 @@ describe('DealsService.transition — the CANCELLED quantity restore (DEAL-002 r
       new OffersRepository(fake as unknown as PrismaService),
       new ConversationsRepository(fake as unknown as PrismaService),
       new UsersRepository(fake as unknown as PrismaService),
+      new ProfilesRepository(fake as unknown as PrismaService),
     );
     // 30 available = 40 listed − 10 already reserved by the deals below.
     lotId = fake.seedLot({
@@ -693,6 +696,7 @@ describe('DealsService.create — DEAL-002 (offer path, quick path, reservation)
       new OffersRepository(fake as unknown as PrismaService),
       new ConversationsRepository(fake as unknown as PrismaService),
       new UsersRepository(fake as unknown as PrismaService),
+      new ProfilesRepository(fake as unknown as PrismaService),
     );
   });
 
@@ -1150,6 +1154,7 @@ describe('DealsService DEAL-003 — transitionFromCode / cancelFromCode / confir
       new OffersRepository(fake as unknown as PrismaService),
       new ConversationsRepository(fake as unknown as PrismaService),
       new UsersRepository(fake as unknown as PrismaService),
+      new ProfilesRepository(fake as unknown as PrismaService),
     );
     lotId = fake.seedLot({
       sellerId: SELLER_ID,
@@ -1379,6 +1384,7 @@ describe('DealsService DEAL-004 — listMine / detailByCode', () => {
       new OffersRepository(fake as unknown as PrismaService),
       new ConversationsRepository(fake as unknown as PrismaService),
       new UsersRepository(fake as unknown as PrismaService),
+      new ProfilesRepository(fake as unknown as PrismaService),
     );
     buyerId = fake.seedUser({
       phone: `0912${Math.random().toString().slice(2, 9)}`,
@@ -1495,5 +1501,133 @@ describe('DealsService DEAL-004 — listMine / detailByCode', () => {
 
     const foreign = await rejectsOf(() => service.detailByCode(deal.code, 'someone-else'));
     expect(errorCode(foreign)).toBe(DEAL_ERROR_CODES.DEAL_NOT_PARTICIPANT);
+  });
+});
+
+describe('DealsService DEAL-005 — completion side-effects (same-transaction)', () => {
+  let fake: FakePrisma;
+  let service: DealsService;
+  let repository: DealsRepository;
+  let lotId: string;
+  let buyerId: string;
+  let sellerId: string;
+
+  beforeEach(() => {
+    fake = new FakePrisma();
+    repository = new DealsRepository(fake as unknown as PrismaService);
+    service = new DealsService(
+      repository,
+      fake as unknown as PrismaService,
+      new LotsRepository(fake as unknown as PrismaService),
+      new OffersRepository(fake as unknown as PrismaService),
+      new ConversationsRepository(fake as unknown as PrismaService),
+      new UsersRepository(fake as unknown as PrismaService),
+      new ProfilesRepository(fake as unknown as PrismaService),
+    );
+    buyerId = fake.seedUser({
+      phone: `0912${Math.random().toString().slice(2, 9)}`,
+      name: 'خریدار',
+      accountRoles: [AccountRole.BUYER],
+    }).id;
+    sellerId = fake.seedUser({
+      phone: `0913${Math.random().toString().slice(2, 9)}`,
+      name: 'فروشنده',
+      accountRoles: [AccountRole.SELLER],
+    }).id;
+    fake.seedProfile({ userId: sellerId, displayName: 'فروشنده نمونه' });
+    lotId = fake.seedLot({
+      sellerId,
+      categoryId: 'cat-1',
+      title: 'عمده پیراهن مردانه — ۵۰ عدد',
+      quantity: 50,
+      availableQuantity: 0,
+      minOrderQuantity: 10,
+      pricingType: PricingType.FIXED,
+      totalPrice: 50_000_000,
+      unitPrice: 1_000_000,
+      condition: LotCondition.GRADE_A,
+      liquidationReason: LiquidationReason.OVERSTOCK,
+      province: 'tehran',
+      city: 'tehran',
+      status: LotStatus.ACTIVE,
+      expiresAt: new Date(Date.now() + 30 * DAY_MS),
+    }).id;
+  });
+
+  const seedDeliveredDeal = () =>
+    fake.seedDeal({
+      lotId,
+      buyerId,
+      sellerId,
+      quantity: 10,
+      unitPrice: 1_000_000,
+      totalPrice: 10_000_000,
+      deliveryMethod: DeliveryMethod.SELLER_SHIPS,
+      paymentMethod: PaymentMethodRecorded.CARD_TO_CARD,
+      status: DealStatus.DELIVERED,
+      deliveredAt: NOW,
+    });
+
+  it('COMPLETED with availableQuantity 0: lot flips SOLD + soldAt, seller counter +1, one tx', async () => {
+    const deal = seedDeliveredDeal();
+
+    await service.transition(deal, DealStatus.COMPLETED, 'BUYER', { actorId: buyerId }, NOW);
+
+    const lot = await fake.lot.findUnique({ where: { id: lotId } });
+    expect(lot?.status).toBe(LotStatus.SOLD);
+    expect(lot?.soldAt?.getTime()).toBe(NOW.getTime());
+    const profile = await fake.profile.findUnique({ where: { userId: sellerId } });
+    expect(profile?.successfulDeals).toBe(1);
+    // The audit trail: the COMPLETED event appended.
+    const events = await repository.findEvents(deal.id);
+    expect(events.at(-1)?.toStatus).toBe(DealStatus.COMPLETED);
+  });
+
+  it('COMPLETED with stock remaining: the lot stays ACTIVE, the counter still moves', async () => {
+    fake.seedProfile({ userId: buyerId, displayName: 'خریدار نمونه' });
+    await fake.lot.update({
+      where: { id: lotId },
+      data: { availableQuantity: 15 },
+    });
+    const deal = seedDeliveredDeal();
+
+    await service.transition(deal, DealStatus.COMPLETED, 'BUYER', { actorId: buyerId }, NOW);
+
+    const lot = await fake.lot.findUnique({ where: { id: lotId } });
+    expect(lot?.status).toBe(LotStatus.ACTIVE);
+    expect(lot?.soldAt).toBeNull();
+    const profile = await fake.profile.findUnique({ where: { userId: sellerId } });
+    expect(profile?.successfulDeals).toBe(1);
+  });
+
+  it('idempotent: the terminal COMPLETED state never re-enters the matrix (counter stays 1)', async () => {
+    const deal = seedDeliveredDeal();
+    await service.transition(deal, DealStatus.COMPLETED, 'BUYER', { actorId: buyerId }, NOW);
+
+    const completedRow = (await repository.findById(deal.id)) as typeof deal;
+    const again = await rejectsOf(() =>
+      service.transition(completedRow, DealStatus.COMPLETED, 'BUYER', { actorId: buyerId }, NOW),
+    );
+    expect(errorCode(again)).toBe(DEAL_ERROR_CODES.ILLEGAL_TRANSITION);
+    const profile = await fake.profile.findUnique({ where: { userId: sellerId } });
+    expect(profile?.successfulDeals).toBe(1);
+  });
+
+  it('a raced completion (stale DELIVERED snapshot) answers DEAL_STALE_STATE and writes nothing', async () => {
+    const deal = seedDeliveredDeal();
+    // The counterpart's dispute wins the race before this completion lands.
+    await fake.deal.update({
+      where: { id: deal.id },
+      data: { status: DealStatus.DISPUTED, disputeReason: 'کالا آسیب دیده تحویل شد' },
+    });
+
+    const thrown = await rejectsOf(() =>
+      service.transition(deal, DealStatus.COMPLETED, 'BUYER', { actorId: buyerId }, NOW),
+    );
+    expect(errorCode(thrown)).toBe(DEAL_ERROR_CODES.DEAL_STALE_STATE);
+    const profile = await fake.profile.findUnique({ where: { userId: sellerId } });
+    expect(profile?.successfulDeals).toBe(0);
+    const lot = await fake.lot.findUnique({ where: { id: lotId } });
+    expect(lot?.status).toBe(LotStatus.ACTIVE);
   });
 });
