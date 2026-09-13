@@ -3,21 +3,34 @@ import {
   ConflictException,
   ForbiddenException,
   HttpException,
+  NotFoundException,
 } from '@nestjs/common';
 import {
+  AccountRole,
   DealStatus,
   DeliveryMethod,
   LiquidationReason,
   LotCondition,
   LotStatus,
+  MessageType,
+  OfferStatus,
   PaymentMethodRecorded,
   PricingType,
   type Prisma,
 } from '@prisma/client';
 import type { PrismaService } from '../../../prisma/prisma.service';
 import { FakePrisma } from '../../../test/fakes/fake-prisma';
+import { ConversationsRepository } from '../../conversations/conversations.repository';
+import { LotsRepository } from '../../lots/lots.repository';
+import { OffersRepository } from '../../offers/offers.repository';
+import { UsersRepository } from '../../users/users.repository';
 import { DealsRepository } from '../deals.repository';
-import { DEAL_ERROR_CODES, STAGE_TIMESTAMP_FIELDS, type DealRole } from '../deals.constants';
+import {
+  DEAL_ERROR_CODES,
+  STAGE_TIMESTAMP_FIELDS,
+  dealCreatedActionBody,
+  type DealRole,
+} from '../deals.constants';
 import {
   DealsService,
   creationEvent,
@@ -239,7 +252,17 @@ describe('DealsService.transition (the matrix executor + timeline append)', () =
   beforeEach(() => {
     fake = new FakePrisma();
     repository = new DealsRepository(fake as unknown as PrismaService);
-    service = new DealsService(repository, fake as unknown as PrismaService);
+    // DEAL-002 widened the constructor (cross-module repositories); the
+    // transition suites exercise only the matrix, so plain fake-backed
+    // repositories are enough everywhere.
+    service = new DealsService(
+      repository,
+      fake as unknown as PrismaService,
+      new LotsRepository(fake as unknown as PrismaService),
+      new OffersRepository(fake as unknown as PrismaService),
+      new ConversationsRepository(fake as unknown as PrismaService),
+      new UsersRepository(fake as unknown as PrismaService),
+    );
     lotId = fake.seedLot({
       sellerId: SELLER_ID,
       categoryId: 'cat-1',
@@ -493,5 +516,619 @@ describe('DealsService.transition (the matrix executor + timeline append)', () =
     expect(updated.status).toBe(DealStatus.AGREED);
     const events = await repository.findEvents(deal.id, tx);
     expect(events).toHaveLength(1);
+  });
+});
+
+describe('DealsService.transition — the CANCELLED quantity restore (DEAL-002 reservation pair)', () => {
+  let fake: FakePrisma;
+  let service: DealsService;
+  let repository: DealsRepository;
+  let lotId: string;
+
+  beforeEach(() => {
+    fake = new FakePrisma();
+    repository = new DealsRepository(fake as unknown as PrismaService);
+    service = new DealsService(
+      repository,
+      fake as unknown as PrismaService,
+      new LotsRepository(fake as unknown as PrismaService),
+      new OffersRepository(fake as unknown as PrismaService),
+      new ConversationsRepository(fake as unknown as PrismaService),
+      new UsersRepository(fake as unknown as PrismaService),
+    );
+    // 30 available = 40 listed − 10 already reserved by the deals below.
+    lotId = fake.seedLot({
+      sellerId: SELLER_ID,
+      categoryId: 'cat-1',
+      title: 'عمده کفش ورزشی — ۴۰ جفت',
+      quantity: 40,
+      availableQuantity: 30,
+      minOrderQuantity: 10,
+      pricingType: PricingType.FIXED,
+      totalPrice: 10_000_000,
+      unitPrice: 250_000,
+      condition: LotCondition.GRADE_A,
+      liquidationReason: LiquidationReason.OVERSTOCK,
+      province: 'tehran',
+      city: 'tehran',
+      status: LotStatus.ACTIVE,
+      expiresAt: new Date(Date.now() + 30 * DAY_MS),
+    }).id;
+  });
+
+  const seedDealAt = (
+    status: DealStatus,
+    overrides: Partial<Parameters<FakePrisma['seedDeal']>[0]> = {},
+  ) =>
+    fake.seedDeal({
+      lotId,
+      buyerId: BUYER_ID,
+      sellerId: SELLER_ID,
+      quantity: 10,
+      unitPrice: 250_000,
+      totalPrice: 2_500_000,
+      deliveryMethod: DeliveryMethod.SELLER_SHIPS,
+      paymentMethod: PaymentMethodRecorded.CARD_TO_CARD,
+      status,
+      ...overrides,
+    });
+
+  const availability = async (): Promise<number> => {
+    const lot = await fake.lot.findUnique({ where: { id: lotId } });
+    if (!lot) {
+      throw new Error('lot vanished');
+    }
+    return lot.availableQuantity;
+  };
+
+  it.each([
+    [DealStatus.NEGOTIATING, 'BUYER'],
+    [DealStatus.AGREED, 'SELLER'],
+    [DealStatus.PAYMENT_PENDING, 'SELLER'],
+  ])('%s → CANCELLED (%s) restores the reserved quantity in the same write', async (from, role) => {
+    const deal = seedDealAt(from);
+
+    await service.transition(
+      deal,
+      DealStatus.CANCELLED,
+      role as DealRole,
+      { actorId: BUYER_ID, note: 'منصرف شدم' },
+      NOW,
+    );
+
+    expect(await availability()).toBe(40);
+  });
+
+  it('DISPUTED → CANCELLED (admin resolution) does NOT auto-restore — DEAL-007 decides per outcome', async () => {
+    const deal = seedDealAt(DealStatus.DISPUTED, { disputeReason: 'کالا مغایر توافق است' });
+
+    await service.transition(
+      deal,
+      DealStatus.CANCELLED,
+      'ADMIN',
+      { actorId: 'admin-1', note: 'به نفع فروشنده رسیدگی شد' },
+      NOW,
+    );
+
+    expect(await availability()).toBe(30);
+  });
+
+  it('non-cancel transitions never touch the lot (only →CANCELLED restores)', async () => {
+    const deal = seedDealAt(DealStatus.NEGOTIATING);
+
+    await service.transition(deal, DealStatus.AGREED, 'SELLER', { actorId: SELLER_ID }, NOW);
+
+    expect(await availability()).toBe(30);
+  });
+});
+
+describe('DealsService.create — DEAL-002 (offer path, quick path, reservation)', () => {
+  let fake: FakePrisma;
+  let service: DealsService;
+  let repository: DealsRepository;
+  let lotsRepository: LotsRepository;
+
+  /** Deterministic terms payload (offer path: must mirror the seeded offer). */
+  const baseDto = {
+    quantity: 10,
+    unitPrice: 300_000,
+    deliveryMethod: DeliveryMethod.SELLER_SHIPS,
+    paymentMethod: PaymentMethodRecorded.CARD_TO_CARD,
+  };
+
+  const seedBuyer = (roles: AccountRole[] = [AccountRole.BUYER]): { id: string } => ({
+    id: fake.seedUser({
+      phone: `0912${Math.random().toString().slice(2, 9)}`,
+      name: 'خریدار',
+      accountRoles: roles,
+    }).id,
+  });
+
+  const seedLot = (overrides: Partial<Parameters<FakePrisma['seedLot']>[0]> = {}) =>
+    fake.seedLot({
+      sellerId: SELLER_ID,
+      categoryId: 'cat-1',
+      title: 'عمده پیراهن مردانه — ۵۰ عدد',
+      quantity: 50,
+      availableQuantity: 40,
+      minOrderQuantity: 10,
+      pricingType: PricingType.NEGOTIABLE,
+      totalPrice: 112_500_000,
+      unitPrice: 2_250_000,
+      condition: LotCondition.GRADE_A,
+      liquidationReason: LiquidationReason.OVERSTOCK,
+      province: 'tehran',
+      city: 'tehran',
+      status: LotStatus.ACTIVE,
+      expiresAt: new Date(Date.now() + 30 * DAY_MS),
+      ...overrides,
+    });
+
+  const seedAcceptedOffer = (
+    lotId: string,
+    buyerId: string,
+    overrides: Partial<Parameters<FakePrisma['seedOffer']>[0]> = {},
+  ) =>
+    fake.seedOffer({
+      lotId,
+      buyerId,
+      sellerId: SELLER_ID,
+      quantity: 10,
+      unitPrice: 300_000,
+      totalPrice: 3_000_000,
+      status: OfferStatus.ACCEPTED,
+      expiresAt: new Date(Date.now() + DAY_MS),
+      ...overrides,
+    });
+
+  beforeEach(() => {
+    fake = new FakePrisma();
+    repository = new DealsRepository(fake as unknown as PrismaService);
+    lotsRepository = new LotsRepository(fake as unknown as PrismaService);
+    service = new DealsService(
+      repository,
+      fake as unknown as PrismaService,
+      lotsRepository,
+      new OffersRepository(fake as unknown as PrismaService),
+      new ConversationsRepository(fake as unknown as PrismaService),
+      new UsersRepository(fake as unknown as PrismaService),
+    );
+  });
+
+  const availability = async (lotId: string): Promise<number> => {
+    const lot = await fake.lot.findUnique({ where: { id: lotId } });
+    if (!lot) {
+      throw new Error('lot vanished');
+    }
+    return lot.availableQuantity;
+  };
+
+  // ---------------------------------------------------------------
+  // Path (a): from an ACCEPTED offer
+  // ---------------------------------------------------------------
+
+  describe('offer path', () => {
+    it('creates from an ACCEPTED offer: terms snapshotted FROM THE OFFER, lot reserved, birth event carries «معامله ایجاد شد #CODE»', async () => {
+      const buyer = seedBuyer();
+      const lot = seedLot();
+      const offer = seedAcceptedOffer(lot.id, buyer.id);
+
+      const response = await service.create(buyer.id, { offerId: offer.id, ...baseDto });
+
+      expect(response.myRole).toBe('buyer');
+      expect(response.status).toBe(DealStatus.NEGOTIATING);
+      // The snapshot IS the offer's terms (never the payload's identity).
+      expect(response.quantity).toBe(10);
+      expect(response.unitPrice).toBe(300_000);
+      expect(response.totalPrice).toBe(3_000_000);
+      expect(response.lot).toEqual({ code: lot.code, title: lot.title });
+      expect(response.deliveryMethod).toBe(DeliveryMethod.SELLER_SHIPS);
+      expect(response.paymentMethod).toBe(PaymentMethodRecorded.CARD_TO_CARD);
+
+      // The row: provenance + denormalized seller + the reserved commission.
+      const row = await repository.findByCode(response.code);
+      expect(row).toMatchObject({
+        lotId: lot.id,
+        buyerId: buyer.id,
+        sellerId: SELLER_ID,
+        offerId: offer.id,
+        commissionRate: 0,
+      });
+
+      // The reservation: 40 − 10.
+      expect(await availability(lot.id)).toBe(30);
+
+      // The timeline is total from birth, with the fa creation note.
+      const events = await repository.findEvents(row?.id as string);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        actorId: buyer.id,
+        fromStatus: DealStatus.NEGOTIATING,
+        toStatus: DealStatus.NEGOTIATING,
+        note: dealCreatedActionBody(response.code),
+      });
+    });
+
+    it('answers 404 for an unknown offer', async () => {
+      const buyer = seedBuyer();
+      const thrown = await rejectsOf(() =>
+        service.create(buyer.id, { offerId: 'no-such-offer', ...baseDto }),
+      );
+      expect(thrown).toBeInstanceOf(NotFoundException);
+    });
+
+    it('answers 403 OFFER_NOT_BUYER for another buyer’s offer (ownership before state)', async () => {
+      const buyer = seedBuyer();
+      const other = seedBuyer();
+      const lot = seedLot();
+      const offer = seedAcceptedOffer(lot.id, other.id);
+
+      const thrown = await rejectsOf(() =>
+        service.create(buyer.id, { offerId: offer.id, ...baseDto }),
+      );
+      expect(errorCode(thrown)).toBe(DEAL_ERROR_CODES.OFFER_NOT_BUYER);
+      expect(thrown).toBeInstanceOf(ForbiddenException);
+    });
+
+    it.each([
+      [OfferStatus.PENDING, 'OFFER_NOT_ACCEPTED'],
+      [OfferStatus.COUNTERED, 'OFFER_NOT_ACCEPTED'],
+      [OfferStatus.REJECTED, 'OFFER_NOT_ACCEPTED'],
+      [OfferStatus.CANCELLED, 'OFFER_NOT_ACCEPTED'],
+      [OfferStatus.EXPIRED, 'OFFER_EXPIRED'],
+    ])(
+      'a %s offer answers 409 %s (the card’s “bad offer state” as state codes)',
+      async (status, expectedCode) => {
+        const buyer = seedBuyer();
+        const lot = seedLot();
+        const offer = seedAcceptedOffer(lot.id, buyer.id, { status });
+
+        const thrown = await rejectsOf(() =>
+          service.create(buyer.id, { offerId: offer.id, ...baseDto }),
+        );
+        expect(errorCode(thrown)).toBe(expectedCode);
+        expect(thrown).toBeInstanceOf(ConflictException);
+        // Nothing was reserved on a failed create.
+        expect(await availability(lot.id)).toBe(40);
+      },
+    );
+
+    it('the payload may only CONFIRM the offer terms: a disagreeing quantity or unitPrice is 400 OFFER_TERMS_MISMATCH', async () => {
+      const buyer = seedBuyer();
+      const lot = seedLot();
+      const offer = seedAcceptedOffer(lot.id, buyer.id);
+
+      const qtyThrown = await rejectsOf(() =>
+        service.create(buyer.id, { offerId: offer.id, ...baseDto, quantity: 9 }),
+      );
+      expect(errorCode(qtyThrown)).toBe(DEAL_ERROR_CODES.OFFER_TERMS_MISMATCH);
+
+      const priceThrown = await rejectsOf(() =>
+        service.create(buyer.id, { offerId: offer.id, ...baseDto, unitPrice: 301_000 }),
+      );
+      expect(errorCode(priceThrown)).toBe(DEAL_ERROR_CODES.OFFER_TERMS_MISMATCH);
+
+      // Omitting the price echo is fine (the snapshot comes from the offer).
+      await expect(
+        service.create(buyer.id, {
+          offerId: offer.id,
+          quantity: 10,
+          deliveryMethod: DeliveryMethod.SELLER_SHIPS,
+          paymentMethod: PaymentMethodRecorded.CARD_TO_CARD,
+        }),
+      ).resolves.toMatchObject({ unitPrice: 300_000 });
+    });
+
+    it('a lot gone inactive after acceptance answers 409 LOT_NOT_ACTIVE; shrunken stock answers the validator’s 409', async () => {
+      const buyer = seedBuyer();
+      const lot = seedLot();
+      const offer = seedAcceptedOffer(lot.id, buyer.id);
+
+      await fake.lot.update({ where: { id: lot.id }, data: { status: LotStatus.PAUSED } });
+      const inactiveThrown = await rejectsOf(() =>
+        service.create(buyer.id, { offerId: offer.id, ...baseDto }),
+      );
+      expect(errorCode(inactiveThrown)).toBe(DEAL_ERROR_CODES.LOT_NOT_ACTIVE);
+
+      const shrunkLot = seedLot({ availableQuantity: 5 });
+      const shrunkOffer = seedAcceptedOffer(shrunkLot.id, buyer.id, {
+        quantity: 10,
+        unitPrice: 300_000,
+        totalPrice: 3_000_000,
+      });
+      const qtyThrown = await rejectsOf(() =>
+        service.create(buyer.id, { offerId: shrunkOffer.id, ...baseDto }),
+      );
+      expect(errorCode(qtyThrown)).toBe(DEAL_ERROR_CODES.QUANTITY_OUT_OF_RANGE);
+      expect(await availability(shrunkLot.id)).toBe(5);
+    });
+
+    it('ties the ACTION message to the OFFER’s conversation when the offer has one', async () => {
+      const buyer = seedBuyer();
+      const lot = seedLot();
+      const conversation = fake.seedConversation({
+        lotId: lot.id,
+        buyerId: buyer.id,
+        sellerId: SELLER_ID,
+        lastMessageAt: new Date(Date.now() - 60_000),
+      });
+      const offer = seedAcceptedOffer(lot.id, buyer.id, { conversationId: conversation.id });
+
+      const response = await service.create(buyer.id, { offerId: offer.id, ...baseDto });
+
+      const messages = await fake.message.findMany({ where: { conversationId: conversation.id } });
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        type: MessageType.ACTION,
+        senderId: buyer.id,
+        body: dealCreatedActionBody(response.code),
+      });
+      const row = await repository.findByCode(response.code);
+      expect(row?.conversationId).toBe(conversation.id);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // Path (b): the conversation quick path (FIXED-price lots)
+  // ---------------------------------------------------------------
+
+  describe('conversation quick path', () => {
+    const seedThread = (buyerId: string, lotId: string) =>
+      fake.seedConversation({
+        lotId,
+        buyerId,
+        sellerId: SELLER_ID,
+        lastMessageAt: new Date(Date.now() - 60_000),
+      });
+
+    it('creates from a conversation on a FIXED lot: price locked FROM THE LOT, quantity the buyer’s choice, stock reserved', async () => {
+      const buyer = seedBuyer();
+      const lot = seedLot({
+        pricingType: PricingType.FIXED,
+        unitPrice: 250_000,
+        totalPrice: 12_500_000,
+      });
+      const conversation = seedThread(buyer.id, lot.id);
+
+      const response = await service.create(buyer.id, {
+        conversationId: conversation.id,
+        quantity: 5,
+        deliveryMethod: DeliveryMethod.PICKUP,
+        paymentMethod: PaymentMethodRecorded.CASH,
+      });
+
+      // The price is the LOT's, even though the payload sent none.
+      expect(response.unitPrice).toBe(250_000);
+      expect(response.totalPrice).toBe(1_250_000);
+      expect(response.quantity).toBe(5);
+      const row = await repository.findByCode(response.code);
+      expect(row).toMatchObject({
+        lotId: lot.id,
+        buyerId: buyer.id,
+        sellerId: SELLER_ID,
+        offerId: null,
+        conversationId: conversation.id,
+      });
+      expect(await availability(lot.id)).toBe(35);
+    });
+
+    it('the price echo may confirm lot.unitPrice but never change it (400 DEAL_PRICE_LOCKED)', async () => {
+      const buyer = seedBuyer();
+      const lot = seedLot({ pricingType: PricingType.FIXED, unitPrice: 250_000 });
+      const conversation = seedThread(buyer.id, lot.id);
+
+      const thrown = await rejectsOf(() =>
+        service.create(buyer.id, {
+          conversationId: conversation.id,
+          quantity: 5,
+          unitPrice: 999,
+          deliveryMethod: DeliveryMethod.PICKUP,
+          paymentMethod: PaymentMethodRecorded.CASH,
+        }),
+      );
+      expect(errorCode(thrown)).toBe(DEAL_ERROR_CODES.DEAL_PRICE_LOCKED);
+      expect(await availability(lot.id)).toBe(40);
+    });
+
+    it('NEGOTIABLE lots are out of the quick path’s scope (409 LOT_NOT_FIXED_PRICE)', async () => {
+      const buyer = seedBuyer();
+      const lot = seedLot({ pricingType: PricingType.NEGOTIABLE });
+      const conversation = seedThread(buyer.id, lot.id);
+
+      const thrown = await rejectsOf(() =>
+        service.create(buyer.id, {
+          conversationId: conversation.id,
+          quantity: 5,
+          deliveryMethod: DeliveryMethod.PICKUP,
+          paymentMethod: PaymentMethodRecorded.CASH,
+        }),
+      );
+      expect(errorCode(thrown)).toBe(DEAL_ERROR_CODES.LOT_NOT_FIXED_PRICE);
+    });
+
+    it('unknown AND foreign conversations answer the uniform 403 CONVERSATION_NOT_YOURS', async () => {
+      const buyer = seedBuyer();
+      const other = seedBuyer();
+      const lot = seedLot({ pricingType: PricingType.FIXED });
+      const foreignThread = seedThread(other.id, lot.id);
+
+      for (const conversationId of ['no-such-thread', foreignThread.id]) {
+        const thrown = await rejectsOf(() =>
+          service.create(buyer.id, {
+            conversationId,
+            quantity: 5,
+            deliveryMethod: DeliveryMethod.PICKUP,
+            paymentMethod: PaymentMethodRecorded.CASH,
+          }),
+        );
+        expect(errorCode(thrown)).toBe(DEAL_ERROR_CODES.CONVERSATION_NOT_YOURS);
+        expect(thrown).toBeInstanceOf(ForbiddenException);
+      }
+    });
+
+    it('posts the ACTION message + conversation lockstep (preview moves, seller unread +1)', async () => {
+      const buyer = seedBuyer();
+      const lot = seedLot({ pricingType: PricingType.FIXED, unitPrice: 250_000 });
+      const conversation = seedThread(buyer.id, lot.id);
+
+      const response = await service.create(buyer.id, {
+        conversationId: conversation.id,
+        quantity: 5,
+        deliveryMethod: DeliveryMethod.PICKUP,
+        paymentMethod: PaymentMethodRecorded.CASH,
+      });
+
+      const messages = await fake.message.findMany({ where: { conversationId: conversation.id } });
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        type: MessageType.ACTION,
+        senderId: buyer.id,
+        body: dealCreatedActionBody(response.code),
+      });
+      const thread = await fake.conversation.findUnique({ where: { id: conversation.id } });
+      expect(thread).toMatchObject({
+        lastMessagePreview: dealCreatedActionBody(response.code),
+        sellerUnreadCount: 1,
+        buyerUnreadCount: 0,
+      });
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // Common: hats, provenance shape, reservation atomicity
+  // ---------------------------------------------------------------
+
+  it('requires the BUYER hat (403 BUYER_REQUIRED) and exactly one provenance id (400s)', async () => {
+    const hatless = seedBuyer([]);
+    const lot = seedLot({ pricingType: PricingType.FIXED });
+
+    const hatThrown = await rejectsOf(() =>
+      service.create(hatless.id, {
+        conversationId: 'whatever',
+        quantity: 5,
+        deliveryMethod: DeliveryMethod.PICKUP,
+        paymentMethod: PaymentMethodRecorded.CASH,
+      }),
+    );
+    expect(errorCode(hatThrown)).toBe(DEAL_ERROR_CODES.BUYER_REQUIRED);
+
+    const buyer = seedBuyer();
+    const neitherThrown = await rejectsOf(() =>
+      service.create(buyer.id, {
+        quantity: 5,
+        deliveryMethod: DeliveryMethod.PICKUP,
+        paymentMethod: PaymentMethodRecorded.CASH,
+      }),
+    );
+    expect(errorCode(neitherThrown)).toBe(DEAL_ERROR_CODES.PROVENANCE_REQUIRED);
+
+    const conversation = fake.seedConversation({
+      lotId: lot.id,
+      buyerId: buyer.id,
+      sellerId: SELLER_ID,
+      lastMessageAt: new Date(),
+    });
+    const offer = seedAcceptedOffer(lot.id, buyer.id);
+    const bothThrown = await rejectsOf(() =>
+      service.create(buyer.id, {
+        offerId: offer.id,
+        conversationId: conversation.id,
+        ...baseDto,
+      }),
+    );
+    expect(errorCode(bothThrown)).toBe(DEAL_ERROR_CODES.PROVENANCE_EXCLUSIVE);
+  });
+
+  it('the reservation guard answers 409 INSUFFICIENT_QUANTITY when the conditional decrement matches nothing', async () => {
+    const buyer = seedBuyer();
+    const lot = seedLot({ pricingType: PricingType.FIXED });
+    const conversation = fake.seedConversation({
+      lotId: lot.id,
+      buyerId: buyer.id,
+      sellerId: SELLER_ID,
+      lastMessageAt: new Date(),
+    });
+    // Simulate the race: the validator saw enough stock, the atomic
+    // reservation found none.
+    jest.spyOn(lotsRepository, 'reserveQuantity').mockResolvedValue(0);
+
+    const thrown = await rejectsOf(() =>
+      service.create(buyer.id, {
+        conversationId: conversation.id,
+        quantity: 5,
+        deliveryMethod: DeliveryMethod.PICKUP,
+        paymentMethod: PaymentMethodRecorded.CASH,
+      }),
+    );
+    expect(errorCode(thrown)).toBe(DEAL_ERROR_CODES.INSUFFICIENT_QUANTITY);
+    expect(await availability(lot.id)).toBe(40);
+  });
+
+  it('ATOMICITY: a failure after the reservation rolls it back — no decrement persists', async () => {
+    const buyer = seedBuyer();
+    const lot = seedLot({ pricingType: PricingType.FIXED });
+    const conversation = fake.seedConversation({
+      lotId: lot.id,
+      buyerId: buyer.id,
+      sellerId: SELLER_ID,
+      lastMessageAt: new Date(),
+    });
+    // The deal write explodes AFTER the reservation (any non-P2002 failure
+    // propagates — no retry).
+    jest.spyOn(repository, 'create').mockRejectedValue(new Error('boom'));
+
+    await expect(
+      service.create(buyer.id, {
+        conversationId: conversation.id,
+        quantity: 5,
+        deliveryMethod: DeliveryMethod.PICKUP,
+        paymentMethod: PaymentMethodRecorded.CASH,
+      }),
+    ).rejects.toThrow('boom');
+
+    // The transaction aborted: the reserved stock is back.
+    expect(await availability(lot.id)).toBe(40);
+    // No thread announcement either.
+    const messages = await fake.message.findMany({ where: { conversationId: conversation.id } });
+    expect(messages).toHaveLength(0);
+  });
+
+  it('retries a Deal.code collision (P2002) with a fresh code and reserves exactly once', async () => {
+    const buyer = seedBuyer();
+    const lot = seedLot({ pricingType: PricingType.FIXED, unitPrice: 250_000 });
+    const conversation = fake.seedConversation({
+      lotId: lot.id,
+      buyerId: buyer.id,
+      sellerId: SELLER_ID,
+      lastMessageAt: new Date(),
+    });
+
+    const realCreate = fake.deal.create.bind(fake.deal);
+    let calls = 0;
+    jest.spyOn(fake.deal, 'create').mockImplementation(async (args) => {
+      calls += 1;
+      if (calls === 1) {
+        const error = new Error('Unique constraint failed on Deal.code') as Error & {
+          code: string;
+        };
+        error.code = 'P2002';
+        throw error;
+      }
+      return realCreate(args);
+    });
+
+    const response = await service.create(buyer.id, {
+      conversationId: conversation.id,
+      quantity: 5,
+      deliveryMethod: DeliveryMethod.PICKUP,
+      paymentMethod: PaymentMethodRecorded.CASH,
+    });
+
+    expect(calls).toBe(2);
+    // The failed attempt's reservation rolled back; exactly ONE decrement stuck.
+    expect(await availability(lot.id)).toBe(35);
+    expect(await repository.findByCode(response.code)).not.toBeNull();
+    const messages = await fake.message.findMany({ where: { conversationId: conversation.id } });
+    expect(messages).toHaveLength(1);
   });
 });

@@ -303,7 +303,98 @@ export const DEAL_ERROR_CODES = {
    * CONVERSATION_LOT_MISMATCH precedent). Offer ACCEPTED-status/buyer checks
    * are DEAL-002's runtime concerns, not this pure validator's. */
   OFFER_LOT_MISMATCH: 'OFFER_LOT_MISMATCH',
+
+  // --- DEAL-002 (Deal creation API) codes ---
+
+  /** POST /deals without the BUYER hat (403) — the offers/conversations
+   * module's convention code, same string so the web renders one copy. */
+  BUYER_REQUIRED: 'BUYER_REQUIRED',
+  /** Neither offerId nor conversationId on POST /deals (400) — a deal must be
+   * struck FROM something (an accepted offer or a thread). */
+  PROVENANCE_REQUIRED: 'PROVENANCE_REQUIRED',
+  /** Both offerId AND conversationId on POST /deals (400) — the two creation
+   * paths are mutually exclusive; the offer path takes its thread (if any)
+   * from the offer row itself. */
+  PROVENANCE_EXCLUSIVE: 'PROVENANCE_EXCLUSIVE',
+  /** POST /deals with an offerId whose offer the caller does not own as the
+   * buyer (403) — same string as the offers module's OFFER_NOT_BUYER. */
+  OFFER_NOT_BUYER: 'OFFER_NOT_BUYER',
+  /** POST /deals with an offerId whose offer is EXPIRED (409) — the specific
+   * expired code, same string as OFR-002's, so fa copy is shared. A merely
+   * PENDING-past-due offer answers OFFER_NOT_ACCEPTED here (the deals module
+   * never writes offer rows, so the lazy EXPIRED flip stays OFR-002/OFR-003's
+   * job — documented on DealsService.create). */
+  OFFER_EXPIRED: 'OFFER_EXPIRED',
+  /** POST /deals with an offerId whose offer is in any status other than
+   * ACCEPTED (409) — the card's "bad offer state". Implemented as 409 (the
+   * repo-wide state/conflict status, backend.md) with an explicit code instead
+   * of the card's shorthand "400": the web keys fa copy off the code either
+   * way, and 409 keeps one semantic per status family across the API. */
+  OFFER_NOT_ACCEPTED: 'OFFER_NOT_ACCEPTED',
+  /** POST /deals whose lot is not ACTIVE (409) — same string as the offers
+   * module's LOT_NOT_ACTIVE (a deal, like an offer, lives only on ACTIVE
+   * lots — card: "lot ACTIVE"). */
+  LOT_NOT_ACTIVE: 'LOT_NOT_ACTIVE',
+  /** POST /deals' conversation quick path against a lot whose pricingType is
+   * not FIXED (409) — documented decision: the quick path has no price
+   * negotiation surface, so it is FIXED-only; negotiable lots must go through
+   * offers (the buyer simply has no agreed price to confirm yet). */
+  LOT_NOT_FIXED_PRICE: 'LOT_NOT_FIXED_PRICE',
+  /** The payload's unitPrice disagrees with the price the chosen path locks
+   * (400): the offer path locks offer.unitPrice, the quick path locks
+   * lot.unitPrice. The confirmation payload may echo the locked price to
+   * confirm it — it may never CHANGE it (card: "confirmation payload locks
+   * terms"). Distinct from OFFER_TERMS_MISMATCH so the web can point the
+   * buyer at the lot price vs the offer price. */
+  DEAL_PRICE_LOCKED: 'DEAL_PRICE_LOCKED',
+  /** The payload's quantity/unitPrice disagree with the referenced offer
+   * (400) — a deal grown out of an offer snapshots THE OFFER's terms; the
+   * buyer confirms them, they are not renegotiated here (a different deal is
+   * a new offer). */
+  OFFER_TERMS_MISMATCH: 'OFFER_TERMS_MISMATCH',
+  /** The transactional reservation guard (409): the conditional
+   * availableQuantity decrement matched 0 rows — between validation and the
+   * write someone else took the stock. validateDealInput's
+   * QUANTITY_OUT_OF_RANGE answers the same user-visible condition when it is
+   * already visible on the read row; INSUFFICIENT_QUANTITY is the race-safe
+   * enforcement inside the create transaction. */
+  INSUFFICIENT_QUANTITY: 'INSUFFICIENT_QUANTITY',
+  /** POST /deals with a conversationId that does not exist OR is not a thread
+   * the caller owns as the buyer (403) — deliberately uniform, the same
+   * string as OFR-002's CONVERSATION_NOT_YOURS (no existence oracle for
+   * unguessable conversation ids). */
+  CONVERSATION_NOT_YOURS: 'CONVERSATION_NOT_YOURS',
 } as const;
+
+/**
+ * POST /deals code-collision budget (DEAL-002): the schema pins deal `code`
+ * as unique and "collisions are retried at the service layer" — each attempt
+ * re-opens the create transaction with a fresh generateDealCode(). 62^8 makes
+ * a single collision ~4.5e-15 likely; 5 attempts is already defensive
+ * overkill, and exhausting it rethrows the last violation.
+ */
+export const DEAL_CODE_CREATE_ATTEMPTS = 5;
+
+/**
+ * Per-route throttle on the deal WRITE endpoints (POST /deals now, the
+ * DEAL-003 transitions next) — mirrors OFFER_WRITE_THROTTLE's shape (30/min),
+ * deals being a rate-limit-sensitive money route like offers.
+ */
+export const DEAL_WRITE_THROTTLE = {
+  limit: 30,
+  ttlMs: 60_000,
+} as const;
+
+/**
+ * The ACTION message body posted into the tied conversation when a deal is
+ * created (DEAL-002, card: «معامله ایجاد شد #CODE»). CONTENT copy in fa by
+ * design — the same documented exception as the offers ACTION bodies and the
+ * SYSTEM welcome message: these bodies live in the thread, so they are
+ * Persian; all other API messages stay English machine copy + a `code`.
+ */
+export function dealCreatedActionBody(code: string): string {
+  return `معامله ایجاد شد #${code}`;
+}
 
 /**
  * `code` is the public URL id of a deal (plan §3): 8 base62 chars from

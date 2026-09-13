@@ -106,7 +106,10 @@ type MediaAssetCreateData = {
 };
 
 /** Exactly the surface LotsRepository composes (LOT-001 findPublic + lookups
- * + LOT-005 findMine's notIn status predicate). */
+ * + LOT-005 findMine's notIn status predicate). `id` carries equality OR the
+ * MKT-003 search arm's `in` set OR the MKT-009 similar-lots self-exclusion
+ * (`not`); `availableQuantity` carries the DEAL-002 reservation predicate's
+ * range arm ({ gte }). */
 type LotEnumFilter<T extends string> = T | { in: T[] } | { notIn: T[] };
 type LotTextFilter = { contains: string; mode: 'insensitive' };
 /** id: equality OR the MKT-003 search arm's `in` set OR the MKT-009
@@ -125,6 +128,7 @@ type LotWhere = {
   liquidationReason?: LotEnumFilter<LiquidationReason>;
   status?: LotEnumFilter<LotStatus>;
   unitPrice?: { gte?: number; lte?: number };
+  availableQuantity?: { gte?: number; lte?: number };
   quantity?: { gte?: number; lte?: number };
   createdAt?: { gte?: Date };
   expiresAt?: { gt?: Date; lt?: Date };
@@ -132,7 +136,10 @@ type LotWhere = {
   OR?: Array<{ title?: LotTextFilter; description?: LotTextFilter }>;
 };
 type LotOrderBy = Record<string, 'asc' | 'desc'>;
-/** Writable scalar subset for the update path (counters also take {increment}). */
+/** Writable scalar subset for the update path. Counter-like fields accept the
+ * atomic arithmetic forms: viewCount/saveCount { increment } (MKT counters)
+ * and availableQuantity { increment | decrement } (the DEAL-002 reservation
+ * write pair — reserve decrements, cancel-restores increment). */
 type LotUpdateData = Partial<{
   code: string;
   categoryId: string;
@@ -141,7 +148,7 @@ type LotUpdateData = Partial<{
   description: string;
   quantity: number;
   unit: LotUnit;
-  availableQuantity: number;
+  availableQuantity: number | { increment: number } | { decrement: number };
   minOrderQuantity: number;
   pricingType: PricingType;
   totalPrice: number;
@@ -963,7 +970,8 @@ export class FakePrisma {
       this.lots.set(row.id, row);
       return this.withMedia(row);
     },
-    /** Partial update — undefined keys stay untouched, {increment} mutates counters. */
+    /** Partial update — undefined keys stay untouched, arithmetic objects
+     * ({increment}/{decrement}) mutate counters atomically. */
     update: async ({
       where,
       data,
@@ -976,21 +984,7 @@ export class FakePrisma {
         throw new Error(`FakePrisma: lot ${where.id} not found`);
       }
       const next: Lot = { ...row };
-      for (const [key, value] of Object.entries(data) as Array<[keyof LotUpdateData, unknown]>) {
-        if (value === undefined) {
-          continue;
-        }
-        if (
-          (key === 'viewCount' || key === 'saveCount') &&
-          typeof value === 'object' &&
-          value !== null &&
-          'increment' in value
-        ) {
-          next[key] = row[key] + (value as { increment: number }).increment;
-        } else {
-          (next as Record<string, unknown>)[key] = value;
-        }
-      }
+      applyLotUpdate(row, next, data);
       next.updatedAt = nowIso();
       this.lots.set(row.id, next);
       return this.withMedia(next);
@@ -1014,21 +1008,7 @@ export class FakePrisma {
         if (!matchesLotWhere(where)(row)) {
           continue;
         }
-        for (const [key, value] of Object.entries(data) as Array<[keyof LotUpdateData, unknown]>) {
-          if (value === undefined) {
-            continue;
-          }
-          if (
-            (key === 'viewCount' || key === 'saveCount') &&
-            typeof value === 'object' &&
-            value !== null &&
-            'increment' in value
-          ) {
-            row[key] = row[key] + (value as { increment: number }).increment;
-          } else {
-            (row as Record<string, unknown>)[key] = value;
-          }
-        }
+        applyLotUpdate(row, row, data);
         row.updatedAt = nowIso();
         count += 1;
       }
@@ -1453,6 +1433,16 @@ export class FakePrisma {
       if (data.conversationId != null && !this.conversations.get(data.conversationId)) {
         throw new Error(`FakePrisma: deal references missing conversation ${data.conversationId}`);
       }
+      // Mirror the real client on the unique `code` (plan §3): Prisma rejects
+      // a duplicate with a P2002 known-request error, which is exactly what
+      // DealsService.create's collision-retry loop catches.
+      if ([...this.deals.values()].some((row) => row.code === data.code)) {
+        const error = new Error(`Unique constraint failed on Deal.code`) as Error & {
+          code: string;
+        };
+        error.code = 'P2002';
+        throw error;
+      }
       const row = buildDealRow(data);
       this.deals.set(row.id, row);
       return cloneDeal(row);
@@ -1570,8 +1560,48 @@ export class FakePrisma {
     },
   };
 
+  /**
+   * Interactive transaction with PRISMA ROLLBACK SEMANTICS: if the callback
+   * throws, every write the callback made (through `this` — the fake passes
+   * itself as the tx client, exactly like the repositories' `tx ?? prisma`
+   * resolution resolves inside transactions) is rolled back by restoring a
+   * pre-transaction deep snapshot of every table. This is what makes the
+   * DEAL-002 atomicity contract honestly testable in-memory: a failure AFTER
+   * the quantity reservation must leave no reservation behind.
+   * (Deep clones via structuredClone so in-place row mutations — e.g.
+   * lot.updateMany's counter arithmetic — are undone too.)
+   */
   async $transaction<T>(fn: (tx: this) => Promise<T>): Promise<T> {
-    return fn(this);
+    const tables: Array<Map<string, unknown>> = [
+      this.users,
+      this.refreshTokens,
+      this.otpCodes,
+      this.categories,
+      this.profiles,
+      this.profileInterests,
+      this.lots,
+      this.lotMediaRows,
+      this.mediaAssets,
+      this.conversations,
+      this.messages,
+      this.offers,
+      this.deals,
+      this.dealEvents,
+    ];
+    const snapshot = tables.map((table) =>
+      [...table.entries()].map(([id, row]) => [id, structuredClone(row)] as const),
+    );
+    try {
+      return await fn(this);
+    } catch (error) {
+      tables.forEach((table, index) => {
+        table.clear();
+        for (const [id, row] of snapshot[index] as Array<[string, unknown]>) {
+          table.set(id, structuredClone(row));
+        }
+      });
+      throw error;
+    }
   }
 
   /**
@@ -2177,6 +2207,33 @@ function buildLotRow(data: LotCreateData): Lot {
   };
 }
 
+/**
+ * Lot partial-update applier shared by lot.update and lot.updateMany: plain
+ * values set; the arithmetic-object form ({ increment } / { decrement }) on
+ * the counter-like fields applies atomically to the current value (Prisma's
+ * atomic-update semantics — plan §12). `target` may be the same object as
+ * `source` (updateMany mutates matched rows in place).
+ */
+function applyLotUpdate(source: Lot, target: Lot, data: LotUpdateData): void {
+  for (const [key, value] of Object.entries(data) as Array<[keyof LotUpdateData, unknown]>) {
+    if (value === undefined) {
+      continue;
+    }
+    const arithmetic =
+      (key === 'viewCount' || key === 'saveCount' || key === 'availableQuantity') &&
+      typeof value === 'object' &&
+      value !== null
+        ? (value as { increment?: number; decrement?: number })
+        : undefined;
+    if (arithmetic !== undefined) {
+      (target as Record<string, unknown>)[key] =
+        (source[key] as number) + (arithmetic.increment ?? 0) - (arithmetic.decrement ?? 0);
+    } else {
+      (target as Record<string, unknown>)[key] = value;
+    }
+  }
+}
+
 function matchesLotWhere(where: LotWhere | undefined): (row: Lot) => boolean {
   const matchesId = (row: Lot): boolean => {
     const id = where?.id;
@@ -2204,9 +2261,8 @@ function matchesLotWhere(where: LotWhere | undefined): (row: Lot) => boolean {
     (where?.liquidationReason === undefined ||
       matchesLotEnumFilter(row.liquidationReason, where.liquidationReason)) &&
     (where?.status === undefined || matchesLotEnumFilter(row.status, where.status)) &&
-    (where?.unitPrice === undefined ||
-      ((where.unitPrice.gte === undefined || row.unitPrice >= where.unitPrice.gte) &&
-        (where.unitPrice.lte === undefined || row.unitPrice <= where.unitPrice.lte))) &&
+    rangeMatches(row.unitPrice, where?.unitPrice) &&
+    rangeMatches(row.availableQuantity, where?.availableQuantity) &&
     (where?.quantity === undefined ||
       ((where.quantity.gte === undefined || row.quantity >= where.quantity.gte) &&
         (where.quantity.lte === undefined || row.quantity <= where.quantity.lte))) &&
@@ -2218,6 +2274,20 @@ function matchesLotWhere(where: LotWhere | undefined): (row: Lot) => boolean {
         (where.expiresAt.lt === undefined || row.expiresAt < where.expiresAt.lt))) &&
     (where?.deletedAt === undefined || row.deletedAt === null) &&
     (where?.OR === undefined || where.OR.some((entry) => matchesLotSearchEntry(row, entry)));
+}
+
+/** Range-arm matcher for the numeric lot filters (unitPrice, quantity,
+ * availableQuantity): an absent range never narrows; each bound is inclusive
+ * (Prisma gte/lte semantics — the DEAL-002 reservation predicate's
+ * availableQuantity ≥ quantity arm relies on this). */
+function rangeMatches(value: number, range: { gte?: number; lte?: number } | undefined): boolean {
+  if (range === undefined) {
+    return true;
+  }
+  return (
+    (range.gte === undefined || value >= range.gte) &&
+    (range.lte === undefined || value <= range.lte)
+  );
 }
 
 function matchesLotEnumFilter<T extends string>(value: T, filter: LotEnumFilter<T>): boolean {

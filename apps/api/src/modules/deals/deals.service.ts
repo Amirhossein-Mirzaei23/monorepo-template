@@ -1,15 +1,36 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import {
+  AccountRole,
   DealStatus,
   DeliveryMethod,
+  LotStatus,
+  MessageType,
+  OfferStatus,
   PaymentMethodRecorded,
+  PricingType,
+  type Conversation,
   type Deal,
   type DealEvent,
+  type Offer,
   type Prisma,
+  type User,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ConversationsRepository } from '../conversations/conversations.repository';
+import { truncatePreview } from '../conversations/conversations.constants';
+import { LotsRepository, type LotWithMedia } from '../lots/lots.repository';
+import { OffersRepository } from '../offers/offers.repository';
+import { UsersRepository } from '../users/users.repository';
 import { DealsRepository } from './deals.repository';
 import {
+  DEAL_CODE_CREATE_ATTEMPTS,
   DEAL_COMMISSION_RATE_BASIS_POINTS,
   DEAL_ERROR_CODES,
   DEAL_MAX_TOTAL_PRICE,
@@ -19,13 +40,25 @@ import {
   REASON_FIELDS,
   STAGE_TIMESTAMP_FIELDS,
   assertTransition,
+  dealCreatedActionBody,
+  generateDealCode,
   transitionRuleFor,
   type DealReasonField,
   type DealRole,
   type DealStageTimestampField,
 } from './deals.constants';
+import { toDealResponse, type DealResponseDto } from './dto/deal-response.dto';
+import type { CreateDealDto } from './dto/create-deal.dto';
 
 type Tx = Prisma.TransactionClient | undefined;
+
+/** Prisma unique-violation probe (works on real client errors and plain
+ * fakes) — the Deal.code collision signal for the create retry loop. */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P2002'
+  );
+}
 
 /** The deal-terms payload a creator supplies (DEAL-002's POST /deals body
  * shape); identity/context (lot, buyer, seller, offer, conversation) come
@@ -209,10 +242,10 @@ export function creationEvent(
 
 /**
  * Deal business rules — DEAL-001's domain half (the matrix executor, stage
- * stamps, timeline) with NO endpoints (DEAL-002/003 own those; this service
- * is the layer they call).
+ * stamps, timeline) plus DEAL-002's creation API half (POST /deals, both
+ * paths, the quantity reservation).
  *
- * Documented decisions carried from the card:
+ * Documented decisions carried from the cards:
  * - The buyer's «پرداخت کردم» is NOT a transition: DEAL-006's payment-confirm
  *   endpoint stamps `paidConfirmedByBuyerAt` + appends an informational
  *   DealEvent (fromStatus = toStatus = PAYMENT_PENDING, note «خریدار پرداخت
@@ -222,12 +255,33 @@ export function creationEvent(
  *   sweep (the OFR-003/LOT-006 pattern) — NOT this card. The sweep must go
  *   through THIS transition method (system event: actorId null, role BUYER's
  *   DELIVERED→COMPLETED row); do not widen the table for it.
+ * - →CANCELLED restores the reserved quantity (DEAL-002's reservation pair)
+ *   inside the SAME transaction as the cancelling write, but ONLY for the
+ *   "clean" cancellations: those from the pre-fulfilment stages NEGOTIATING /
+ *   AGREED / PAYMENT_PENDING (per the DEAL-003 card's "restores unless
+ *   status ≥ PREPARING"; all three are < PREPARING). DISPUTED→CANCELLED (the
+ *   DEAL-007 admin resolution) deliberately does NOT auto-restore: a disputed
+ *   deal may already have progressed past PAID (goods shipped), so restore-
+ *   or-keep is the resolution's explicit outcome decision (DEAL-007 card:
+ *   "resolution restores/keeps qty per outcome").
+ * - Self-dealing needs no guard here: both creation paths inherit
+ *   buyer ≠ seller from their upstream preconditions (offers are created
+ *   with 403 SELF_OFFER; conversations with 403 SELF_CONVERSATION).
  */
 @Injectable()
 export class DealsService {
   constructor(
     private readonly repository: DealsRepository,
     private readonly prisma: PrismaService,
+    /** Cross-module reads/writes through the owning modules' repositories —
+     * the OFR-002 pattern (offers.service injects Lots/Conversations/Users
+     * repositories the same way; ConversationsService.sendMessage opens its
+     * own transaction and cannot compose into ours, so the ACTION message is
+     * written through the repository with OUR tx client). */
+    private readonly lots: LotsRepository,
+    private readonly offers: OffersRepository,
+    private readonly conversations: ConversationsRepository,
+    private readonly users: UsersRepository,
   ) {}
 
   /**
@@ -237,9 +291,10 @@ export class DealsService {
    * reason-requiring rows (400 REASON_REQUIRED — every →CANCELLED and
    * →DISPUTED), then writes status + the target stage's timestamp (+ the
    * cancelReason/disputeReason column) AND the DealEvent in ONE transaction
-   * (join the caller's via `tx`; without one the helper opens its own). The
-   * event note carries the trimmed reason, so the timeline alone tells the
-   * whole story (principle 13).
+   * (join the caller's via `tx`; without one the helper opens its own) — plus
+   * the →CANCELLED quantity restore for the clean cancellations (the class
+   * doc carries the rule; the event note carries the trimmed reason, so the
+   * timeline alone tells the whole story, principle 13).
    */
   async transition(
     deal: Deal,
@@ -313,9 +368,376 @@ export class DealsService {
         },
         client,
       );
+      // The reservation RESTORE (DEAL-002's reserve/restore pair): every
+      // "clean" cancellation frees the deal's quantity in the SAME
+      // transaction as the cancelling write (atomicity — a crash rolls both
+      // back). The condition encodes the documented rule (class doc): a
+      // legal →CANCELLED move originates from NEGOTIATING / AGREED /
+      // PAYMENT_PENDING (all restore) or DISPUTED (admin resolution — no
+      // auto-restore, DEAL-007 decides per outcome). Terminal CANCELLED can
+      // never re-enter (the matrix forbids it), so a double-restore is
+      // unreachable.
+      if (to === DealStatus.CANCELLED && deal.status !== DealStatus.DISPUTED) {
+        await this.lots.restoreQuantity(deal.lotId, deal.quantity, client);
+      }
       return updated;
     };
     return tx !== undefined ? run(tx) : this.prisma.$transaction(async (client) => run(client));
+  }
+
+  /**
+   * POST /deals (DEAL-002, buyer-initiated) — strike a deal FROM exactly one
+   * of two sources (`offerId` XOR `conversationId`, both 400-guarded):
+   *
+   * (a) OFFER PATH — an ACCEPTED offer (OFR-002's acceptance created the
+   *     eligibility): the offer row IS the agreed commercial terms, so
+   *     quantity/unitPrice/totalPrice are snapshotted FROM THE OFFER and the
+   *     payload may only CONFIRM them — a quantity (required) or unitPrice
+   *     (optional echo) that disagrees is 400 OFFER_TERMS_MISMATCH, never a
+   *     renegotiation (a different deal is a new offer; the card's
+   *     "confirmation payload locks terms"). The thread tie for the ACTION
+   *     message comes from the OFFER's own conversationId when it has one.
+   * (b) CONVERSATION QUICK PATH — directly from a thread, FIXED-price lots
+   *     only (409 LOT_NOT_FIXED_PRICE otherwise — documented decision: the
+   *     quick path has no price surface, and a NEGOTIABLE lot has no agreed
+   *     price to confirm, so it must go through offers first). unitPrice is
+   *     locked to lot.unitPrice (the derived asking unit price): the payload
+   *     may omit it or echo it; a disagreeing echo is 400 DEAL_PRICE_LOCKED.
+   *     quantity is the buyer's chosen amount.
+   *
+   * Precondition order (hats before probing, the module chain's convention):
+   *   1. user row still exists (401 — behind the global guard)
+   *   2. BUYER hat (403 BUYER_REQUIRED)
+   *   3. exactly one provenance id (400 PROVENANCE_REQUIRED / _EXCLUSIVE)
+   *   4. source row: unknown offer → 404; foreign offer → 403
+   *      OFFER_NOT_BUYER; unknown OR foreign conversation → 403
+   *      CONVERSATION_NOT_YOURS (uniform — no existence oracle for
+   *      unguessable ids, the OFR-002 precedent)
+   *   5. offer state: EXPIRED → 409 OFFER_EXPIRED (specific); any other
+   *      non-ACCEPTED status → 409 OFFER_NOT_ACCEPTED (the card's "bad offer
+   *      state", surfaced as the repo-wide 409 state/conflict with explicit
+   *      codes — the deviation from the card's "400" shorthand is documented
+   *      on DEAL_ERROR_CODES). This service NEVER writes offer rows (write-
+   *      domain boundary): a PENDING offer past due is NOT lazily flipped
+   *      here — that stays OFR-002's guard + the OFR-003 sweep.
+   *   6. lot: loaded from the source row (404 if gone), ACTIVE required
+   *      (409 LOT_NOT_ACTIVE), then the shared DEAL-001 validator
+   *      (validateDealInput: 400 price/note shape, 409 quantity vs the
+   *      CURRENT availableQuantity, offer-lot wiring).
+   *
+   * THE TRANSACTION (one prisma.$transaction — atomicity is the card's
+   * "reserve qty transactionally"):
+   *   1. LotsRepository.reserveQuantity — the conditional decrement; 0 rows
+   *      matched → 409 INSUFFICIENT_QUANTITY (the race-safe guard between
+   *      the validator's visible-state check and the write).
+   *   2. the deal row (fresh generateDealCode()) + its birth DealEvent.
+   *   3. when tied to a thread: the ACTION message («معامله ایجاد شد
+   *      #CODE», sender = the buyer) + the conversation lockstep, written
+   *      through ConversationsRepository with THIS tx client.
+   * A failure at ANY step aborts the whole transaction: no deal, no message,
+   * and — the reservation rollback guarantee — no decrement persists. A
+   * Deal.code collision (P2002) retries the WHOLE transaction with a fresh
+   * code (DEAL_CODE_CREATE_ATTEMPTS budget — the schema pins retries to this
+   * layer); everything else propagates.
+   *
+   * NTF hook point (deal.created — notify the seller) — realized P1.
+   */
+  async create(buyerId: string, dto: CreateDealDto): Promise<DealResponseDto> {
+    const user = await this.requireUser(buyerId);
+    this.assertBuyerHat(user);
+
+    const hasOffer = dto.offerId !== undefined;
+    const hasConversation = dto.conversationId !== undefined;
+    if (!hasOffer && !hasConversation) {
+      throw new BadRequestException({
+        code: DEAL_ERROR_CODES.PROVENANCE_REQUIRED,
+        message: 'Provide exactly one of offerId or conversationId',
+      });
+    }
+    if (hasOffer && hasConversation) {
+      throw new BadRequestException({
+        code: DEAL_ERROR_CODES.PROVENANCE_EXCLUSIVE,
+        message:
+          'offerId and conversationId are mutually exclusive — the offer path takes its thread from the offer itself',
+      });
+    }
+
+    const offerId = dto.offerId;
+    const conversationIdInput = dto.conversationId;
+    let offer: Offer | null = null;
+    let conversation: Conversation | null = null;
+    let lot: LotWithMedia | null = null;
+    if (offerId !== undefined) {
+      offer = await this.requireOwnedAcceptedOffer(buyerId, offerId, dto);
+      lot = await this.lots.findById(offer.lotId);
+    } else {
+      conversation = await this.requireOwnConversation(buyerId, conversationIdInput as string);
+      lot = await this.lots.findById(conversation.lotId);
+    }
+    if (!lot) {
+      throw new NotFoundException('Lot not found');
+    }
+    if (lot.status !== LotStatus.ACTIVE) {
+      throw new ConflictException({
+        code: DEAL_ERROR_CODES.LOT_NOT_ACTIVE,
+        message: 'Deals can only be made on active lots',
+      });
+    }
+    // Quick-path pricing gate (path (b) only): the lot must be FIXED — the
+    // documented scope decision on create(). The offer path is inherently
+    // safe (its price came from the accepted offer).
+    if (offer === null && lot.pricingType !== PricingType.FIXED) {
+      throw new ConflictException({
+        code: DEAL_ERROR_CODES.LOT_NOT_FIXED_PRICE,
+        message:
+          'The conversation quick path is only for fixed-price lots — negotiate through offers first',
+      });
+    }
+    // …and the payload's price echo may CONFIRM lot.unitPrice, never change
+    // it (the actual snapshot below reads the lot row regardless).
+    if (offer === null && dto.unitPrice !== undefined && dto.unitPrice !== lot.unitPrice) {
+      throw new BadRequestException({
+        code: DEAL_ERROR_CODES.DEAL_PRICE_LOCKED,
+        message: `unitPrice is locked to the lot's fixed price (${lot.unitPrice}) — the quick path has no price negotiation`,
+      });
+    }
+
+    // The snapshot terms: the OFFER's on path (a), the LOT's price + the
+    // payload's quantity on path (b). validateDealInput is the ONE shared
+    // create-validator (400 price/note shape, 409 quantity vs availability,
+    // offer-lot wiring) — the same rules DEAL-001 pinned.
+    const validated = validateDealInput(
+      {
+        quantity: offer !== null ? offer.quantity : dto.quantity,
+        unitPrice: offer !== null ? offer.unitPrice : lot.unitPrice,
+        deliveryMethod: dto.deliveryMethod,
+        paymentMethod: dto.paymentMethod,
+        deliveryNote: dto.deliveryNote,
+        paymentTermsNote: dto.paymentTermsNote,
+      },
+      { id: lot.id, availableQuantity: lot.availableQuantity },
+      offer !== null ? { id: offer.id, lotId: offer.lotId } : undefined,
+    );
+
+    const threadId: string | null =
+      offer !== null ? offer.conversationId : (conversation?.id ?? null);
+    const created = await this.createWithReservation({
+      buyerId,
+      lot,
+      validated,
+      offerId: offer?.id ?? null,
+      conversationId: threadId,
+    });
+    // NTF hook point (deal.created) — realized P1.
+    return toDealResponse({ ...created, lot: { code: lot.code, title: lot.title } }, 'buyer');
+  }
+
+  // --- DEAL-002 helpers (order documented per method) ---
+
+  /**
+   * The authenticated user row (401 when the token user is gone — the same
+   * rule every service applies behind the global guard).
+   */
+  private async requireUser(userId: string): Promise<User> {
+    const user = await this.users.findById(userId);
+    if (!user) {
+      throw new UnauthorizedException('User no longer exists');
+    }
+    return user;
+  }
+
+  /** 403 + BUYER_REQUIRED without the BUYER hat (the card's buyer-initiated
+   * rule — mirrors offers.create / CHT-001). */
+  private assertBuyerHat(user: User): void {
+    if (!user.accountRoles.includes(AccountRole.BUYER)) {
+      throw new ForbiddenException({
+        code: DEAL_ERROR_CODES.BUYER_REQUIRED,
+        message: 'Only buyer accounts can create deals',
+      });
+    }
+  }
+
+  /**
+   * Offer-path source resolution: the offer must exist (404), be the
+   * CALLER's (403 OFFER_NOT_BUYER — ownership gates before state, the
+   * offers.cancel precedent) and be ACCEPTED (409 OFFER_EXPIRED for the
+   * expired row specifically, 409 OFFER_NOT_ACCEPTED for every other
+   * non-accepted status). Finally the payload terms are checked against the
+   * offer's locked terms (400 OFFER_TERMS_MISMATCH — see create() path (a)).
+   */
+  private async requireOwnedAcceptedOffer(
+    buyerId: string,
+    offerId: string,
+    dto: CreateDealDto,
+  ): Promise<Offer> {
+    const offer = await this.offers.findById(offerId);
+    if (!offer) {
+      throw new NotFoundException('Offer not found');
+    }
+    if (offer.buyerId !== buyerId) {
+      throw new ForbiddenException({
+        code: DEAL_ERROR_CODES.OFFER_NOT_BUYER,
+        message: 'Only the buyer who made this offer can create a deal from it',
+      });
+    }
+    if (offer.status === OfferStatus.EXPIRED) {
+      throw new ConflictException({
+        code: DEAL_ERROR_CODES.OFFER_EXPIRED,
+        message: 'This offer has expired',
+      });
+    }
+    if (offer.status !== OfferStatus.ACCEPTED) {
+      throw new ConflictException({
+        code: DEAL_ERROR_CODES.OFFER_NOT_ACCEPTED,
+        message: `Deals grow only out of ACCEPTED offers — this one is ${offer.status}`,
+      });
+    }
+    if (dto.quantity !== offer.quantity) {
+      throw new BadRequestException({
+        code: DEAL_ERROR_CODES.OFFER_TERMS_MISMATCH,
+        message: `quantity must match the accepted offer (${offer.quantity}) — deal terms are snapshotted from the offer, not renegotiated`,
+      });
+    }
+    if (dto.unitPrice !== undefined && dto.unitPrice !== offer.unitPrice) {
+      throw new BadRequestException({
+        code: DEAL_ERROR_CODES.OFFER_TERMS_MISMATCH,
+        message: `unitPrice must match the accepted offer (${offer.unitPrice}) — deal terms are snapshotted from the offer, not renegotiated`,
+      });
+    }
+    return offer;
+  }
+
+  /**
+   * Conversation-path source resolution: unknown AND foreign threads answer
+   * the SAME 403 CONVERSATION_NOT_YOURS (uniform — no existence oracle for
+   * unguessable conversation ids; the OFR-002 documented precedent).
+   */
+  private async requireOwnConversation(
+    buyerId: string,
+    conversationId: string,
+  ): Promise<Conversation> {
+    const conversation = await this.conversations.findById(conversationId);
+    if (!conversation || conversation.buyerId !== buyerId) {
+      throw new ForbiddenException({
+        code: DEAL_ERROR_CODES.CONVERSATION_NOT_YOURS,
+        message: 'This conversation does not exist or is not yours',
+      });
+    }
+    return conversation;
+  }
+
+  /**
+   * The create transaction (retried whole on a Deal.code P2002 collision —
+   * reserve → deal row + birth event → ACTION message; see create() for the
+   * step contract). The quantity term is always locked by now: the offer's
+   * on path (a), the buyer's validated choice on path (b).
+   */
+  private async createWithReservation(args: {
+    buyerId: string;
+    lot: { id: string; sellerId: string };
+    validated: ValidatedDealTerms;
+    offerId: string | null;
+    conversationId: string | null;
+  }): Promise<Deal> {
+    const { buyerId, lot, validated, offerId, conversationId } = args;
+
+    for (let attempt = 1; attempt <= DEAL_CODE_CREATE_ATTEMPTS; attempt += 1) {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          // 1. RESERVE — the conditional decrement IS the race-safe
+          // availability guard; 0 matched rows means the stock vanished
+          // between validation and the write (409, tx aborts, nothing
+          // persists).
+          const reserved = await this.lots.reserveQuantity(lot.id, validated.quantity, tx);
+          if (reserved === 0) {
+            throw new ConflictException({
+              code: DEAL_ERROR_CODES.INSUFFICIENT_QUANTITY,
+              message: `The lot no longer has ${validated.quantity} pieces available`,
+            });
+          }
+          // 2. THE DEAL + its birth event (timeline total from birth; the
+          // fa note doubles as the thread announcement copy).
+          const code = generateDealCode();
+          const deal = await this.repository.create(
+            {
+              deal: {
+                code,
+                lotId: lot.id,
+                buyerId,
+                sellerId: lot.sellerId,
+                offerId,
+                conversationId,
+                quantity: validated.quantity,
+                unitPrice: validated.unitPrice,
+                totalPrice: validated.totalPrice,
+                deliveryMethod: validated.deliveryMethod,
+                deliveryNote: validated.deliveryNote,
+                paymentMethod: validated.paymentMethod,
+                paymentTermsNote: validated.paymentTermsNote,
+                commissionRate: validated.commissionRate,
+              },
+              event: creationEvent({ actorId: buyerId, note: dealCreatedActionBody(code) }),
+            },
+            tx,
+          );
+          // 3. The thread announcement + lockstep (atomic with the deal).
+          if (conversationId !== null) {
+            await this.postActionMessage(conversationId, buyerId, dealCreatedActionBody(code), tx);
+          }
+          return deal;
+        });
+      } catch (error) {
+        // Unique-code collision: fresh code, whole transaction again (the
+        // rollback already un-reserved the quantity). Everything else
+        // propagates; exhausting the budget rethrows the last violation.
+        if (!isUniqueViolation(error) || attempt === DEAL_CODE_CREATE_ATTEMPTS) {
+          throw error;
+        }
+      }
+    }
+    // Unreachable (the loop either returned or threw) — satisfies the type
+    // checker without polluting the call site.
+    throw new Error('Unreachable: the deal-create retry loop must return or throw');
+  }
+
+  /**
+   * The ACTION message half of the create transaction — mirrors the offers
+   * module's lockstep exactly: the message row (type ACTION — TEXT-in-ACTION:
+   * body is the fa template, sender = the acting party = the buyer; no
+   * structured payloads until feature #19) + the conversation's
+   * lastMessageAt / lastMessagePreview + the COUNTERPART's (seller's) unread
+   * increment. Runs inside the CALLER's transaction (tx required) so the
+   * deal write and its thread announcement commit or roll back atomically.
+   */
+  private async postActionMessage(
+    conversationId: string,
+    senderId: string,
+    body: string,
+    tx: Prisma.TransactionClient,
+  ): Promise<void> {
+    const conversation = await this.conversations.findById(conversationId, tx);
+    if (!conversation) {
+      // Unreachable through the API (the tie was validated upstream and the
+      // FK is Cascade/SetNull-safe); a direct call with a dead id must not
+      // fail the deal transaction for the message's sake.
+      return;
+    }
+    const sentAt = new Date();
+    await this.conversations.createMessage(
+      { conversationId, senderId, type: MessageType.ACTION, body },
+      tx,
+    );
+    await this.conversations.updateConversation(
+      conversationId,
+      {
+        lastMessageAt: sentAt,
+        lastMessagePreview: truncatePreview(body),
+        ...(conversation.buyerId === senderId
+          ? { sellerUnreadCount: { increment: 1 } }
+          : { buyerUnreadCount: { increment: 1 } }),
+      },
+      tx,
+    );
   }
 
   /**

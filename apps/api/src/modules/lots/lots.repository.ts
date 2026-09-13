@@ -696,6 +696,38 @@ export class LotsRepository {
   }
 
   /**
+   * DEAL-002 — the transactional quantity RESERVATION: one conditional
+   * decrement over the (id, availableQuantity ≥ quantity) predicate, so the
+   * check and the write are the SAME atomic statement (plan §12: never
+   * read-modify-write). Returns the matched-row count — 0 means the stock is
+   * gone (the caller answers 409 INSUFFICIENT_QUANTITY and its transaction
+   * aborts, un-reserving everything else it wrote). Runs inside the CALLER's
+   * transaction; the mirror write is restoreQuantity (deal cancellations).
+   */
+  async reserveQuantity(lotId: string, quantity: number, tx: Tx = undefined): Promise<number> {
+    const result = await this.client(tx).lot.updateMany({
+      where: { id: lotId, availableQuantity: { gte: quantity } },
+      data: { availableQuantity: { decrement: quantity } },
+    });
+    return result.count;
+  }
+
+  /**
+   * DEAL-002 — the reservation RESTORE (deal →CANCELLED): one unconditional
+   * increment, always paired in the same transaction as the cancelling write
+   * (DealsService.transition owns that pairing — a crash rolls both back).
+   * Deliberately unconditional: the caller has already decided the deal held
+   * a live reservation (the DealsService documents which cancellations are
+   * "clean"); no guard here, data access only.
+   */
+  async restoreQuantity(lotId: string, quantity: number, tx: Tx = undefined): Promise<void> {
+    await this.client(tx).lot.updateMany({
+      where: { id: lotId },
+      data: { availableQuantity: { increment: quantity } },
+    });
+  }
+
+  /**
    * Atomic counter bumps (plan §12: updateMany, never read-modify-write).
    * Only the provided counters move; returns the number of matched rows
    * (0 for an unknown id).

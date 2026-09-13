@@ -47,7 +47,7 @@ Complexity: XS 1 · S 22 · M 71 · L 12 · XL 1.
 | AUTH-007  | Change phone number                      | P1  | 9   | M   |     | OFR-003  | ✅ Offer expiry job                    | P0  | 6   | S   |
 | AUTH-008  | Account deletion                         | P1  | 9   | S   |     | OFR-004  | ✅ Offers UI                           | P0  | 6   | M   |
 | ONB-001   | ✅ Profile domain + onboarding API       | P0  | 1   | M   |     | DEAL-001 | ✅ Deal domain + state machine         | P0  | 6   | L   |
-| ONB-002   | ✅ Mobile-first onboarding UI            | P0  | 1   | L   |     | DEAL-002 | Deal creation API                      | P0  | 6   | M   |
+| ONB-002   | ✅ Mobile-first onboarding UI            | P0  | 1   | L   |     | DEAL-002 | ✅ Deal creation API                   | P0  | 6   | M   |
 | PROF-001  | ✅ My profile view/edit                  | P0  | 1   | M   |     | DEAL-003 | Deal transitions API                   | P0  | 6   | M   |
 | PROF-002  | ✅ Public seller profile page            | P0  | 1   | M   |     | DEAL-004 | Deals UI                               | P0  | 6   | M   |
 | PROF-003  | Public buyer profile                     | P1  | 9   | S   |     | DEAL-005 | Completion effects                     | P0  | 6   | M   |

@@ -99,7 +99,7 @@ principles 7, 12; decision D9 flags the legal review).
 - **Testing:** state-machine suite (required).
 - **DoD:** suites green.
 
-### DEAL-002 — Deal creation API
+### DEAL-002 ✅ — Deal creation API
 
 **P0 · Phase 6 · Deals · M** — Deps: DEAL-001, OFR-002, CHT-001
 

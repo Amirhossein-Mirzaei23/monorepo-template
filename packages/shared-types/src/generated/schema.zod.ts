@@ -322,6 +322,22 @@ export const counterOfferDtoSchema = z.object({
   note: z.string().optional(),
 });
 
+export const createDealDtoSchema = z.object({
+  offerId: z.string().optional(),
+  conversationId: z.string().optional(),
+  quantity: z.number(),
+  unitPrice: z.number().optional(),
+  deliveryMethod: z.enum(['PICKUP', 'SELLER_SHIPS', 'BUYER_TRANSPORT', 'CARRIER']),
+  paymentMethod: z.enum(['CASH', 'CARD_TO_CARD', 'BANK_TRANSFER', 'CHEQUE']),
+  deliveryNote: z.string().optional(),
+  paymentTermsNote: z.string().optional(),
+});
+
+export const dealLotSummaryDtoSchema = z.object({
+  code: z.string(),
+  title: z.string(),
+});
+
 export const otpVerifyResponseDtoSchema = z.object({
   accessToken: z.string(),
   user: userResponseDtoSchema,
@@ -501,6 +517,28 @@ export const offerResponseDtoSchema = z.object({
   myRole: z.enum(['buyer', 'seller']),
 });
 
+export const dealResponseDtoSchema = z.object({
+  id: z.string(),
+  code: z.string(),
+  lot:   z.object({
+
+    }),
+  quantity: z.number(),
+  unitPrice: z.number(),
+  totalPrice: z.number(),
+  deliveryMethod: z.enum(['PICKUP', 'SELLER_SHIPS', 'BUYER_TRANSPORT', 'CARRIER']),
+  deliveryNote:   z.object({
+
+    }).nullable(),
+  paymentMethod: z.enum(['CASH', 'CARD_TO_CARD', 'BANK_TRANSFER', 'CHEQUE']),
+  paymentTermsNote:   z.object({
+
+    }).nullable(),
+  status: z.enum(['NEGOTIATING', 'AGREED', 'PAYMENT_PENDING', 'PAID', 'PREPARING', 'SHIPPED', 'DELIVERED', 'COMPLETED', 'CANCELLED', 'DISPUTED']),
+  createdAt: z.iso.datetime(),
+  myRole: z.enum(['buyer', 'seller']),
+});
+
 export const publicSellerProfileDtoSchema = z.object({
   id: z.string(),
   displayName: z.string(),
@@ -617,4 +655,7 @@ export const apiSchemas = {
   OfferResponseDto: offerResponseDtoSchema,
   CreateOfferDto: createOfferDtoSchema,
   CounterOfferDto: counterOfferDtoSchema,
+  CreateDealDto: createDealDtoSchema,
+  DealLotSummaryDto: dealLotSummaryDtoSchema,
+  DealResponseDto: dealResponseDtoSchema,
 } as const;
