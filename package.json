@@ -36,7 +36,7 @@
     "@monorepo/eslint-config": "*",
     "concurrently": "^10.0.5",
     "husky": "^9.1.7",
-    "lint-staged": "^17.4.1",
+    "lint-staged": "^17.5.1",
     "prettier": "^3.9.6"
   }
 }
