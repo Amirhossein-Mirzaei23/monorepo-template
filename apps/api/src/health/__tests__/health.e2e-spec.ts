@@ -35,4 +35,14 @@ describe('Health & Metrics (e2e)', () => {
     const response = await request(app.getHttpServer()).get('/health/live').expect(200);
     expect(response.headers['x-request-id']).toEqual(expect.any(String));
   });
+
+  it('does not use a client-supplied request ID for server correlation', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/health/live')
+      .set('x-request-id', 'client-controlled-id')
+      .expect(200);
+
+    expect(response.headers['x-request-id']).toEqual(expect.any(String));
+    expect(response.headers['x-request-id']).not.toBe('client-controlled-id');
+  });
 });

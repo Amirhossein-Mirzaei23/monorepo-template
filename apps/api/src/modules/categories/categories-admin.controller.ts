@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Param, Patch, Post, Req } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiBadRequestResponse,
@@ -10,6 +10,8 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
+import type { Request } from 'express';
+import { type AuthUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
@@ -23,9 +25,7 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
  * public read surface lives in CategoriesController and must never grow
  * write routes. No DELETE by design: deactivation (isActive: false) is the
  * lifecycle; the parent FK stays onDelete: Restrict.
- *
- * AuditLog rows (category:update etc.) are a documented follow-up — the
- * AuditLog model does not exist in the schema yet.
+ * Actor and allowlisted request context are forwarded to the transactional service.
  */
 @ApiTags('categories')
 @ApiBearerAuth('access-token')
@@ -42,8 +42,12 @@ export class CategoriesAdminController {
   @ApiOperation({
     summary: 'Create a category — admin only; sortOrder omitted = append after siblings',
   })
-  async create(@Body() dto: CreateCategoryDto): Promise<CategoryResponseDto> {
-    return this.categories.create(dto);
+  async create(
+    @Body() dto: CreateCategoryDto,
+    @CurrentUser() user: AuthUser,
+    @Req() request: Request & { id?: string },
+  ): Promise<CategoryResponseDto> {
+    return this.categories.create(dto, auditContext(user, request));
   }
 
   @Patch(':id')
@@ -59,8 +63,10 @@ export class CategoriesAdminController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateCategoryDto,
+    @CurrentUser() user: AuthUser,
+    @Req() request: Request & { id?: string },
   ): Promise<CategoryResponseDto> {
-    return this.categories.update(id, dto);
+    return this.categories.update(id, dto, auditContext(user, request));
   }
 
   @Patch(':id/reorder')
@@ -76,7 +82,17 @@ export class CategoriesAdminController {
   async reorder(
     @Param('id') id: string,
     @Body() dto: ReorderCategoryDto,
+    @CurrentUser() user: AuthUser,
+    @Req() request: Request & { id?: string },
   ): Promise<CategoryResponseDto> {
-    return this.categories.reorder(id, dto);
+    return this.categories.reorder(id, dto, auditContext(user, request));
   }
+}
+
+function auditContext(user: AuthUser, request: Request & { id?: string }) {
+  return {
+    actorId: user.sub,
+    requestId: request.id ?? 'unknown',
+    ip: request.ip ?? request.socket.remoteAddress ?? 'unknown',
+  };
 }

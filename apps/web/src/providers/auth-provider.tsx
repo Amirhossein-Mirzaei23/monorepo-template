@@ -30,8 +30,16 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
  * refresh token never reaches client JS (httpOnly cookie exchanged via the BFF).
  * On mount it silently restores the session through the BFF refresh endpoint.
  */
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [status, setStatus] = useState<SessionStatus>('loading');
+export function AuthProvider({
+  children,
+  restoreSession = true,
+}: {
+  children: React.ReactNode;
+  restoreSession?: boolean;
+}) {
+  const [status, setStatus] = useState<SessionStatus>(
+    restoreSession ? 'loading' : 'unauthenticated',
+  );
   const [user, setUser] = useState<UserResponseDto | undefined>(undefined);
   const tokenRef = useRef<string | undefined>(undefined);
 
@@ -53,6 +61,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Silent session restore: exchange the httpOnly refresh cookie via the BFF.
   useEffect(() => {
+    if (!restoreSession) {
+      return;
+    }
     let cancelled = false;
     void apiFetch<LoginResponseDto>('/api/auth/refresh', { method: 'POST' })
       .then((payload) => {
@@ -68,7 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [login]);
+  }, [login, restoreSession]);
 
   const value = useMemo<AuthContextValue>(
     () => ({ status, user, accessToken: () => tokenRef.current, login, logout }),

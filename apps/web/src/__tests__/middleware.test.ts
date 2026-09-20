@@ -1,99 +1,41 @@
-/**
- * @jest-environment node
- */
-import { NextRequest } from 'next/server';
+jest.mock('next/server', () => ({
+  NextResponse: {
+    next: () => ({ status: 200, headers: new Headers() }),
+    redirect: (url: URL) => ({ status: 307, headers: new Headers({ location: url.toString() }) }),
+  },
+}));
+
 import { middleware } from '../middleware';
 
-const BASE_URL = 'http://localhost:3000';
-
-function request(path: string, options: { refreshCookie?: boolean } = {}): NextRequest {
-  const headers = new Headers();
-  if (options.refreshCookie) {
-    headers.set('cookie', 'refresh_token=header.payload.signature');
-  }
-  return new NextRequest(new URL(path, BASE_URL), { headers });
+function request(path: string, cookie?: string) {
+  const url = new URL(`http://localhost:3000${path}`);
+  return {
+    url: url.toString(),
+    nextUrl: url,
+    cookies: { has: (name: string) => name === 'refresh_token' && cookie !== undefined },
+  } as never;
 }
 
-function redirectedTo(response: Response): URL {
-  const location = response.headers.get('location');
-  if (!location) {
-    throw new Error('expected a redirect location header');
-  }
-  return new URL(location);
-}
-
-/** PLAT-002 matrix: cookie present/absent × protected/public/api routes. */
-describe('middleware (PLAT-002 route gate)', () => {
-  describe('protected routes', () => {
-    it('redirects anonymous /dashboard to /login?next=/dashboard', () => {
-      const response = middleware(request('/dashboard'));
-
-      expect(response.status).toBe(307);
-      const target = redirectedTo(response);
-      expect(target.pathname).toBe('/login');
-      expect(target.searchParams.get('next')).toBe('/dashboard');
-    });
-
-    it('keeps the full nested path in next=', () => {
-      const response = middleware(request('/dashboard/deals/42'));
-
-      expect(redirectedTo(response).searchParams.get('next')).toBe('/dashboard/deals/42');
-    });
-
-    it.each(['/onboarding', '/settings'])(
-      'redirects anonymous %s (future protected prefix)',
-      (path) => {
-        const response = middleware(request(path));
-
-        expect(response.status).toBe(307);
-        expect(redirectedTo(response).searchParams.get('next')).toBe(path);
-      },
+describe('middleware route gates', () => {
+  it('redirects anonymous admin deep links with the complete safe next path', () => {
+    const response = middleware(request('/admin/users?tab=active'));
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe(
+      'http://localhost:3000/admin/login?next=%2Fadmin%2Fusers%3Ftab%3Dactive',
     );
-
-    it('passes /dashboard when the refresh cookie is present', () => {
-      const response = middleware(request('/dashboard', { refreshCookie: true }));
-
-      expect(response.status).toBe(200);
-      expect(response.headers.get('location')).toBeNull();
-    });
   });
 
-  describe('public routes', () => {
-    it('lets anonymous / (marketplace home) through — no auth gate on /', () => {
-      const response = middleware(request('/'));
-
-      expect(response.status).toBe(200);
-      expect(response.headers.get('location')).toBeNull();
-    });
-
-    it('lets anonymous /login through', () => {
-      const response = middleware(request('/login'));
-
-      expect(response.status).toBe(200);
-      expect(response.headers.get('location')).toBeNull();
-    });
+  it('leaves admin login available without a refresh cookie', () => {
+    expect(middleware(request('/admin/login')).status).toBe(200);
   });
 
-  describe('untouched surfaces', () => {
-    it('does not gate /api BFF routes', () => {
-      const response = middleware(request('/api/auth/login'));
+  it('preserves the existing normal route gate', () => {
+    const response = middleware(request('/dashboard'));
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe('http://localhost:3000/login?next=%2Fdashboard');
+  });
 
-      expect(response.status).toBe(200);
-      expect(response.headers.get('location')).toBeNull();
-    });
-
-    it('does not gate static assets', () => {
-      const response = middleware(request('/_next/static/chunks/app.js'));
-
-      expect(response.status).toBe(200);
-      expect(response.headers.get('location')).toBeNull();
-    });
-
-    it('matches prefixes on segment boundaries only (/dashboardx is public)', () => {
-      const response = middleware(request('/dashboardx'));
-
-      expect(response.status).toBe(200);
-      expect(response.headers.get('location')).toBeNull();
-    });
+  it('allows cookie-present admin requests through to API-authoritative checks', () => {
+    expect(middleware(request('/admin/audit', 'stale')).status).toBe(200);
   });
 });

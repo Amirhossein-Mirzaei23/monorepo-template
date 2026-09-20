@@ -171,6 +171,8 @@ model User {
   /// Deal lifecycle events this account acted in (null actorId = system rows,
   /// e.g. the future 7-day auto-complete job — DEAL-001).
   dealEvents    DealEvent[]
+  /// Immutable privileged-action records authored by this account.
+  auditLogs     AuditLog[]
 
   @@index([status])
 }
@@ -788,4 +790,23 @@ model DealEvent {
 
   /// Timeline reads for one deal (plan §3) — oldest first.
   @@index([dealId, createdAt])
+}
+
+/// Immutable privileged-action audit record. Metadata is written only from an
+/// explicit allowlist by AuditService; actorId is null for system jobs.
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json
+  requestId  String
+  ip         String
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([createdAt])
 }

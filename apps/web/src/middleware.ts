@@ -11,6 +11,10 @@ const REFRESH_COOKIE = 'refresh_token';
  */
 const PROTECTED_PREFIXES = ['/dashboard', '/onboarding', '/settings'] as const;
 
+function isAdminPath(pathname: string): boolean {
+  return pathname === '/admin' || pathname.startsWith('/admin/');
+}
+
 /** Segment-boundary prefix match: `/dashboard` and `/dashboard/…`, not `/dashboardx`. */
 function isProtectedPath(pathname: string): boolean {
   return PROTECTED_PREFIXES.some(
@@ -25,6 +29,18 @@ function isProtectedPath(pathname: string): boolean {
  * gate holds even if the matcher is ever widened.
  */
 export function middleware(request: NextRequest): NextResponse {
+  if (isAdminPath(request.nextUrl.pathname)) {
+    if (request.nextUrl.pathname === '/admin/login') {
+      return NextResponse.next();
+    }
+    if (!request.cookies.has(REFRESH_COOKIE)) {
+      const loginUrl = new URL('/admin/login', request.url);
+      loginUrl.searchParams.set('next', `${request.nextUrl.pathname}${request.nextUrl.search}`);
+      return NextResponse.redirect(loginUrl);
+    }
+    return NextResponse.next();
+  }
+
   if (!isProtectedPath(request.nextUrl.pathname)) {
     return NextResponse.next();
   }
@@ -37,5 +53,5 @@ export function middleware(request: NextRequest): NextResponse {
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/onboarding/:path*', '/settings/:path*'],
+  matcher: ['/dashboard/:path*', '/onboarding/:path*', '/settings/:path*', '/admin/:path*'],
 };

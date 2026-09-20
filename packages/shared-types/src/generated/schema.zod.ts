@@ -71,6 +71,18 @@ export const meResponseDtoSchema = z.object({
   onboardingCompleted: z.boolean(),
 });
 
+export const auditLogResponseDtoSchema = z.object({
+  id: z.string(),
+  actorId: z.string().nullable().optional(),
+  action: z.string(),
+  entityType: z.string(),
+  entityId: z.string(),
+  metadata: z.record(z.string(), z.unknown()),
+  requestId: z.string(),
+  ip: z.string(),
+  createdAt: z.iso.datetime(),
+});
+
 type CategoryTreeNodeDto = components['schemas']['CategoryTreeNodeDto'];
 export const categoryTreeNodeDtoSchema: z.ZodType<CategoryTreeNodeDto> = z.object({
   id: z.string(),
@@ -367,6 +379,13 @@ export const loginResponseDtoSchema = z.object({
   user: userResponseDtoSchema,
 });
 
+export const paginatedAuditLogsDtoSchema = z.object({
+  items: z.array(auditLogResponseDtoSchema),
+  total: z.number(),
+  page: z.number(),
+  limit: z.number(),
+});
+
 export const profileResponseDtoSchema = z.object({
   id: z.string(),
   userId: z.string(),
@@ -646,6 +665,8 @@ export const apiSchemas = {
   LoginDto: loginDtoSchema,
   LoginResponseDto: loginResponseDtoSchema,
   MeResponseDto: meResponseDtoSchema,
+  AuditLogResponseDto: auditLogResponseDtoSchema,
+  PaginatedAuditLogsDto: paginatedAuditLogsDtoSchema,
   CategoryTreeNodeDto: categoryTreeNodeDtoSchema,
   CreateCategoryDto: createCategoryDtoSchema,
   CategoryResponseDto: categoryResponseDtoSchema,

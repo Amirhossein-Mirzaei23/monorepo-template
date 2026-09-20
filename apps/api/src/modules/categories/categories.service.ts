@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService, type AuditWriteContext } from '../audit/audit.service';
 import { CategoriesRepository, type CategoryUpdateData, type Tx } from './categories.repository';
 import type { CreateCategoryDto } from './dto/create-category.dto';
 import type { ReorderCategoryDto } from './dto/reorder-category.dto';
@@ -22,16 +23,14 @@ import {
  * every write path (seed fixtures aside) flows through the same guards. The
  * public surface is `tree()`; the admin surface is create/update/reorder.
  *
- * AuditLog: the card calls for AuditLog rows on admin writes, but the
- * `AuditLog` model does not exist in prisma/schema.prisma yet (arrives with a
- * later task) — audit writes are intentionally skipped here (see CAT-004
- * session notes) rather than adding a migration out of scope.
+ * Every privileged write appends an immutable audit row in the same transaction.
  */
 @Injectable()
 export class CategoriesService {
   constructor(
     private readonly repository: CategoriesRepository,
     private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
   ) {}
 
   /** Public two-level tree: active only, ordered by (sortOrder, nameFa). */
@@ -47,7 +46,7 @@ export class CategoriesService {
    * the controller boundary. `sortOrder` defaults to append-after-siblings:
    * max sibling sortOrder + 1 (0 when there are no siblings yet).
    */
-  async create(input: CreateCategoryDto): Promise<CategoryResponseDto> {
+  async create(input: CreateCategoryDto, context: AuditWriteContext): Promise<CategoryResponseDto> {
     return this.prisma.$transaction(async (tx) => {
       const parent = await this.resolveTopLevelParent(input.parentId, tx);
       const clash = await this.repository.findBySlug(input.slug, tx);
@@ -68,6 +67,20 @@ export class CategoriesService {
         },
         tx,
       );
+      await this.audit.create(
+        {
+          ...context,
+          action: 'category.create',
+          entityType: 'Category',
+          entityId: created.id,
+          metadata: {
+            parentId: created.parentId,
+            sortOrder: created.sortOrder,
+            isActive: created.isActive,
+          },
+        },
+        tx,
+      );
       return toCategoryResponse(created);
     });
   }
@@ -84,7 +97,11 @@ export class CategoriesService {
    * - `isActive: false` deactivates: hidden from the public tree, still
    *   resolvable by id for historical lots (no cascade — lots keep referencing).
    */
-  async update(id: string, input: UpdateCategoryDto): Promise<CategoryResponseDto> {
+  async update(
+    id: string,
+    input: UpdateCategoryDto,
+    context: AuditWriteContext,
+  ): Promise<CategoryResponseDto> {
     return this.prisma.$transaction(async (tx) => {
       const current = await this.repository.findById(id, tx);
       if (!current) {
@@ -110,6 +127,16 @@ export class CategoriesService {
       }
 
       const updated = await this.repository.update(id, data, tx);
+      await this.audit.create(
+        {
+          ...context,
+          action: 'category.update',
+          entityType: 'Category',
+          entityId: updated.id,
+          metadata: { changedFields: Object.keys(data).sort() },
+        },
+        tx,
+      );
       return toCategoryResponse(updated);
     });
   }
@@ -121,7 +148,11 @@ export class CategoriesService {
    * (404) and be an actual sibling — same `parentId`, both-null = top-level
    * siblings — otherwise 400. Swapping with the category itself is rejected.
    */
-  async reorder(id: string, input: ReorderCategoryDto): Promise<CategoryResponseDto> {
+  async reorder(
+    id: string,
+    input: ReorderCategoryDto,
+    context: AuditWriteContext,
+  ): Promise<CategoryResponseDto> {
     return this.prisma.$transaction(async (tx) => {
       const category = await this.repository.findById(id, tx);
       if (!category) {
@@ -146,6 +177,16 @@ export class CategoriesService {
         tx,
       );
       await this.repository.update(sibling.id, { sortOrder: category.sortOrder }, tx);
+      await this.audit.create(
+        {
+          ...context,
+          action: 'category.reorder',
+          entityType: 'Category',
+          entityId: category.id,
+          metadata: { siblingId: sibling.id },
+        },
+        tx,
+      );
       return toCategoryResponse(swapped);
     });
   }

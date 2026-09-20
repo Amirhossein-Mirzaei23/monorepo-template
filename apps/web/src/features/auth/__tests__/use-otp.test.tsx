@@ -180,3 +180,20 @@ describe('useOtpVerify', () => {
     expect(screen.getByTestId('auth-phone')).toHaveTextContent('09123456789');
   });
 });
+
+describe('AuthProvider session restore', () => {
+  function StatusProbe() {
+    return <span data-testid="auth-status">{useAuth().status}</span>;
+  }
+
+  it('does not call refresh when the server reports no refresh cookie', async () => {
+    render(
+      <AuthProvider restoreSession={false}>
+        <StatusProbe />
+      </AuthProvider>,
+    );
+
+    expect(await screen.findByTestId('auth-status')).toHaveTextContent('unauthenticated');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

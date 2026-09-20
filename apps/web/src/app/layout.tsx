@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { cookies } from 'next/headers';
 import localFont from 'next/font/local';
 import { Providers } from '@/providers/providers';
 import '@/styles/globals.css';
@@ -20,11 +21,13 @@ export const metadata: Metadata = {
   description: 'بازار آنلاین خرید و فروش کالای راکد و موجودی مازاد برای کسب‌وکارها',
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const restoreSession = (await cookies()).has('refresh_token');
+
   return (
     <html lang="fa" dir="rtl" suppressHydrationWarning>
       <body className={vazirmatn.variable}>
-        <Providers>{children}</Providers>
+        <Providers restoreSession={restoreSession}>{children}</Providers>
       </body>
     </html>
   );

@@ -71,6 +71,10 @@ function propertyToZod(prop, depth, rootName) {
     return `z.union([${variants.join(', ')}])`;
   }
   let inner;
+  if (prop.type === 'object' && prop.additionalProperties === true && !prop.properties) {
+    inner = 'z.record(z.string(), z.unknown())';
+    return prop.nullable === true ? `${inner}.nullable()` : inner;
+  }
   switch (prop.type) {
     case 'string':
       if (Array.isArray(prop.enum)) {

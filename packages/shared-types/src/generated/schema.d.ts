@@ -194,6 +194,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List immutable privileged-action audit records — admin only */
+        get: operations["AuditController_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/categories": {
         parameters: {
             query?: never;
@@ -985,6 +1002,28 @@ export interface components {
              * @example false
              */
             onboardingCompleted: boolean;
+        };
+        AuditLogResponseDto: {
+            id: string;
+            actorId?: string | null;
+            /** @example category.update */
+            action: string;
+            /** @example Category */
+            entityType: string;
+            entityId: string;
+            metadata: {
+                [key: string]: unknown;
+            };
+            requestId: string;
+            ip: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        PaginatedAuditLogsDto: {
+            items: components["schemas"]["AuditLogResponseDto"][];
+            total: number;
+            page: number;
+            limit: number;
         };
         CategoryTreeNodeDto: {
             /** @example clx…cuid */
@@ -2938,6 +2977,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeResponseDto"];
+                };
+            };
+        };
+    };
+    AuditController_list: {
+        parameters: {
+            query?: {
+                page?: components["schemas"]["Object"];
+                limit?: components["schemas"]["Object"];
+                sort?: string;
+                actorId?: string;
+                action?: string;
+                entityType?: string;
+                entityId?: string;
+                from?: string;
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedAuditLogsDto"];
                 };
             };
         };

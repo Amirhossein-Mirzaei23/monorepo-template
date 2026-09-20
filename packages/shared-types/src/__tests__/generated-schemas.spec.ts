@@ -84,6 +84,30 @@ describe('generated zod schemas', () => {
     ).toBe(false);
   });
 
+  it('validates audit rows with nullable string actors and preserves metadata', () => {
+    const payload = {
+      id: 'audit-1',
+      actorId: 'admin-1',
+      action: 'category.update',
+      entityType: 'Category',
+      entityId: 'category-1',
+      metadata: { changedFields: ['nameFa'], isActive: true },
+      requestId: 'request-1',
+      ip: '127.0.0.1',
+      createdAt: '2026-09-20T10:00:00.000Z',
+    };
+
+    const parsed = apiSchemas.AuditLogResponseDto.parse(payload);
+    expect(parsed.actorId).toBe('admin-1');
+    expect(parsed.metadata).toEqual(payload.metadata);
+    expect(apiSchemas.AuditLogResponseDto.safeParse({ ...payload, actorId: null }).success).toBe(
+      true,
+    );
+    expect(apiSchemas.AuditLogResponseDto.safeParse({ ...payload, actorId: {} }).success).toBe(
+      false,
+    );
+  });
+
   it('validates lot card payloads keeping the recomposed seller block (MKT-001/005)', () => {
     const payload = {
       id: 'clxsamplecuid',

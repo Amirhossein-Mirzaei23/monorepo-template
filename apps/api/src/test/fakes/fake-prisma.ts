@@ -1,4 +1,5 @@
 import {
+  type AuditLog,
   type Category,
   type Conversation,
   ConversationStatus,
@@ -52,6 +53,23 @@ type UserWhere = {
   status?: UserStatus;
 };
 type UserOrderBy = Record<string, 'asc' | 'desc'>;
+type AuditLogWhere = {
+  actorId?: string | null;
+  action?: string;
+  entityType?: string;
+  entityId?: string;
+  createdAt?: { gte?: Date; lte?: Date };
+};
+type AuditLogCreateData = {
+  actorId?: string | null;
+  action: string;
+  entityType: string;
+  entityId: string;
+  metadata: Prisma.InputJsonValue;
+  requestId: string;
+  ip: string;
+  createdAt?: Date;
+};
 
 type CategoryWhere = {
   isActive?: boolean;
@@ -465,6 +483,8 @@ export class FakePrisma {
   private readonly offers = new Map<string, Offer>();
   private readonly deals = new Map<string, Deal>();
   private readonly dealEvents = new Map<string, DealEvent>();
+  private readonly auditLogs = new Map<string, AuditLog>();
+  private nextAuditCreateError: Error | null = null;
 
   readonly user = {
     findMany: async ({
@@ -809,6 +829,49 @@ export class FakePrisma {
       return cloneCategory(next);
     },
   };
+
+  readonly auditLog = {
+    create: async ({ data }: { data: AuditLogCreateData }): Promise<AuditLog> => {
+      if (this.nextAuditCreateError) {
+        const error = this.nextAuditCreateError;
+        this.nextAuditCreateError = null;
+        throw error;
+      }
+      const row: AuditLog = {
+        id: randomUUID(),
+        actorId: data.actorId ?? null,
+        action: data.action,
+        entityType: data.entityType,
+        entityId: data.entityId,
+        metadata: structuredClone(data.metadata) as Prisma.JsonValue,
+        requestId: data.requestId,
+        ip: data.ip,
+        createdAt: data.createdAt ?? nowIso(),
+      };
+      this.auditLogs.set(row.id, row);
+      return structuredClone(row);
+    },
+    findMany: async ({
+      where,
+      orderBy,
+      skip = 0,
+      take,
+    }: {
+      where?: AuditLogWhere;
+      orderBy?: Record<string, 'asc' | 'desc'> | Array<Record<string, 'asc' | 'desc'>>;
+      skip?: number;
+      take?: number;
+    } = {}): Promise<AuditLog[]> =>
+      sortRows([...this.auditLogs.values()].filter(matchesAuditLogWhere(where)), orderBy)
+        .slice(skip, take === undefined ? undefined : skip + take)
+        .map((row) => structuredClone(row)),
+    count: async ({ where }: { where?: AuditLogWhere } = {}): Promise<number> =>
+      [...this.auditLogs.values()].filter(matchesAuditLogWhere(where)).length,
+  };
+
+  failNextAuditCreate(error: Error): void {
+    this.nextAuditCreateError = error;
+  }
 
   /** Exactly the surface ProfilesRepository uses (ONB-001 + MKT-004 sellers). */
   readonly profile = {
@@ -1696,6 +1759,7 @@ export class FakePrisma {
       this.offers,
       this.deals,
       this.dealEvents,
+      this.auditLogs,
     ];
     const snapshot = tables.map((table) =>
       [...table.entries()].map(([id, row]) => [id, structuredClone(row)] as const),
@@ -2241,7 +2305,8 @@ function matchesCategoryWhere(where: CategoryWhere | undefined): (row: Category)
 
 /** Multi-key stable sort (orderBy is a single object or an array of them). */
 function sortRows<
-  T extends Category | User | Lot | Conversation | OtpCode | Message | Offer | Deal | DealEvent,
+  T extends
+    AuditLog | Category | User | Lot | Conversation | OtpCode | Message | Offer | Deal | DealEvent,
 >(
   rows: T[],
   orderBy: Record<string, 'asc' | 'desc'> | Record<string, 'asc' | 'desc'>[] | undefined,
@@ -2721,6 +2786,16 @@ function cloneDeal(row: Deal): Deal {
     createdAt: new Date(row.createdAt),
     updatedAt: new Date(row.updatedAt),
   };
+}
+
+function matchesAuditLogWhere(where: AuditLogWhere | undefined): (row: AuditLog) => boolean {
+  return (row) =>
+    (where?.actorId === undefined || row.actorId === where.actorId) &&
+    (where?.action === undefined || row.action === where.action) &&
+    (where?.entityType === undefined || row.entityType === where.entityType) &&
+    (where?.entityId === undefined || row.entityId === where.entityId) &&
+    (where?.createdAt?.gte === undefined || row.createdAt >= where.createdAt.gte) &&
+    (where?.createdAt?.lte === undefined || row.createdAt <= where.createdAt.lte);
 }
 
 /** DealEvent matcher (DEAL-001): deal scoping for the timeline page read. */

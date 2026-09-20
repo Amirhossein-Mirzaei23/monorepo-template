@@ -15,6 +15,7 @@ import { validateEnv } from './config/env.validation';
 import { HealthModule } from './health/health.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { AuditModule } from './modules/audit/audit.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { ConversationsModule } from './modules/conversations/conversations.module';
 import { DealsModule } from './modules/deals/deals.module';
@@ -44,9 +45,8 @@ import { PrismaModule } from './prisma/prisma.module';
         return {
           pinoHttp: {
             level: config.environment === 'production' ? 'info' : 'debug',
-            genReqId: (req, res) => {
-              const header = req.headers['x-request-id'];
-              const id = typeof header === 'string' && header.length > 0 ? header : randomUUID();
+            genReqId: (_req, res) => {
+              const id = randomUUID();
               res.setHeader('x-request-id', id);
               return id;
             },
@@ -80,6 +80,7 @@ import { PrismaModule } from './prisma/prisma.module';
     HealthModule,
     UsersModule,
     AuthModule,
+    AuditModule,
     SmsModule,
     OtpModule,
     CategoriesModule,
