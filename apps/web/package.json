@@ -6,6 +6,7 @@
   "license": "MIT",
   "scripts": {
     "dev": "next dev --port 3000",
+    "prebuild": "npm run build -w @monorepo/shared-types",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",

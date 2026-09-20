@@ -1,2 +1,3 @@
 # Local media storage (STORAGE_DIR, MEDIA-001) — uploaded bytes never get committed.
-storage/
+# Anchor this to the app root so it does not hide src/modules/media/storage/.
+/storage/
