@@ -4,7 +4,6 @@ import { hash } from 'bcryptjs';
 import { type Paginated, type ParsedSort, parseSort } from '../../common/dto/pagination-query.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { CreateUserDto } from './dto/create-user.dto';
-import type { UpdateUserDto } from './dto/update-user.dto';
 import { type UserResponseDto, toUserResponse } from './dto/user-response.dto';
 import type { UsersQueryDto } from './dto/users-query.dto';
 import { UsersRepository } from './users.repository';
@@ -18,6 +17,11 @@ const DEFAULT_SORT: ParsedSort<UserSortField> = { field: 'createdAt', order: 'de
 /**
  * Business rules for the users domain. This layer owns transaction boundaries:
  * it opens `prisma.$transaction` and passes the client down to the repository.
+ *
+ * Admin panel Task 05: the generic admin update (role/password mutation) and
+ * the hard `remove` were REMOVED — operational account changes belong to the
+ * canonical /admin/users surface (AdminUsersService). This service keeps the
+ * admin-managed creation path and the deprecated legacy reads.
  */
 @Injectable()
 export class UsersService {
@@ -79,47 +83,5 @@ export class UsersService {
       role: dto.role ?? UserRole.USER,
     });
     return toUserResponse(user);
-  }
-
-  async update(id: string, dto: UpdateUserDto): Promise<UserResponseDto> {
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const current = await this.repository.findById(id, tx);
-      if (!current) {
-        throw new NotFoundException(`User ${id} not found`);
-      }
-      if (dto.phone !== undefined && dto.phone !== current.phone) {
-        const clash = await this.repository.findByPhone(dto.phone, tx);
-        if (clash) {
-          throw new ConflictException(`Phone ${dto.phone} is already registered`);
-        }
-      }
-      // `!= null`: an explicit null means "clear the email" below — no lookup.
-      if (dto.email != null && dto.email !== current.email) {
-        const clash = await this.repository.findByEmail(dto.email, tx);
-        if (clash) {
-          throw new ConflictException(`Email ${dto.email} is already registered`);
-        }
-      }
-
-      const data: Prisma.UserUpdateInput = {};
-      if (dto.phone !== undefined) data.phone = dto.phone;
-      if (dto.email !== undefined) data.email = dto.email;
-      if (dto.name !== undefined) data.name = dto.name;
-      if (dto.role !== undefined) data.role = dto.role;
-      if (dto.password !== undefined) data.passwordHash = await hash(dto.password, BCRYPT_ROUNDS);
-
-      return this.repository.update(id, data, tx);
-    });
-    return toUserResponse(updated);
-  }
-
-  async remove(id: string): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      const user = await this.repository.findById(id, tx);
-      if (!user) {
-        throw new NotFoundException(`User ${id} not found`);
-      }
-      await this.repository.delete(id, tx);
-    });
   }
 }

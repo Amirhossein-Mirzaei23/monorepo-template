@@ -3,4 +3,9 @@ export const adminKeys = {
   all: ['admin'] as const,
   /** The one bounded workload overview of GET /admin/overview. */
   overview: () => [...adminKeys.all, 'overview'] as const,
+  /** The /admin/users search list — the filter object is part of the key
+   * (ROADMAP_REFERENCE §7) so linkable URL states map to distinct caches. */
+  users: (filters: Record<string, unknown>) => [...adminKeys.all, 'users', filters] as const,
+  /** The /admin/users/:id allowlisted detail. */
+  user: (id: string) => [...adminKeys.all, 'users', 'detail', id] as const,
 };

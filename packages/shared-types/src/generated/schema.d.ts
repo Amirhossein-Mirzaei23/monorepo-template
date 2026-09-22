@@ -62,10 +62,17 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List users (paginated, filterable) — admin only */
+        /**
+         * List users (paginated, filterable) — admin only
+         * @deprecated
+         * @description Deprecated alias — use GET /admin/users (canonical admin surface).
+         */
         get: operations["UsersController_list"];
         put?: never;
-        /** Create a user — admin only */
+        /**
+         * Create a user — admin only
+         * @description Admin-managed account creation (admins are seeded/managed, never self-registered). Lifecycle changes belong to /admin/users/:id/status and /admin/users/:id/role.
+         */
         post: operations["UsersController_create"];
         delete?: never;
         options?: never;
@@ -80,16 +87,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a user by id — admin only */
+        /**
+         * Get a user by id — admin only
+         * @deprecated
+         * @description Deprecated alias — use GET /admin/users/:id (allowlisted admin detail).
+         */
         get: operations["UsersController_getById"];
         put?: never;
         post?: never;
-        /** Delete a user — admin only */
-        delete: operations["UsersController_remove"];
+        delete?: never;
         options?: never;
         head?: never;
-        /** Update a user — admin only */
-        patch: operations["UsersController_update"];
+        patch?: never;
         trace?: never;
     };
     "/auth/otp/request": {
@@ -205,6 +214,91 @@ export interface paths {
         get: operations["AdminOverviewController_getOverview"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search users (q spans phone/name/email/business name; role/status/accountRole/onboarded filters) — admin only */
+        get: operations["AdminUsersController_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/users/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Allowlisted user detail: profile summary + bounded lot/deal counts — admin only */
+        get: operations["AdminUsersController_getDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/users/{id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Suspend / block / activate / soft-delete a user (reason required, sessions revoked, audited) — admin only */
+        patch: operations["AdminUsersController_updateStatus"];
+        trace?: never;
+    };
+    "/admin/users/{id}/role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Promote/demote a user role (reason required, demotion revokes sessions, audited) — admin only */
+        patch: operations["AdminUsersController_updateRole"];
+        trace?: never;
+    };
+    "/admin/users/{id}/revoke-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke every active refresh session of a user (reason required, audited) — admin only */
+        post: operations["AdminUsersController_revokeSessions"];
         delete?: never;
         options?: never;
         head?: never;
@@ -901,27 +995,6 @@ export interface components {
              */
             role: "USER" | "ADMIN";
         };
-        UpdateUserDto: {
-            /**
-             * @description Normalized `09xxxxxxxxx`
-             * @example 09120000000
-             */
-            phone?: string;
-            /**
-             * Format: email
-             * @example jane@example.com
-             */
-            email?: string | null;
-            /** @example Jane Doe */
-            name?: string;
-            /** @example s3cure-pass */
-            password?: string;
-            /**
-             * @default USER
-             * @enum {string}
-             */
-            role: "USER" | "ADMIN";
-        };
         OtpRequestDto: {
             /**
              * @description Normalized `09xxxxxxxxx`
@@ -1062,6 +1135,199 @@ export interface components {
             oldestPendingLots: components["schemas"]["AdminOverviewPendingLotDto"][];
             /** @description Five oldest open reports — always empty until Task 09 */
             oldestOpenReports: components["schemas"]["AdminOverviewPendingReportDto"][];
+        };
+        AdminUserProfileSummaryDto: {
+            /** @example فروشگاه نمونه */
+            displayName: string;
+            /** @example کسب‌وکار نمونه */
+            businessName: string | null;
+            /** @example tehran */
+            province: string | null;
+            /** @example tehran */
+            city: string | null;
+            /** @example false */
+            isBuyer: boolean;
+            /** @example true */
+            isSeller: boolean;
+            /** @example 0 */
+            successfulDeals: number;
+        };
+        AdminUserListItemDto: {
+            /** @example clx…cuid */
+            id: string;
+            /**
+             * @description Normalized `09xxxxxxxxx`
+             * @example 09120000000
+             */
+            phone: string;
+            /** @example jane@example.com */
+            email: string | null;
+            /** @example Jane Doe */
+            name: string;
+            /** @enum {string} */
+            role: "USER" | "ADMIN";
+            /** @enum {string} */
+            status: "ACTIVE" | "SUSPENDED" | "BLOCKED" | "DELETED";
+            accountRoles: ("BUYER" | "SELLER")[];
+            /**
+             * Format: date-time
+             * @example 2026-01-01T00:00:00.000Z
+             */
+            onboardingCompletedAt: string | null;
+            /**
+             * Format: date-time
+             * @example null
+             */
+            deletedAt: string | null;
+            /**
+             * Format: date-time
+             * @example 2026-01-01T00:00:00.000Z
+             */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @example 2026-01-01T00:00:00.000Z
+             */
+            updatedAt: string;
+            profile: components["schemas"]["AdminUserProfileSummaryDto"] | null;
+        };
+        AdminUsersListResponseDto: {
+            items: components["schemas"]["AdminUserListItemDto"][];
+            /** @example 42 */
+            total: number;
+            /** @example 1 */
+            page: number;
+            /** @example 20 */
+            limit: number;
+        };
+        AdminUserCountsDto: {
+            /**
+             * @description Lots owned by the user
+             * @example 4
+             */
+            lots: number;
+            /**
+             * @description Deals where the user is the buyer
+             * @example 2
+             */
+            dealsAsBuyer: number;
+            /**
+             * @description Deals where the user is the seller
+             * @example 1
+             */
+            dealsAsSeller: number;
+        };
+        AdminUserDetailDto: {
+            /** @example clx…cuid */
+            id: string;
+            /**
+             * @description Normalized `09xxxxxxxxx`
+             * @example 09120000000
+             */
+            phone: string;
+            /** @example jane@example.com */
+            email: string | null;
+            /** @example Jane Doe */
+            name: string;
+            /** @enum {string} */
+            role: "USER" | "ADMIN";
+            /** @enum {string} */
+            status: "ACTIVE" | "SUSPENDED" | "BLOCKED" | "DELETED";
+            accountRoles: ("BUYER" | "SELLER")[];
+            /**
+             * Format: date-time
+             * @example 2026-01-01T00:00:00.000Z
+             */
+            onboardingCompletedAt: string | null;
+            /**
+             * Format: date-time
+             * @example null
+             */
+            deletedAt: string | null;
+            /**
+             * Format: date-time
+             * @example 2026-01-01T00:00:00.000Z
+             */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @example 2026-01-01T00:00:00.000Z
+             */
+            updatedAt: string;
+            profile: components["schemas"]["AdminUserProfileSummaryDto"] | null;
+            counts: components["schemas"]["AdminUserCountsDto"];
+        };
+        UpdateUserStatusDto: {
+            /**
+             * @description The one transition to perform
+             * @enum {string}
+             */
+            action: "SUSPEND" | "BLOCK" | "ACTIVATE" | "DELETE";
+            /**
+             * @description Required — written to the audit log with the action
+             * @example نقض قوانین پلتفرم
+             */
+            reason: string;
+        };
+        AdminUserResponseDto: {
+            /** @example clx…cuid */
+            id: string;
+            /**
+             * @description Normalized `09xxxxxxxxx`
+             * @example 09120000000
+             */
+            phone: string;
+            /** @example jane@example.com */
+            email: string | null;
+            /** @example Jane Doe */
+            name: string;
+            /** @enum {string} */
+            role: "USER" | "ADMIN";
+            /** @enum {string} */
+            status: "ACTIVE" | "SUSPENDED" | "BLOCKED" | "DELETED";
+            accountRoles: ("BUYER" | "SELLER")[];
+            /**
+             * Format: date-time
+             * @example 2026-01-01T00:00:00.000Z
+             */
+            onboardingCompletedAt: string | null;
+            /**
+             * Format: date-time
+             * @example null
+             */
+            deletedAt: string | null;
+            /**
+             * Format: date-time
+             * @example 2026-01-01T00:00:00.000Z
+             */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @example 2026-01-01T00:00:00.000Z
+             */
+            updatedAt: string;
+        };
+        UpdateUserRoleDto: {
+            /** @enum {string} */
+            role: "USER" | "ADMIN";
+            /**
+             * @description Required — written to the audit log with the action
+             * @example سلب دسترسی مدیریتی
+             */
+            reason: string;
+        };
+        RevokeUserSessionsDto: {
+            /**
+             * @description Required — written to the audit log with the action
+             * @example نشست‌های مشکوک
+             */
+            reason: string;
+        };
+        RevokeSessionsResponseDto: {
+            /** @example clx…cuid */
+            id: string;
+            /** @example 3 */
+            revokedSessions: number;
         };
         AuditLogResponseDto: {
             id: string;
@@ -2873,50 +3139,6 @@ export interface operations {
             };
         };
     };
-    UsersController_remove: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    UsersController_update: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateUserDto"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UserResponseDto"];
-                };
-            };
-        };
-    };
     AuthController_requestOtp: {
         parameters: {
             query?: never;
@@ -3057,6 +3279,188 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AdminOverviewResponseDto"];
                 };
+            };
+        };
+    };
+    AdminUsersController_list: {
+        parameters: {
+            query?: {
+                page?: components["schemas"]["Object"];
+                limit?: components["schemas"]["Object"];
+                sort?: string;
+                /** @description Free search term — matches phone, name, email or business name */
+                q?: string;
+                role?: "USER" | "ADMIN";
+                status?: "ACTIVE" | "SUSPENDED" | "BLOCKED" | "DELETED";
+                accountRole?: "BUYER" | "SELLER";
+                /** @description true = onboarding completed, false = not completed yet */
+                onboarded?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUsersListResponseDto"];
+                };
+            };
+        };
+    };
+    AdminUsersController_getDetail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserDetailDto"];
+                };
+            };
+            /** @description Unknown user id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    AdminUsersController_updateStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateUserStatusDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserResponseDto"];
+                };
+            };
+            /** @description Illegal transition (code ILLEGAL_USER_STATUS_TRANSITION) or validation */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown user id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Self-action or last-active-admin guard (409 machine code in body) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    AdminUsersController_updateRole: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateUserRoleDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserResponseDto"];
+                };
+            };
+            /** @description Unknown user id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Self-action or last-active-admin guard (409 machine code in body) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    AdminUsersController_revokeSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RevokeUserSessionsDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevokeSessionsResponseDto"];
+                };
+            };
+            /** @description Unknown user id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Self-action guard (409 machine code in body) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

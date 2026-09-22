@@ -69,7 +69,7 @@ describe('UsersController (e2e)', () => {
     }
   });
 
-  it('CRUD round trip: create → read → update → delete', async () => {
+  it('create → read round trip works for admins', async () => {
     const created = await request(app.getHttpServer())
       .post('/users')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -86,21 +86,24 @@ describe('UsersController (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200)
       .expect((res) => expect(res.body.phone).toBe('09129990001'));
+  });
 
+  it('the unsafe generic PATCH/DELETE /users/:id routes are gone (admin panel Task 05)', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ phone: '09129990003', name: 'Legacy', password: 'super-secret-1' })
+      .expect(201);
+    const id = created.body.id as string;
+
+    // No role/password/name mutation channel, no hard delete.
     await request(app.getHttpServer())
       .patch(`/users/${id}`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'Crud Renamed' })
-      .expect(200)
-      .expect((res) => expect(res.body.name).toBe('Crud Renamed'));
-
+      .send({ password: 'brand-new-pass', role: 'ADMIN' })
+      .expect(404);
     await request(app.getHttpServer())
       .delete(`/users/${id}`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .expect(204);
-
-    await request(app.getHttpServer())
-      .get(`/users/${id}`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(404);
   });

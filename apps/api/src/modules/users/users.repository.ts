@@ -79,8 +79,4 @@ export class UsersRepository {
   ): Promise<User> {
     return this.client(tx).user.update({ where: { id }, data });
   }
-
-  async delete(id: string, tx: Tx = undefined): Promise<User> {
-    return this.client(tx).user.delete({ where: { id } });
-  }
 }

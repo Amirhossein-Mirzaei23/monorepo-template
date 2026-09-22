@@ -46,13 +46,29 @@ interface RefreshTokenRow {
   createdAt: Date;
 }
 
+type UserTextFilter = { contains: string; mode?: 'insensitive' };
 type UserWhere = {
-  phone?: string;
-  email?: string | null;
+  id?: string | { in: string[]; not?: string };
+  phone?: string | UserTextFilter;
+  email?: string | null | UserTextFilter;
+  name?: string | UserTextFilter;
   role?: UserRole;
   status?: UserStatus;
+  /** Admin-users accountRole filter: accountRoles: { has: BUYER } (Task 05). */
+  accountRoles?: { has: AccountRole };
+  /** Admin-users onboarding filter: null (never completed) / { not: null }. */
+  onboardingCompletedAt?: null | { not: null };
   /** Admin-overview window arm: users created since a stamp (gte, inclusive). */
   createdAt?: { gte?: Date };
+  /** Admin-users free-term search arms (Task 05); the business-name arm is a
+   * to-one profile relation filter (resolved against the profiles store). */
+  OR?: Array<{
+    phone?: UserTextFilter;
+    name?: UserTextFilter;
+    email?: UserTextFilter;
+    id?: { in: string[] };
+    profile?: { is: { businessName: UserTextFilter } };
+  }>;
 };
 type UserOrderBy = Record<string, 'asc' | 'desc'>;
 type AuditLogWhere = {
@@ -488,6 +504,14 @@ export class FakePrisma {
   private readonly auditLogs = new Map<string, AuditLog>();
   private nextAuditCreateError: Error | null = null;
 
+  /** Profile businessName resolver for the admin-users search's profile arm. */
+  private profileBusinessNameOf(): (userId: string) => { businessName: string | null } | undefined {
+    return (userId) => {
+      const profile = [...this.profiles.values()].find((row) => row.userId === userId);
+      return profile ? { businessName: profile.businessName } : undefined;
+    };
+  }
+
   readonly user = {
     findMany: async ({
       where,
@@ -496,24 +520,19 @@ export class FakePrisma {
       take,
     }: {
       where?: UserWhere;
-      orderBy?: UserOrderBy;
+      orderBy?: UserOrderBy | UserOrderBy[];
       skip?: number;
       take?: number;
-    }): Promise<User[]> => {
-      let rows = [...this.users.values()].filter(matchesWhere(where));
-      for (const [field, order] of Object.entries(orderBy ?? {})) {
-        rows = rows.sort((a, b) => {
-          const av = a[field as keyof User] as string | Date;
-          const bv = b[field as keyof User] as string | Date;
-          const cmp = av > bv ? 1 : av < bv ? -1 : 0;
-          return order === 'desc' ? -cmp : cmp;
-        });
-      }
-      rows = rows.slice(skip, take !== undefined ? skip + take : undefined);
-      return rows.map(cloneUser);
-    },
+    }): Promise<User[]> =>
+      // sortRows handles the array form (sort field + unique id tiebreak, Task 05).
+      sortRows(
+        [...this.users.values()].filter(matchesWhere(where, this.profileBusinessNameOf())),
+        orderBy,
+      )
+        .slice(skip, take !== undefined ? skip + take : undefined)
+        .map(cloneUser),
     count: async ({ where }: { where?: UserWhere } = {}): Promise<number> =>
-      [...this.users.values()].filter(matchesWhere(where)).length,
+      [...this.users.values()].filter(matchesWhere(where, this.profileBusinessNameOf())).length,
     findUnique: async ({
       where,
     }: {
@@ -636,7 +655,7 @@ export class FakePrisma {
     }: {
       where: { id?: string; userId?: string; tokenHash?: string; revokedAt?: null };
       data: { revokedAt: Date; lastUsedAt?: Date };
-    }): Promise<number> => {
+    }): Promise<{ count: number }> => {
       let changed = 0;
       for (const row of this.refreshTokens.values()) {
         const idMatch = where.id === undefined || row.id === where.id;
@@ -651,7 +670,8 @@ export class FakePrisma {
           changed += 1;
         }
       }
-      return changed;
+      // Prisma BatchPayload shape (Task 05 audit metadata reads .count).
+      return { count: changed };
     },
   };
 
@@ -877,19 +897,37 @@ export class FakePrisma {
 
   /** Exactly the surface ProfilesRepository uses (ONB-001 + MKT-004 sellers). */
   readonly profile = {
-    /** MKT-004 sellers listing: isSeller rows, newest first, hard take. */
+    /** MKT-004 sellers listing: isSeller rows, newest first, hard take.
+     * Admin-users search (Task 05) adds the userId-in page merge and the
+     * businessName free-term arm. */
     findMany: async ({
       where,
       orderBy,
       take,
     }: {
-      where?: { isSeller?: boolean };
+      where?: {
+        isSeller?: boolean;
+        userId?: { in: string[] };
+        businessName?: { contains: string; mode?: 'insensitive' };
+      };
       orderBy?: { createdAt: 'asc' | 'desc' };
       take?: number;
     }): Promise<Profile[]> => {
-      let rows = [...this.profiles.values()].filter(
-        (row) => where?.isSeller === undefined || row.isSeller === where.isSeller,
-      );
+      let rows = [...this.profiles.values()].filter((row) => {
+        if (where?.isSeller !== undefined && row.isSeller !== where.isSeller) {
+          return false;
+        }
+        if (where?.userId !== undefined && !where.userId.in.includes(row.userId)) {
+          return false;
+        }
+        if (where?.businessName !== undefined) {
+          const haystack = (row.businessName ?? '').toLowerCase();
+          if (!haystack.includes(where.businessName.contains.toLowerCase())) {
+            return false;
+          }
+        }
+        return true;
+      });
       if (orderBy?.createdAt === 'desc') {
         rows = rows.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       } else if (orderBy?.createdAt === 'asc') {
@@ -2268,13 +2306,64 @@ export class FakePrisma {
   }
 }
 
-function matchesWhere(where: UserWhere | undefined): (user: User) => boolean {
-  return (user) =>
-    (where?.phone === undefined || user.phone === where.phone) &&
-    (where?.email === undefined || user.email === where.email) &&
-    (where?.role === undefined || user.role === where.role) &&
-    (where?.status === undefined || user.status === where.status) &&
-    (where?.createdAt?.gte === undefined || user.createdAt >= where.createdAt.gte);
+/** Text-filter arm of the admin users search: substring, case-insensitive. */
+function textMatches(value: string | null, filter: string | null | UserTextFilter): boolean {
+  if (filter === null) {
+    return value === null;
+  }
+  if (typeof filter === 'string') {
+    return value === filter;
+  }
+  const haystack = (value ?? '').toLowerCase();
+  return haystack.includes(filter.contains.toLowerCase());
+}
+
+function idMatches(id: string, filter: NonNullable<UserWhere['id']>): boolean {
+  if (typeof filter === 'string') {
+    return id === filter;
+  }
+  if (filter.in !== undefined && !filter.in.includes(id)) {
+    return false;
+  }
+  return filter.not === undefined || id !== filter.not;
+}
+
+function matchesWhere(
+  where: UserWhere | undefined,
+  profileOf: (userId: string) => { businessName: string | null } | undefined = () => undefined,
+): (user: User) => boolean {
+  const orArms = where?.OR;
+  return (user) => {
+    const base =
+      (where?.id === undefined || idMatches(user.id, where.id)) &&
+      (where?.phone === undefined || textMatches(user.phone, where.phone)) &&
+      (where?.email === undefined || textMatches(user.email, where.email)) &&
+      (where?.name === undefined || textMatches(user.name, where.name)) &&
+      (where?.role === undefined || user.role === where.role) &&
+      (where?.status === undefined || user.status === where.status) &&
+      (where?.accountRoles === undefined || user.accountRoles.includes(where.accountRoles.has)) &&
+      (where?.onboardingCompletedAt === undefined ||
+        (where.onboardingCompletedAt === null
+          ? user.onboardingCompletedAt === null
+          : user.onboardingCompletedAt !== null)) &&
+      (where?.createdAt?.gte === undefined || user.createdAt >= where.createdAt.gte);
+    if (!base) {
+      return false;
+    }
+    // OR arms are disjunctive; absent OR means the base predicates decide.
+    if (orArms === undefined) {
+      return true;
+    }
+    return orArms.some(
+      (arm) =>
+        (arm.phone === undefined || textMatches(user.phone, arm.phone)) &&
+        (arm.name === undefined || textMatches(user.name, arm.name)) &&
+        (arm.email === undefined || textMatches(user.email, arm.email)) &&
+        (arm.id === undefined || arm.id.in.includes(user.id)) &&
+        (arm.profile === undefined ||
+          textMatches(profileOf(user.id)?.businessName ?? null, arm.profile.is.businessName)),
+    );
+  };
 }
 
 function cloneUser(user: User): User {

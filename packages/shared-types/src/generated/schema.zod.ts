@@ -29,14 +29,6 @@ export const createUserDtoSchema = z.object({
   role: z.enum(['USER', 'ADMIN']).optional(),
 });
 
-export const updateUserDtoSchema = z.object({
-  phone: z.string().optional(),
-  email: z.email().nullable().optional(),
-  name: z.string().optional(),
-  password: z.string().optional(),
-  role: z.enum(['USER', 'ADMIN']).optional(),
-});
-
 export const otpRequestDtoSchema = z.object({
   phone: z.string(),
   clientType: z.enum(['web', 'android']).optional(),
@@ -93,6 +85,55 @@ export const adminOverviewPendingLotDtoSchema = z.object({
 export const adminOverviewPendingReportDtoSchema = z.object({
   id: z.string(),
   createdAt: z.iso.datetime(),
+});
+
+export const adminUserProfileSummaryDtoSchema = z.object({
+  displayName: z.string(),
+  businessName: z.string().nullable(),
+  province: z.string().nullable(),
+  city: z.string().nullable(),
+  isBuyer: z.boolean(),
+  isSeller: z.boolean(),
+  successfulDeals: z.number(),
+});
+
+export const adminUserCountsDtoSchema = z.object({
+  lots: z.number(),
+  dealsAsBuyer: z.number(),
+  dealsAsSeller: z.number(),
+});
+
+export const updateUserStatusDtoSchema = z.object({
+  action: z.enum(['SUSPEND', 'BLOCK', 'ACTIVATE', 'DELETE']),
+  reason: z.string(),
+});
+
+export const adminUserResponseDtoSchema = z.object({
+  id: z.string(),
+  phone: z.string(),
+  email: z.string().nullable(),
+  name: z.string(),
+  role: z.enum(['USER', 'ADMIN']),
+  status: z.enum(['ACTIVE', 'SUSPENDED', 'BLOCKED', 'DELETED']),
+  accountRoles: z.array(z.enum(['BUYER', 'SELLER'])),
+  onboardingCompletedAt: z.iso.datetime().nullable(),
+  deletedAt: z.iso.datetime().nullable(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+
+export const updateUserRoleDtoSchema = z.object({
+  role: z.enum(['USER', 'ADMIN']),
+  reason: z.string(),
+});
+
+export const revokeUserSessionsDtoSchema = z.object({
+  reason: z.string(),
+});
+
+export const revokeSessionsResponseDtoSchema = z.object({
+  id: z.string(),
+  revokedSessions: z.number(),
 });
 
 export const auditLogResponseDtoSchema = z.object({
@@ -409,6 +450,41 @@ export const adminOverviewResponseDtoSchema = z.object({
   oldestOpenReports: z.array(adminOverviewPendingReportDtoSchema),
 });
 
+export const adminUserListItemDtoSchema = z.object({
+  id: z.string(),
+  phone: z.string(),
+  email: z.string().nullable(),
+  name: z.string(),
+  role: z.enum(['USER', 'ADMIN']),
+  status: z.enum(['ACTIVE', 'SUSPENDED', 'BLOCKED', 'DELETED']),
+  accountRoles: z.array(z.enum(['BUYER', 'SELLER'])),
+  onboardingCompletedAt: z.iso.datetime().nullable(),
+  deletedAt: z.iso.datetime().nullable(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  profile:   z.object({
+
+    }).nullable(),
+});
+
+export const adminUserDetailDtoSchema = z.object({
+  id: z.string(),
+  phone: z.string(),
+  email: z.string().nullable(),
+  name: z.string(),
+  role: z.enum(['USER', 'ADMIN']),
+  status: z.enum(['ACTIVE', 'SUSPENDED', 'BLOCKED', 'DELETED']),
+  accountRoles: z.array(z.enum(['BUYER', 'SELLER'])),
+  onboardingCompletedAt: z.iso.datetime().nullable(),
+  deletedAt: z.iso.datetime().nullable(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  profile:   z.object({
+
+    }).nullable(),
+  counts: adminUserCountsDtoSchema,
+});
+
 export const paginatedAuditLogsDtoSchema = z.object({
   items: z.array(auditLogResponseDtoSchema),
   total: z.number(),
@@ -621,6 +697,13 @@ export const dealDetailResponseDtoSchema = z.object({
   events: z.array(dealEventViewDtoSchema),
 });
 
+export const adminUsersListResponseDtoSchema = z.object({
+  items: z.array(adminUserListItemDtoSchema),
+  total: z.number(),
+  page: z.number(),
+  limit: z.number(),
+});
+
 export const publicSellerProfileDtoSchema = z.object({
   id: z.string(),
   displayName: z.string(),
@@ -687,7 +770,6 @@ export const apiSchemas = {
   Object: objectSchema,
   UserResponseDto: userResponseDtoSchema,
   CreateUserDto: createUserDtoSchema,
-  UpdateUserDto: updateUserDtoSchema,
   OtpRequestDto: otpRequestDtoSchema,
   OtpRequestResponseDto: otpRequestResponseDtoSchema,
   OtpVerifyDto: otpVerifyDtoSchema,
@@ -699,6 +781,16 @@ export const apiSchemas = {
   AdminOverviewPendingLotDto: adminOverviewPendingLotDtoSchema,
   AdminOverviewPendingReportDto: adminOverviewPendingReportDtoSchema,
   AdminOverviewResponseDto: adminOverviewResponseDtoSchema,
+  AdminUserProfileSummaryDto: adminUserProfileSummaryDtoSchema,
+  AdminUserListItemDto: adminUserListItemDtoSchema,
+  AdminUsersListResponseDto: adminUsersListResponseDtoSchema,
+  AdminUserCountsDto: adminUserCountsDtoSchema,
+  AdminUserDetailDto: adminUserDetailDtoSchema,
+  UpdateUserStatusDto: updateUserStatusDtoSchema,
+  AdminUserResponseDto: adminUserResponseDtoSchema,
+  UpdateUserRoleDto: updateUserRoleDtoSchema,
+  RevokeUserSessionsDto: revokeUserSessionsDtoSchema,
+  RevokeSessionsResponseDto: revokeSessionsResponseDtoSchema,
   AuditLogResponseDto: auditLogResponseDtoSchema,
   PaginatedAuditLogsDto: paginatedAuditLogsDtoSchema,
   CategoryTreeNodeDto: categoryTreeNodeDtoSchema,

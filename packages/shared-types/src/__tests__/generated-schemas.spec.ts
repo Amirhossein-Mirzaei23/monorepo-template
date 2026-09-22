@@ -148,7 +148,11 @@ describe('generated zod schemas', () => {
       'UserResponseDto',
       'LoginResponseDto',
       'CreateUserDto',
-      'UpdateUserDto',
+      'AdminUserResponseDto',
+      'AdminUsersListResponseDto',
+      'UpdateUserStatusDto',
+      'UpdateUserRoleDto',
+      'RevokeUserSessionsDto',
     ]) {
       expect(names).toContain(expected);
     }

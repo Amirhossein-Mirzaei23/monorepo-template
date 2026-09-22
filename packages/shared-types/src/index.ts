@@ -15,7 +15,6 @@ import { z as zod } from 'zod';
 // --- entity types (mirror of the API DTOs) ---
 export type UserResponseDto = components['schemas']['UserResponseDto'];
 export type CreateUserDto = components['schemas']['CreateUserDto'];
-export type UpdateUserDto = components['schemas']['UpdateUserDto'];
 export type LoginDto = components['schemas']['LoginDto'];
 export type LoginResponseDto = components['schemas']['LoginResponseDto'];
 export type OtpRequestDto = components['schemas']['OtpRequestDto'];
@@ -89,6 +88,24 @@ export type AdminOverviewResponseDto = components['schemas']['AdminOverviewRespo
 export type AdminOverviewCountersDto = components['schemas']['AdminOverviewCountersDto'];
 export type AdminOverviewPendingLotDto = components['schemas']['AdminOverviewPendingLotDto'];
 export type AdminOverviewPendingReportDto = components['schemas']['AdminOverviewPendingReportDto'];
+// --- admin users (admin panel Task 05) ---
+/** Allowlisted operational user row — never passwordHash/refresh tokens. */
+export type AdminUserResponseDto = components['schemas']['AdminUserResponseDto'];
+/** Bounded profile summary joined into list rows and the detail payload. */
+export type AdminUserProfileSummaryDto = components['schemas']['AdminUserProfileSummaryDto'];
+/** One list row of GET /admin/users — user row + bounded profile summary. */
+export type AdminUserListItemDto = components['schemas']['AdminUserListItemDto'];
+/** Bounded lot/deal counters on the detail payload. */
+export type AdminUserCountsDto = components['schemas']['AdminUserCountsDto'];
+/** GET /admin/users/:id — user + profile summary + bounded counts. */
+export type AdminUserDetailDto = components['schemas']['AdminUserDetailDto'];
+/** Paginated envelope of GET /admin/users. */
+export type AdminUsersListResponseDto = components['schemas']['AdminUsersListResponseDto'];
+/** Narrow action payloads (PATCH :id/status, PATCH :id/role, POST :id/revoke-sessions). */
+export type UpdateUserStatusDto = components['schemas']['UpdateUserStatusDto'];
+export type UpdateUserRoleDto = components['schemas']['UpdateUserRoleDto'];
+export type RevokeUserSessionsDto = components['schemas']['RevokeUserSessionsDto'];
+export type RevokeSessionsResponseDto = components['schemas']['RevokeSessionsResponseDto'];
 /**
  * GET /profiles/sellers/:id payload. The generated type leaves the two
  * lot-page envelopes optional (inline-schema quirk) — recompose with them
@@ -117,7 +134,6 @@ export type SellerBusinessType = NonNullable<SaveOnboardingDto['sellerBusinessTy
 export const userResponseSchema = apiSchemas.UserResponseDto;
 export const userRoleSchema = userResponseSchema.shape.role;
 export const createUserSchema = apiSchemas.CreateUserDto;
-export const updateUserSchema = apiSchemas.UpdateUserDto;
 export const loginSchema = apiSchemas.LoginDto;
 export const loginResponseSchema = apiSchemas.LoginResponseDto;
 export const otpRequestSchema = apiSchemas.OtpRequestDto;
@@ -279,6 +295,31 @@ export const adminOverviewResponseSchema = apiSchemas.AdminOverviewResponseDto;
 export const adminOverviewCountersSchema = apiSchemas.AdminOverviewCountersDto;
 export const adminOverviewPendingLotSchema = apiSchemas.AdminOverviewPendingLotDto;
 export const adminOverviewPendingReportSchema = apiSchemas.AdminOverviewPendingReportDto;
+
+// --- admin users (admin panel Task 05) ---
+/**
+ * The Nest allOf quirk hits the joined `profile` summary (serialized as
+ * `$ref`-in-`allOf`, rendered as a lossy `z.object({})`). Recompose the real
+ * summary/counts shapes so the runtime schemas validate and KEEP the fields
+ * the TS contracts already promise.
+ */
+export const adminUserProfileSummarySchema = apiSchemas.AdminUserProfileSummaryDto;
+export const adminUserResponseSchema = apiSchemas.AdminUserResponseDto;
+export const adminUserListItemSchema = apiSchemas.AdminUserListItemDto.extend({
+  profile: adminUserProfileSummarySchema.nullable(),
+});
+export const adminUserCountsSchema = apiSchemas.AdminUserCountsDto;
+export const adminUserDetailSchema = apiSchemas.AdminUserDetailDto.extend({
+  profile: adminUserProfileSummarySchema.nullable(),
+  counts: adminUserCountsSchema,
+});
+export const adminUsersListResponseSchema = apiSchemas.AdminUsersListResponseDto.extend({
+  items: zod.array(adminUserListItemSchema),
+});
+export const updateUserStatusSchema = apiSchemas.UpdateUserStatusDto;
+export const updateUserRoleSchema = apiSchemas.UpdateUserRoleDto;
+export const revokeUserSessionsSchema = apiSchemas.RevokeUserSessionsDto;
+export const revokeSessionsResponseSchema = apiSchemas.RevokeSessionsResponseDto;
 
 // --- Deals (DEAL-002/003/004) ---
 

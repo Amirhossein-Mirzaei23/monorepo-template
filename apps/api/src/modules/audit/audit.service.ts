@@ -29,6 +29,16 @@ const AUDIT_METADATA_KEYS = new Set([
   'isActive',
   'changedFields',
   'siblingId',
+  // User-management actions (admin panel Task 05): the reason is mandatory on
+  // every action and the from/to + revocation counts make the audit row a
+  // self-contained history entry.
+  'reason',
+  'statusAction',
+  'fromStatus',
+  'toStatus',
+  'fromRole',
+  'toRole',
+  'revokedSessions',
 ]);
 
 function validateAuditMetadata(metadata: AuditMetadata): void {

@@ -45,8 +45,8 @@ npm run gen:types
 
 ## Completion checklist
 
-- [ ] No UI path performs hard delete.
-- [ ] Self and last-admin protections pass.
-- [ ] Suspension/block prevents refresh and revokes sessions.
-- [ ] Every mutation is audited with reason.
-- [ ] Search/filter/pagination are linkable and deterministic.
+- [x] No UI path performs hard delete.
+- [x] Self and last-admin protections pass.
+- [x] Suspension/block prevents refresh and revokes sessions.
+- [x] Every mutation is audited with reason.
+- [x] Search/filter/pagination are linkable and deterministic.
