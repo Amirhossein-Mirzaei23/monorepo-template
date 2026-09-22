@@ -79,6 +79,16 @@ export type PublicSellerListDto = components['schemas']['PublicSellerListDto'];
 export type SellerPublicMetricsDto = components['schemas']['SellerPublicMetricsDto'];
 /** One distinct ACTIVE-lot category chip of the seller page. */
 export type SellerPublicCategoryDto = components['schemas']['SellerPublicCategoryDto'];
+// --- admin overview (admin panel Task 04) ---
+/**
+ * GET /admin/overview — bounded operational workload payload. The reports
+ * counters/queue stay at literal zero/[] until Task 09 lands (the API
+ * hardcodes them; no placeholder metrics).
+ */
+export type AdminOverviewResponseDto = components['schemas']['AdminOverviewResponseDto'];
+export type AdminOverviewCountersDto = components['schemas']['AdminOverviewCountersDto'];
+export type AdminOverviewPendingLotDto = components['schemas']['AdminOverviewPendingLotDto'];
+export type AdminOverviewPendingReportDto = components['schemas']['AdminOverviewPendingReportDto'];
 /**
  * GET /profiles/sellers/:id payload. The generated type leaves the two
  * lot-page envelopes optional (inline-schema quirk) — recompose with them
@@ -262,6 +272,13 @@ export const offersPageSchema = zod.object({
 });
 export const createOfferSchema = apiSchemas.CreateOfferDto;
 export const counterOfferSchema = apiSchemas.CounterOfferDto;
+
+// --- admin overview (admin panel Task 04) ---
+/** Runtime contract of GET /admin/overview (generated; nested refs resolve). */
+export const adminOverviewResponseSchema = apiSchemas.AdminOverviewResponseDto;
+export const adminOverviewCountersSchema = apiSchemas.AdminOverviewCountersDto;
+export const adminOverviewPendingLotSchema = apiSchemas.AdminOverviewPendingLotDto;
+export const adminOverviewPendingReportSchema = apiSchemas.AdminOverviewPendingReportDto;
 
 // --- Deals (DEAL-002/003/004) ---
 

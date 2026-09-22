@@ -51,6 +51,8 @@ type UserWhere = {
   email?: string | null;
   role?: UserRole;
   status?: UserStatus;
+  /** Admin-overview window arm: users created since a stamp (gte, inclusive). */
+  createdAt?: { gte?: Date };
 };
 type UserOrderBy = Record<string, 'asc' | 'desc'>;
 type AuditLogWhere = {
@@ -1867,6 +1869,8 @@ export class FakePrisma {
       status?: UserStatus;
       accountRoles?: AccountRole[];
       onboardingCompletedAt?: Date | null;
+      /** Controlled creation stamp (admin-overview 7-day window suites). */
+      createdAt?: Date;
     },
   ): User {
     const row: User = {
@@ -1880,7 +1884,7 @@ export class FakePrisma {
       accountRoles: user.accountRoles ?? [],
       onboardingCompletedAt: user.onboardingCompletedAt ?? null,
       deletedAt: null,
-      createdAt: nowIso(),
+      createdAt: user.createdAt ?? nowIso(),
       updatedAt: nowIso(),
     };
     this.users.set(row.id, row);
@@ -2269,7 +2273,8 @@ function matchesWhere(where: UserWhere | undefined): (user: User) => boolean {
     (where?.phone === undefined || user.phone === where.phone) &&
     (where?.email === undefined || user.email === where.email) &&
     (where?.role === undefined || user.role === where.role) &&
-    (where?.status === undefined || user.status === where.status);
+    (where?.status === undefined || user.status === where.status) &&
+    (where?.createdAt?.gte === undefined || user.createdAt >= where.createdAt.gte);
 }
 
 function cloneUser(user: User): User {

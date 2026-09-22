@@ -71,6 +71,30 @@ export const meResponseDtoSchema = z.object({
   onboardingCompleted: z.boolean(),
 });
 
+export const adminOverviewCountersDtoSchema = z.object({
+  pendingReviewLots: z.number(),
+  openReports: z.number(),
+  pendingVerifications: z.number(),
+  disputedDeals: z.number(),
+  activeUsers: z.number(),
+  suspendedUsers: z.number(),
+  blockedUsers: z.number(),
+  newUsersLast7Days: z.number(),
+});
+
+export const adminOverviewPendingLotDtoSchema = z.object({
+  id: z.string(),
+  code: z.string(),
+  title: z.string(),
+  status: z.enum(['DRAFT', 'PENDING_REVIEW', 'ACTIVE', 'PAUSED', 'REJECTED', 'EXPIRED', 'SOLD', 'REMOVED']),
+  createdAt: z.iso.datetime(),
+});
+
+export const adminOverviewPendingReportDtoSchema = z.object({
+  id: z.string(),
+  createdAt: z.iso.datetime(),
+});
+
 export const auditLogResponseDtoSchema = z.object({
   id: z.string(),
   actorId: z.string().nullable().optional(),
@@ -379,6 +403,12 @@ export const loginResponseDtoSchema = z.object({
   user: userResponseDtoSchema,
 });
 
+export const adminOverviewResponseDtoSchema = z.object({
+  counts: adminOverviewCountersDtoSchema,
+  oldestPendingLots: z.array(adminOverviewPendingLotDtoSchema),
+  oldestOpenReports: z.array(adminOverviewPendingReportDtoSchema),
+});
+
 export const paginatedAuditLogsDtoSchema = z.object({
   items: z.array(auditLogResponseDtoSchema),
   total: z.number(),
@@ -665,6 +695,10 @@ export const apiSchemas = {
   LoginDto: loginDtoSchema,
   LoginResponseDto: loginResponseDtoSchema,
   MeResponseDto: meResponseDtoSchema,
+  AdminOverviewCountersDto: adminOverviewCountersDtoSchema,
+  AdminOverviewPendingLotDto: adminOverviewPendingLotDtoSchema,
+  AdminOverviewPendingReportDto: adminOverviewPendingReportDtoSchema,
+  AdminOverviewResponseDto: adminOverviewResponseDtoSchema,
   AuditLogResponseDto: auditLogResponseDtoSchema,
   PaginatedAuditLogsDto: paginatedAuditLogsDtoSchema,
   CategoryTreeNodeDto: categoryTreeNodeDtoSchema,

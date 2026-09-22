@@ -1,10 +1,10 @@
+import { AdminOverview } from '@/features/admin';
+
+/**
+ * Route composition only (doc/ARCHITECTURE.md) — the dashboard's business UI
+ * lives in the admin feature (Task 04: the bounded workload overview, fetched
+ * client-side through the BFF behind the guarded shell).
+ */
 export default function AdminOverviewPage() {
-  return (
-    <section aria-labelledby="admin-overview-title">
-      <h2 id="admin-overview-title" className="text-2xl font-semibold">
-        نمای کلی مدیریت
-      </h2>
-      <p className="text-muted-foreground mt-2">ابزارهای مدیریت در اینجا قرار می‌گیرند.</p>
-    </section>
-  );
+  return <AdminOverview />;
 }

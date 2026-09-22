@@ -15,6 +15,7 @@ import { validateEnv } from './config/env.validation';
 import { HealthModule } from './health/health.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { AdminModule } from './modules/admin/admin.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { ConversationsModule } from './modules/conversations/conversations.module';
@@ -80,6 +81,7 @@ import { PrismaModule } from './prisma/prisma.module';
     HealthModule,
     UsersModule,
     AuthModule,
+    AdminModule,
     AuditModule,
     SmsModule,
     OtpModule,

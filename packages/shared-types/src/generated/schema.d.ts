@@ -194,6 +194,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Operational workload overview (pending lots, disputed deals, user counts, quick queues) — admin only */
+        get: operations["AdminOverviewController_getOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/audit": {
         parameters: {
             query?: never;
@@ -1002,6 +1019,49 @@ export interface components {
              * @example false
              */
             onboardingCompleted: boolean;
+        };
+        AdminOverviewCountersDto: {
+            /** @description Lots waiting in the moderation queue */
+            pendingReviewLots: number;
+            /** @description Open user reports — always 0 until Task 09 */
+            openReports: number;
+            /** @description Pending verification requests — always 0 until Task 10 */
+            pendingVerifications: number;
+            /** @description Deals stuck in the DISPUTED state */
+            disputedDeals: number;
+            /** @description Users with status ACTIVE */
+            activeUsers: number;
+            /** @description Users with status SUSPENDED */
+            suspendedUsers: number;
+            /** @description Users with status BLOCKED */
+            blockedUsers: number;
+            /** @description Users created within the last 7 days (inclusive window, one server `now`) */
+            newUsersLast7Days: number;
+        };
+        AdminOverviewPendingLotDto: {
+            id: string;
+            /**
+             * @description Public non-sequential lot code
+             * @example 7Kd2Qm9x
+             */
+            code: string;
+            title: string;
+            /** @enum {string} */
+            status: "DRAFT" | "PENDING_REVIEW" | "ACTIVE" | "PAUSED" | "REJECTED" | "EXPIRED" | "SOLD" | "REMOVED";
+            /** Format: date-time */
+            createdAt: string;
+        };
+        AdminOverviewPendingReportDto: {
+            id: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        AdminOverviewResponseDto: {
+            counts: components["schemas"]["AdminOverviewCountersDto"];
+            /** @description Five oldest PENDING_REVIEW lots, oldest first */
+            oldestPendingLots: components["schemas"]["AdminOverviewPendingLotDto"][];
+            /** @description Five oldest open reports — always empty until Task 09 */
+            oldestOpenReports: components["schemas"]["AdminOverviewPendingReportDto"][];
         };
         AuditLogResponseDto: {
             id: string;
@@ -2977,6 +3037,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeResponseDto"];
+                };
+            };
+        };
+    };
+    AdminOverviewController_getOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOverviewResponseDto"];
                 };
             };
         };

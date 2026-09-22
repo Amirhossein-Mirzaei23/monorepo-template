@@ -37,7 +37,7 @@ npm run gen:types
 
 ## Completion checklist
 
-- [ ] No placeholder/random metrics.
-- [ ] Queries are bounded and indexed by existing status/date indexes where possible.
-- [ ] 401/403/admin success proven.
-- [ ] Dashboard links enter the intended queue filter.
+- [x] No placeholder/random metrics.
+- [x] Queries are bounded and indexed by existing status/date indexes where possible.
+- [x] 401/403/admin success proven.
+- [x] Dashboard links enter the intended queue filter.

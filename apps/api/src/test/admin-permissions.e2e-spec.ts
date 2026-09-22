@@ -72,6 +72,11 @@ describe('Admin permission matrix (e2e)', () => {
   it.each<RequestOptions>([
     {
       method: 'get',
+      path: () => '/admin/overview',
+      expectedAdminStatus: 200,
+    },
+    {
+      method: 'get',
       path: () => '/users',
       expectedAdminStatus: 200,
     },
