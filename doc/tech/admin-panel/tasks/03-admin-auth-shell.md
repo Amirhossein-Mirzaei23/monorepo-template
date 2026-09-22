@@ -37,8 +37,8 @@ npm run build -w @monorepo/web
 
 ## Completion checklist
 
-- [ ] Normal OTP login remains unchanged.
-- [ ] Admin credentials use only `POST /auth/login` through the BFF.
-- [ ] Access token stays memory-only; refresh stays HTTP-only.
-- [ ] Anonymous, USER, and ADMIN routes behave per matrix.
-- [ ] Shell is keyboard-accessible and responsive.
+- [x] Normal OTP login remains unchanged.
+- [x] Admin credentials use only `POST /auth/login` through the BFF.
+- [x] Access token stays memory-only; refresh stays HTTP-only.
+- [x] Anonymous, USER, and ADMIN routes behave per matrix.
+- [x] Shell is keyboard-accessible and responsive.

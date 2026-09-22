@@ -5,7 +5,7 @@ jest.mock('next/server', () => ({
   },
 }));
 
-import { middleware } from '../middleware';
+import { config, middleware } from '../middleware';
 
 function request(path: string, cookie?: string) {
   const url = new URL(`http://localhost:3000${path}`);
@@ -25,6 +25,14 @@ describe('middleware route gates', () => {
     );
   });
 
+  it('redirects the bare /admin overview for anonymous visitors too', () => {
+    const response = middleware(request('/admin'));
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe(
+      'http://localhost:3000/admin/login?next=%2Fadmin',
+    );
+  });
+
   it('leaves admin login available without a refresh cookie', () => {
     expect(middleware(request('/admin/login')).status).toBe(200);
   });
@@ -37,5 +45,9 @@ describe('middleware route gates', () => {
 
   it('allows cookie-present admin requests through to API-authoritative checks', () => {
     expect(middleware(request('/admin/audit', 'stale')).status).toBe(200);
+  });
+
+  it('pins the /admin matcher so the gate cannot silently regress', () => {
+    expect(config.matcher).toContain('/admin/:path*');
   });
 });

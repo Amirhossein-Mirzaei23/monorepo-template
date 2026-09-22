@@ -17,5 +17,3 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
   if (status !== 'authenticated' || user?.role !== 'ADMIN') return null;
   return <>{children}</>;
 }
-
-export { AdminGuard as Guard };

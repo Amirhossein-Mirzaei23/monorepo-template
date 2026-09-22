@@ -4,4 +4,4 @@ export { AdminShell } from './components/admin-shell';
 export { adminLoginSchema, safeAdminNext } from './schemas/admin-login-schema';
 export type { AdminLoginFormData } from './schemas/admin-login-schema';
 export { useAdminLogin } from './hooks/use-admin-login';
-export { adminLoginRequest, adminLogoutRequest } from './api/admin-auth-api';
+export { adminLoginRequest } from './api/admin-auth-api';

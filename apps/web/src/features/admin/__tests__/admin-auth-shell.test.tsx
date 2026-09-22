@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AdminGuard, AdminLoginForm, AdminShell } from '../index';
 
@@ -15,8 +15,8 @@ jest.mock('../hooks/use-admin-login', () => ({
 
 const logout = jest.fn().mockResolvedValue(undefined);
 let auth: {
-  status: 'authenticated';
-  user: { role: 'ADMIN' | 'USER' };
+  status: 'authenticated' | 'unauthenticated';
+  user: { role: 'ADMIN' | 'USER' } | undefined;
   logout: typeof logout;
 } = {
   status: 'authenticated',
@@ -30,6 +30,7 @@ jest.mock('../../../providers/auth-provider', () => ({
 describe('admin authentication and shell', () => {
   beforeEach(() => {
     push.mockReset();
+    replace.mockReset();
     logout.mockClear();
     auth = {
       status: 'authenticated',
@@ -69,8 +70,22 @@ describe('admin authentication and shell', () => {
       '/admin/categories',
     );
     expect(screen.getByRole('link', { name: 'حسابرسی' })).toHaveAttribute('href', '/admin/audit');
+    expect(screen.getByRole('link', { name: 'کاربران' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'نمای کلی' })).not.toHaveAttribute('aria-current');
     await userEvent.click(screen.getByRole('button', { name: 'خروج' }));
     expect(logout).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/admin/login'));
+  });
+
+  it('still navigates to the admin login when the logout call rejects', async () => {
+    logout.mockRejectedValueOnce(new Error('BFF unreachable'));
+    render(
+      <AdminShell>
+        <p>محتوا</p>
+      </AdminShell>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'خروج' }));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/admin/login'));
   });
 
   it('does not render protected admin content for an authenticated USER', () => {
@@ -91,5 +106,22 @@ describe('admin authentication and shell', () => {
       </AdminGuard>,
     );
     expect(screen.getByText('داده محرمانه')).toBeInTheDocument();
+  });
+
+  it('hides protected admin content once logout leaves the session unauthenticated', () => {
+    const view = render(
+      <AdminGuard>
+        <p>داده محرمانه</p>
+      </AdminGuard>,
+    );
+    expect(screen.getByText('داده محرمانه')).toBeInTheDocument();
+
+    auth = { status: 'unauthenticated', user: undefined, logout };
+    view.rerender(
+      <AdminGuard>
+        <p>داده محرمانه</p>
+      </AdminGuard>,
+    );
+    expect(screen.queryByText('داده محرمانه')).not.toBeInTheDocument();
   });
 });

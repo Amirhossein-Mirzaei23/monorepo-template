@@ -71,5 +71,3 @@ export function AdminLoginForm({ next }: { next?: string }) {
     </form>
   );
 }
-
-export { AdminLoginForm as LoginForm };

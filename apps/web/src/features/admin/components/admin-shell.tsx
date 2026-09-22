@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -20,7 +20,21 @@ const navigation = [
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { logout } = useAuth();
+
+  // Same contract as AuthHeader: clear the session, then leave the protected
+  // area — the admin login screen is the natural landing point here. The
+  // client state is cleared even when the BFF call fails, so navigation must
+  // happen regardless of the logout result.
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } finally {
+      router.replace('/admin/login');
+    }
+  };
+
   return (
     <div dir="rtl" className="min-h-screen bg-zinc-50 text-zinc-900">
       <div className="mx-auto flex min-h-screen max-w-7xl flex-col md:flex-row">
@@ -45,7 +59,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             type="button"
             variant="ghost"
             className="mt-4 min-h-11 w-full justify-start"
-            onClick={() => void logout()}
+            onClick={() => void handleLogout().catch(() => undefined)}
           >
             <LogOut aria-hidden="true" />
             خروج
@@ -56,5 +70,3 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
-
-export { AdminShell as Shell };
