@@ -4,6 +4,7 @@ export { AdminLoginForm } from './components/admin-login-form';
 export { AdminShell } from './components/admin-shell';
 export { AdminUsers } from './components/admin-users';
 export { AdminUserDetail } from './components/admin-user-detail';
+export { AdminCategories } from './components/admin-categories';
 export { adminLoginSchema, safeAdminNext } from './schemas/admin-login-schema';
 export type { AdminLoginFormData } from './schemas/admin-login-schema';
 export { adminOverviewSchema } from './schemas/overview-schema';
@@ -33,6 +34,12 @@ export {
   useAdminUserRoleAction,
   useAdminUserRevokeSessionsAction,
 } from './hooks/use-admin-users';
+export {
+  useAdminCategories,
+  useCreateCategory,
+  useUpdateCategory,
+  useReorderCategory,
+} from './hooks/use-admin-categories';
 export { adminLoginRequest } from './api/admin-auth-api';
 export { adminOverviewRequest } from './api/overview-api';
 export {
@@ -42,4 +49,17 @@ export {
   adminUserRoleAction,
   adminUserRevokeSessionsAction,
 } from './api/users-api';
+export {
+  adminCategoriesTreeRequest,
+  adminCategoryCreateRequest,
+  adminCategoryUpdateRequest,
+  adminCategoryReorderRequest,
+} from './api/categories-api';
 export { adminKeys } from './api/keys';
+export {
+  adminCategoriesTreeSchema,
+  categoryFormSchema,
+  type AdminCategoryTreeNode,
+  type CategoryFormData,
+  type CategoryWritePayload,
+} from './schemas/categories-schema';

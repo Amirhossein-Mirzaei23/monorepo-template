@@ -157,6 +157,20 @@ export const categoryTreeNodeDtoSchema: z.ZodType<CategoryTreeNodeDto> = z.objec
   children: z.array(z.lazy(() => categoryTreeNodeDtoSchema)),
 });
 
+type AdminCategoryTreeNodeDto = components['schemas']['AdminCategoryTreeNodeDto'];
+export const adminCategoryTreeNodeDtoSchema: z.ZodType<AdminCategoryTreeNodeDto> = z.object({
+  id: z.string(),
+  nameFa: z.string(),
+  nameEn: z.string().nullable().optional(),
+  slug: z.string(),
+  parentId: z.string().nullable().optional(),
+  sortOrder: z.number(),
+  isActive: z.boolean(),
+  children: z.array(z.lazy(() => adminCategoryTreeNodeDtoSchema)),
+  directLotCount: z.number(),
+  visibleLotCount: z.number(),
+});
+
 export const createCategoryDtoSchema = z.object({
   nameFa: z.string(),
   nameEn: z.string().nullable().optional(),
@@ -794,6 +808,7 @@ export const apiSchemas = {
   AuditLogResponseDto: auditLogResponseDtoSchema,
   PaginatedAuditLogsDto: paginatedAuditLogsDtoSchema,
   CategoryTreeNodeDto: categoryTreeNodeDtoSchema,
+  AdminCategoryTreeNodeDto: adminCategoryTreeNodeDtoSchema,
   CreateCategoryDto: createCategoryDtoSchema,
   CategoryResponseDto: categoryResponseDtoSchema,
   UpdateCategoryDto: updateCategoryDtoSchema,

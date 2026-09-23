@@ -31,7 +31,7 @@ npm run gen:types
 
 ## Completion checklist
 
-- [ ] Inactive rows are manageable but not public.
-- [ ] Depth≤2, unique slug, and sibling reorder rules remain server-enforced.
-- [ ] Counts are clear and not used as delete permission.
-- [ ] No hard-delete UI exists.
+- [x] Inactive rows are manageable but not public.
+- [x] Depth≤2, unique slug, and sibling reorder rules remain server-enforced.
+- [x] Counts are clear and not used as delete permission.
+- [x] No hard-delete UI exists.

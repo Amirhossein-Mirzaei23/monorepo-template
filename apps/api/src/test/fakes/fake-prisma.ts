@@ -156,7 +156,8 @@ type LotWhere = {
   code?: string;
   sellerId?: string;
   categoryId?: string;
-  subcategoryId?: string;
+  /** Admin-categories lot counts (Task 06) add the `{ not: null }` arm. */
+  subcategoryId?: string | { not: null };
   city?: string;
   province?: string;
   pricingType?: PricingType;
@@ -1156,24 +1157,39 @@ export class FakePrisma {
       return { count };
     },
     /**
-     * PROF-002 categories aggregation (LotsRepository.countActiveByCategory):
-     * grouped count over the matching rows, mirroring Prisma's
-     * `groupBy: ['categoryId'], _count: { _all: true }` result shape. Rows are
-     * returned in first-seen insertion order — the service owns the final
-     * ordering (count desc, then nameFa), so this fake stays order-free.
+     * PROF-002 categories aggregation (LotsRepository.countActiveByCategory)
+     * AND the Task 06 admin-categories lot counts (CategoriesRepository
+     * .findLotCounts): grouped count over the matching rows, mirroring
+     * Prisma's `groupBy: [field], _count: { _all: true }` result shape.
+     * Groups by `categoryId` or `subcategoryId` — the nullable subcategory
+     * key keeps its null group like real Prisma. Rows are returned in
+     * first-seen insertion order — the caller owns the final ordering, so
+     * this fake stays order-free.
      */
     groupBy: async ({
+      by,
       where,
     }: {
-      by?: Array<'categoryId'>;
+      by?: Array<'categoryId' | 'subcategoryId'>;
       where?: LotWhere;
-    }): Promise<Array<{ categoryId: string; _count: { _all: number } }>> => {
-      const counts = new Map<string, number>();
+    }): Promise<
+      | Array<{ categoryId: string; _count: { _all: number } }>
+      | Array<{ subcategoryId: string | null; _count: { _all: number } }>
+    > => {
+      const bySubcategory = by?.includes('subcategoryId') === true;
+      const counts = new Map<string | null, number>();
       for (const row of [...this.lots.values()].filter(matchesLotWhere(where))) {
-        counts.set(row.categoryId, (counts.get(row.categoryId) ?? 0) + 1);
+        const key = bySubcategory ? row.subcategoryId : row.categoryId;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
       }
-      return [...counts.entries()].map(([categoryId, total]) => ({
-        categoryId,
+      if (!bySubcategory) {
+        return [...counts.entries()].map(([categoryId, total]) => ({
+          categoryId: categoryId as string,
+          _count: { _all: total },
+        }));
+      }
+      return [...counts.entries()].map(([subcategoryId, total]) => ({
+        subcategoryId,
         _count: { _all: total },
       }));
     },
@@ -2523,7 +2539,10 @@ function matchesLotWhere(where: LotWhere | undefined): (row: Lot) => boolean {
     (where?.code === undefined || row.code === where.code) &&
     (where?.sellerId === undefined || row.sellerId === where.sellerId) &&
     (where?.categoryId === undefined || row.categoryId === where.categoryId) &&
-    (where?.subcategoryId === undefined || row.subcategoryId === where.subcategoryId) &&
+    (where?.subcategoryId === undefined ||
+      (typeof where.subcategoryId === 'string'
+        ? row.subcategoryId === where.subcategoryId
+        : row.subcategoryId !== null)) &&
     (where?.city === undefined || row.city === where.city) &&
     (where?.province === undefined || row.province === where.province) &&
     (where?.pricingType === undefined || row.pricingType === where.pricingType) &&

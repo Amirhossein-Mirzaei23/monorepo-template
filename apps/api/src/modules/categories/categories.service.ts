@@ -13,8 +13,10 @@ import type { UpdateCategoryDto } from './dto/update-category.dto';
 import {
   type CategoryResponseDto,
   type CategoryTreeNodeDto,
+  type AdminCategoryTreeNodeDto,
   toCategoryResponse,
   toCategoryTreeNode,
+  toAdminCategoryTreeNode,
 } from './dto/category-response.dto';
 
 /**
@@ -37,6 +39,21 @@ export class CategoriesService {
   async tree(): Promise<CategoryTreeNodeDto[]> {
     const roots = await this.repository.findActiveTree();
     return roots.map((root) => toCategoryTreeNode(root));
+  }
+
+  /**
+   * Admin read model (admin panel Task 06): the FULL two-level tree — active
+   * AND inactive rows — with parent/order metadata and bounded lot counts.
+   * Read-only companion to the write surface below; the public `tree()`
+   * payload is deliberately untouched. No transaction: two independent reads
+   * (tree + aggregate) whose momentary skew is acceptable for an editor view.
+   */
+  async adminTree(): Promise<AdminCategoryTreeNodeDto[]> {
+    const [roots, counts] = await Promise.all([
+      this.repository.findFullTree(),
+      this.repository.findLotCounts(new Date()),
+    ]);
+    return roots.map((root) => toAdminCategoryTreeNode(root, counts));
   }
 
   /**

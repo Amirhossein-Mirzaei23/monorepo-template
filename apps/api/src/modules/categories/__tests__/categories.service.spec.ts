@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { LiquidationReason, LotCondition, LotStatus, PricingType, type Lot } from '@prisma/client';
 import type { PrismaService } from '../../../prisma/prisma.service';
 import { FakePrisma } from '../../../test/fakes/fake-prisma';
 import { AuditRepository } from '../../audit/audit.repository';
@@ -624,4 +625,135 @@ describe('CategoriesService', () => {
       expect(created.isActive).toBe(false);
     });
   });
+
+  describe('adminTree (Task 06 admin read model)', () => {
+    let rootId: string;
+    let childId: string;
+
+    beforeEach(async () => {
+      const root = await service.create(
+        { nameFa: 'دیجیتال', slug: 'digital', sortOrder: 1 },
+        TEST_AUDIT_CONTEXT,
+      );
+      rootId = root.id;
+      const child = await service.create(
+        { nameFa: 'موبایل', slug: 'digital-phones', parentId: rootId, sortOrder: 1 },
+        TEST_AUDIT_CONTEXT,
+      );
+      childId = child.id;
+      await service.create(
+        {
+          nameFa: 'لپ‌تاپ',
+          slug: 'digital-laptops',
+          parentId: rootId,
+          sortOrder: 2,
+          isActive: false,
+        },
+        TEST_AUDIT_CONTEXT,
+      );
+      await service.create(
+        { nameFa: 'قدیمی', slug: 'inactive-root', sortOrder: 2, isActive: false },
+        TEST_AUDIT_CONTEXT,
+      );
+
+      const future = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      const past = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      seedLot(fake, {
+        sellerId: 'seller-1',
+        categoryId: rootId,
+        status: LotStatus.ACTIVE,
+        expiresAt: future,
+      });
+      // Expired ACTIVE — publicly invisible until the sweep flips the status.
+      seedLot(fake, {
+        sellerId: 'seller-1',
+        categoryId: rootId,
+        status: LotStatus.ACTIVE,
+        expiresAt: past,
+      });
+      seedLot(fake, {
+        sellerId: 'seller-1',
+        categoryId: childId,
+        status: LotStatus.DRAFT,
+        expiresAt: future,
+      });
+      seedLot(fake, {
+        sellerId: 'seller-1',
+        categoryId: rootId,
+        subcategoryId: childId,
+        status: LotStatus.ACTIVE,
+        expiresAt: future,
+      });
+    });
+
+    it('returns the full tree — inactive roots and children included — with metadata and counts', async () => {
+      const tree = await service.adminTree();
+
+      expect(tree.map((node) => node.slug).sort()).toEqual(['digital', 'inactive-root']);
+      const inactiveRoot = tree.find((node) => node.slug === 'inactive-root');
+      expect(inactiveRoot).toMatchObject({ isActive: false, parentId: null, sortOrder: 2 });
+
+      const root = tree.find((node) => node.slug === 'digital');
+      expect(root?.children.map((child) => child.slug)).toEqual([
+        'digital-phones',
+        'digital-laptops',
+      ]);
+      const laptops = root?.children.find((child) => child.slug === 'digital-laptops');
+      expect(laptops).toMatchObject({ isActive: false, parentId: rootId, sortOrder: 2 });
+    });
+
+    it('counts direct (any status) vs visible (marketplace visibility core) lots per node', async () => {
+      const tree = await service.adminTree();
+
+      const root = tree.find((node) => node.slug === 'digital');
+      // Root: main-category lots (one visible ACTIVE + one expired ACTIVE)
+      // plus the sub-referenced lot (visible) → direct 3, visible 2. A lot
+      // counts on EVERY category it references (main + sub).
+      expect(root).toMatchObject({ directLotCount: 3, visibleLotCount: 2 });
+      const phones = root?.children.find((child) => child.slug === 'digital-phones');
+      // Child: the DRAFT lot (direct only) + the subcategory-referenced lot
+      // (visible — the child is referenced through subcategoryId).
+      expect(phones).toMatchObject({ directLotCount: 2, visibleLotCount: 1 });
+      const laptops = root?.children.find((child) => child.slug === 'digital-laptops');
+      expect(laptops).toMatchObject({ directLotCount: 0, visibleLotCount: 0 });
+    });
+
+    it('does not leak lifecycle fields into the public tree — same fixture stays active-only', async () => {
+      await service.adminTree();
+
+      const tree = await service.tree();
+      expect(tree.map((node) => node.slug)).toEqual(['digital']);
+      expect(tree[0]?.children.map((child) => child.slug)).toEqual(['digital-phones']);
+      for (const node of [...tree, ...tree.flatMap((root) => root.children)]) {
+        expect(Object.keys(node).sort()).toEqual(['children', 'id', 'nameEn', 'nameFa', 'slug']);
+      }
+    });
+  });
 });
+
+/** Minimal Lot fixture for the admin-tree count tests (seedLot fills defaults). */
+function seedLot(
+  fake: FakePrisma,
+  input: {
+    sellerId: string;
+    categoryId: string;
+    subcategoryId?: string;
+    status: LotStatus;
+    expiresAt: Date;
+  },
+): Lot {
+  return fake.seedLot({
+    ...input,
+    title: 'لات آزمایشی',
+    quantity: 5,
+    availableQuantity: 5,
+    minOrderQuantity: 1,
+    pricingType: PricingType.FIXED,
+    totalPrice: 500_000,
+    unitPrice: 100_000,
+    condition: LotCondition.GRADE_A,
+    liquidationReason: LiquidationReason.OVERSTOCK,
+    province: 'tehran',
+    city: 'tehran',
+  });
+}

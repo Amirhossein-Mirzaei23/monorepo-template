@@ -132,6 +132,11 @@ describe('Admin permission matrix (e2e)', () => {
       expectedAdminStatus: 200,
     },
     {
+      method: 'get',
+      path: () => '/admin/categories',
+      expectedAdminStatus: 200,
+    },
+    {
       method: 'post',
       path: () => '/admin/categories',
       body: () => ({ nameFa: 'Created category', slug: 'permission-created' }),

@@ -1,8 +1,9 @@
 import type { INestApplication } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { LiquidationReason, LotCondition, LotStatus, PricingType, UserRole } from '@prisma/client';
 import { hash } from 'bcryptjs';
 import request from 'supertest';
 import { createTestApp } from '../../../test/utils/create-test-app';
+import type { FakePrisma } from '../../../test/fakes/fake-prisma';
 
 const ADMIN_PASSWORD = 'admin-pass-123';
 const USER_PASSWORD = 'user-pass-1234';
@@ -10,7 +11,9 @@ const USER_PASSWORD = 'user-pass-1234';
 /**
  * Admin write API for the taxonomy (CAT-004): POST /admin/categories,
  * PATCH /admin/categories/:id (name/slug/parent/isActive toggle),
- * PATCH /admin/categories/:id/reorder (sibling sortOrder swap).
+ * PATCH /admin/categories/:id/reorder (sibling sortOrder swap) — plus the
+ * Task 06 admin read model GET /admin/categories (full tree incl. inactive
+ * rows + bounded lot counts) with proof that the public payload never changes.
  * RBAC matrix + happy paths + 409/400/404 error paths.
  */
 describe('CategoriesAdminController (e2e)', () => {
@@ -19,6 +22,10 @@ describe('CategoriesAdminController (e2e)', () => {
   let userToken: string;
   let apparelId: string;
   let apparelMenId: string;
+  // Admin-tree fixtures (GET /admin/categories): a dedicated taxonomy with
+  // inactive rows and lots in every visibility state.
+  let digitalRootId: string;
+  let digitalPhonesId: string;
 
   beforeAll(async () => {
     const testApp = await createTestApp();
@@ -30,7 +37,7 @@ describe('CategoriesAdminController (e2e)', () => {
       passwordHash: await hash(ADMIN_PASSWORD, 4),
       role: UserRole.ADMIN,
     });
-    testApp.prisma.seedUser({
+    const seller = testApp.prisma.seedUser({
       phone: '09120000001',
       email: 'user@monorepo.local',
       name: 'User',
@@ -58,6 +65,61 @@ describe('CategoriesAdminController (e2e)', () => {
       sortOrder: 2,
     });
     testApp.prisma.seedCategory({ nameFa: 'کفش', slug: 'shoes', sortOrder: 1 });
+
+    // Admin-tree fixtures (Task 06 GET /admin/categories): root + child +
+    // inactive rows, and lots in every visibility state on exactly these rows.
+    digitalRootId = testApp.prisma.seedCategory({
+      nameFa: 'دیجیتال',
+      slug: 'admin-digital',
+      sortOrder: 30,
+    }).id;
+    digitalPhonesId = testApp.prisma.seedCategory({
+      nameFa: 'موبایل',
+      slug: 'admin-digital-phones',
+      parentId: digitalRootId,
+      sortOrder: 1,
+    }).id;
+    testApp.prisma.seedCategory({
+      nameFa: 'لپ‌تاپ',
+      slug: 'admin-digital-laptops',
+      parentId: digitalRootId,
+      sortOrder: 2,
+      isActive: false,
+    });
+    testApp.prisma.seedCategory({
+      nameFa: 'قدیمی',
+      slug: 'admin-inactive-root',
+      sortOrder: 31,
+      isActive: false,
+    });
+
+    const future = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const past = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    // Root direct + visible (ACTIVE, unexpired, not deleted).
+    seedCategoryLot(testApp.prisma, seller.id, digitalRootId, undefined, LotStatus.ACTIVE, future);
+    // Root direct-only (expired ACTIVE — the sweep just hasn't flipped it yet).
+    seedCategoryLot(testApp.prisma, seller.id, digitalRootId, undefined, LotStatus.ACTIVE, past);
+    // Child direct-only (DRAFT never public).
+    seedCategoryLot(testApp.prisma, seller.id, digitalPhonesId, undefined, LotStatus.DRAFT, future);
+    // Child direct-only (REMOVED + deletedAt — soft-deleted).
+    seedCategoryLot(
+      testApp.prisma,
+      seller.id,
+      digitalPhonesId,
+      undefined,
+      LotStatus.REMOVED,
+      future,
+      past,
+    );
+    // Child visible via the optional subcategory reference.
+    seedCategoryLot(
+      testApp.prisma,
+      seller.id,
+      digitalRootId,
+      digitalPhonesId,
+      LotStatus.ACTIVE,
+      future,
+    );
 
     const adminLogin = await request(app.getHttpServer())
       .post('/auth/login')
@@ -102,6 +164,11 @@ describe('CategoriesAdminController (e2e)', () => {
       .patch('/admin/categories/whatever-id/reorder')
       .set('Authorization', `Bearer ${userToken}`)
       .send({ siblingId: 'other-id' })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .get('/admin/categories')
+      .set('Authorization', `Bearer ${userToken}`)
       .expect(403);
   });
 
@@ -401,7 +468,146 @@ describe('CategoriesAdminController (e2e)', () => {
       .send({ siblingId: apparelMenId })
       .expect(404);
   });
+
+  // --- GET /admin/categories (Task 06 admin read model) ---
+
+  it('GET /admin/categories requires authentication (401 anonymous)', async () => {
+    await request(app.getHttpServer()).get('/admin/categories').expect(401);
+  });
+
+  it('returns the FULL two-level tree — inactive roots and children included — with parent/order metadata', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/admin/categories')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+
+    const tree = response.body as AdminNode[];
+    const bySlug = new Map(tree.map((node) => [node.slug, node]));
+
+    // Inactive root AND inactive child are present (manageable, not public).
+    const inactiveRoot = bySlug.get('admin-inactive-root');
+    expect(inactiveRoot).toBeDefined();
+    expect(inactiveRoot?.isActive).toBe(false);
+    const digital = bySlug.get('admin-digital');
+    expect(digital?.children.map((child) => child.slug)).toEqual(
+      expect.arrayContaining(['admin-digital-laptops']),
+    );
+    const laptops = digital?.children.find((child) => child.slug === 'admin-digital-laptops');
+    expect(laptops?.isActive).toBe(false);
+
+    // Parent/order metadata on every node (the admin editor needs them).
+    expect(digital).toMatchObject({ parentId: null, sortOrder: 30, isActive: true });
+    const phones = digital?.children.find((child) => child.slug === 'admin-digital-phones');
+    expect(phones).toMatchObject({
+      parentId: digitalRootId,
+      sortOrder: 1,
+      isActive: true,
+    });
+
+    // Exactly the allowlisted admin node shape — no surprise fields.
+    const flat = [tree, ...tree.map((node) => node.children)].flat();
+    for (const node of flat) {
+      expect(Object.keys(node).sort()).toEqual([
+        'children',
+        'directLotCount',
+        'id',
+        'isActive',
+        'nameEn',
+        'nameFa',
+        'parentId',
+        'slug',
+        'sortOrder',
+        'visibleLotCount',
+      ]);
+    }
+  });
+
+  it('counts direct lots (any status) vs visible lots (marketplace visibility core) per node', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/admin/categories')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+
+    const tree = response.body as AdminNode[];
+    const digital = tree.find((node) => node.slug === 'admin-digital');
+    const phones = digital?.children.find((child) => child.slug === 'admin-digital-phones');
+    const laptops = digital?.children.find((child) => child.slug === 'admin-digital-laptops');
+    const inactiveRoot = tree.find((node) => node.slug === 'admin-inactive-root');
+
+    // Root: visible ACTIVE lot + expired ACTIVE lot as MAIN category, plus
+    // the subcategory-referenced lot (visible) → direct 3, visible 2. A lot
+    // counts on every category it references (main + sub).
+    expect(digital).toMatchObject({ directLotCount: 3, visibleLotCount: 2 });
+    // Child: DRAFT + REMOVED(deleted) + visible subcategory-referenced lot →
+    // direct 3, visible 1 (the subcategory reference counts on the child).
+    expect(phones).toMatchObject({ directLotCount: 3, visibleLotCount: 1 });
+    // No lots → 0/0, never undefined.
+    expect(laptops).toMatchObject({ directLotCount: 0, visibleLotCount: 0 });
+    expect(inactiveRoot).toMatchObject({ directLotCount: 0, visibleLotCount: 0 });
+  });
+
+  it('keeps the public GET /categories payload unchanged — active rows only, public shape only', async () => {
+    const response = await request(app.getHttpServer()).get('/categories').expect(200);
+
+    const tree = response.body as PublicNode[];
+    const slugs = tree.flatMap((node) => [node.slug, ...node.children.map((c) => c.slug)]);
+    // The admin tree's inactive rows stay hidden from the public surface.
+    expect(slugs).not.toContain('admin-inactive-root');
+    expect(slugs).not.toContain('admin-digital-laptops');
+
+    const nodes = [...tree, ...tree.flatMap((node) => node.children)];
+    for (const node of nodes) {
+      expect(Object.keys(node).sort()).toEqual(['children', 'id', 'nameEn', 'nameFa', 'slug']);
+    }
+  });
 });
+
+type AdminNode = {
+  id: string;
+  slug: string;
+  parentId: string | null;
+  sortOrder: number;
+  isActive: boolean;
+  directLotCount: number;
+  visibleLotCount: number;
+  children: AdminNode[];
+};
+
+type PublicNode = {
+  slug: string;
+  children: { slug: string }[];
+};
+
+/** Minimal valid Lot row fixture (seedLot fills the required defaults). */
+function seedCategoryLot(
+  prisma: FakePrisma,
+  sellerId: string,
+  categoryId: string,
+  subcategoryId: string | undefined,
+  status: LotStatus,
+  expiresAt: Date,
+  deletedAt?: Date,
+): void {
+  prisma.seedLot({
+    sellerId,
+    categoryId,
+    ...(subcategoryId !== undefined ? { subcategoryId } : {}),
+    title: 'لات دسته‌بندی آزمایشی',
+    quantity: 10,
+    availableQuantity: 10,
+    minOrderQuantity: 1,
+    pricingType: PricingType.FIXED,
+    totalPrice: 1_000_000,
+    unitPrice: 100_000,
+    condition: LotCondition.GRADE_A,
+    liquidationReason: LiquidationReason.OVERSTOCK,
+    province: 'tehran',
+    city: 'tehran',
+    status,
+    expiresAt,
+    ...(deletedAt !== undefined ? { deletedAt } : {}),
+  });
+}
 
 /** Non-admin session via OTP dev mode (AUTH-003: password login is ADMIN-only). */
 async function otpLogin(app: INestApplication, phone: string): Promise<string> {

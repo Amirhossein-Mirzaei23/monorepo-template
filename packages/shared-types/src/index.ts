@@ -321,6 +321,19 @@ export const updateUserRoleSchema = apiSchemas.UpdateUserRoleDto;
 export const revokeUserSessionsSchema = apiSchemas.RevokeUserSessionsDto;
 export const revokeSessionsResponseSchema = apiSchemas.RevokeSessionsResponseDto;
 
+// --- admin categories (admin panel Task 06) ---
+/**
+ * GET /admin/categories node — the FULL two-level tree (active + inactive)
+ * with parent/order/isActive metadata and per-node direct/visible lot counts.
+ * The swagger doc flattens the inherited CategoryResponseDto fields, so the
+ * generated schema is complete (no allOf recomposition needed).
+ */
+export type AdminCategoryTreeNodeDto = components['schemas']['AdminCategoryTreeNodeDto'];
+/** Flat write-path response of POST/PATCH /admin/categories*. */
+export type CategoryResponseDto = components['schemas']['CategoryResponseDto'];
+export const adminCategoryTreeNodeSchema = apiSchemas.AdminCategoryTreeNodeDto;
+export const categoryResponseSchema = apiSchemas.CategoryResponseDto;
+
 // --- Deals (DEAL-002/003/004) ---
 
 /** Deal payloads (DEAL-002) — the recomposed lot summary, the SAME nested-object

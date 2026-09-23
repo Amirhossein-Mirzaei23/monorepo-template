@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Patch, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Req } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiBadRequestResponse,
@@ -15,7 +15,7 @@ import { type AuthUser, CurrentUser } from '../../common/decorators/current-user
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
-import { CategoryResponseDto } from './dto/category-response.dto';
+import { AdminCategoryTreeNodeDto, CategoryResponseDto } from './dto/category-response.dto';
 import { ReorderCategoryDto } from './dto/reorder-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 
@@ -32,6 +32,22 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 @Controller('admin/categories')
 export class CategoriesAdminController {
   constructor(private readonly categories: CategoriesService) {}
+
+  @Get()
+  @Roles(UserRole.ADMIN)
+  @ApiOkResponse({
+    type: AdminCategoryTreeNodeDto,
+    isArray: true,
+    description:
+      'Full two-level tree (active AND inactive rows) with parent/order metadata and per-node direct/visible lot counts',
+  })
+  @ApiOperation({
+    summary:
+      'Admin category tree — inactive rows included and manageable; counts are informational, there is no hard delete',
+  })
+  async adminTree(): Promise<AdminCategoryTreeNodeDto[]> {
+    return this.categories.adminTree();
+  }
 
   @Post()
   @Roles(UserRole.ADMIN)

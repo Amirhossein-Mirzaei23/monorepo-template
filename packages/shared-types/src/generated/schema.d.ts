@@ -346,7 +346,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Admin category tree — inactive rows included and manageable; counts are informational, there is no hard delete */
+        get: operations["CategoriesAdminController_adminTree"];
         put?: never;
         /** Create a category — admin only; sortOrder omitted = append after siblings */
         post: operations["CategoriesAdminController_create"];
@@ -1361,6 +1362,36 @@ export interface components {
             /** @example apparel */
             slug: string;
             children: components["schemas"]["CategoryTreeNodeDto"][];
+        };
+        AdminCategoryTreeNodeDto: {
+            /** @example clx…cuid */
+            id: string;
+            /** @example پوشاک */
+            nameFa: string;
+            /** @example Apparel */
+            nameEn?: string | null;
+            /** @example apparel */
+            slug: string;
+            /**
+             * @description null = top-level
+             * @example clx…cuid
+             */
+            parentId?: string | null;
+            /** @example 1 */
+            sortOrder: number;
+            /** @example true */
+            isActive: boolean;
+            children: components["schemas"]["AdminCategoryTreeNodeDto"][];
+            /**
+             * @description Lots referencing this category as main category or optional subcategory, any status (historical footprint — not a delete permission)
+             * @example 3
+             */
+            directLotCount: number;
+            /**
+             * @description Lots referencing this category that are publicly visible now (status ACTIVE, expiresAt > now, deletedAt null)
+             * @example 1
+             */
+            visibleLotCount: number;
         };
         CreateCategoryDto: {
             /** @example پوشاک */
@@ -3509,6 +3540,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CategoryTreeNodeDto"][];
+                };
+            };
+        };
+    };
+    CategoriesAdminController_adminTree: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Full two-level tree (active AND inactive rows) with parent/order metadata and per-node direct/visible lot counts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCategoryTreeNodeDto"][];
                 };
             };
         };
